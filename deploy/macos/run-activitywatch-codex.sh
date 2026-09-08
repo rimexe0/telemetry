@@ -5,6 +5,11 @@
 set -euo pipefail
 
 collector_root="$HOME/Library/Application Support/Telemetry"
+if [[ -f "$collector_root/device.json" ]]; then
+  delivery=(-config "$collector_root/device.json")
+else
+  delivery=(-server https://server.example.ts.net:8443 -ingest-token-file "$collector_root/activitywatch-codex.ingest-token")
+fi
 exec "$collector_root/bin/telemetry-activitywatch" sync \
   -url http://127.0.0.1:5600 \
   -queue "$collector_root/activitywatch-codex.queue.sqlite3" \
@@ -12,7 +17,6 @@ exec "$collector_root/bin/telemetry-activitywatch" sync \
   -bucket aw-watcher-codex_derived_plagiarism.local \
   -overlap 15m \
   -limit 1000 \
-  -server http://100.64.0.2:18080 \
-  -ingest-token-file "$collector_root/activitywatch-codex.ingest-token" \
+  "${delivery[@]}" \
   -drain-all \
   -max-batches 500

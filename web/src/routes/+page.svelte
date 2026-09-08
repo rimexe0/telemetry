@@ -5,16 +5,26 @@
   import DayTimeline from '$lib/DayTimeline.svelte';
   import EventDetail from '$lib/EventDetail.svelte';
   import { dayKey, dayStart } from '$lib/health';
+  import { clearClerk, loadClerk, type ClerkClient } from '$lib/clerk';
   import {
     APIError,
+    approvePairing,
     endPanelSession,
+    getAuthConfig,
     listObservations,
+    listDevices,
     listSources,
     loadHealthHistory,
     loadObservationHistory,
+    pairingDetails,
+    revokeDevice,
     panelSession,
+    setClerkTokenProvider,
     startPanelSession,
+    type AuthConfig,
+    type Device,
     type Observation,
+    type PairingDetails,
     type SourceSummary
   } from '$lib/api';
 
@@ -22,7 +32,7 @@
 
   const fixtureMode = import.meta.env.VITE_TELEMETRY_FIXTURE === '1';
   const snapshotMode = import.meta.env.VITE_TELEMETRY_SNAPSHOT === '1';
-  let view: 'day' | 'health' | 'collection' = 'day';
+  let view: 'day' | 'health' | 'collection' | 'devices' = 'day';
   let selectedDay = dayKey(Date.now());
   let dayObservations: Observation[] = [];
   let dayLoading = false;
@@ -35,12 +45,28 @@
   let healthSource = '';
   let healthLoading = false;
   let healthRequest: AbortController | undefined;
+  let devices: Device[] = [];
+  let devicesLoading = false;
+  let devicesError = '';
   $: healthSources = sources.filter(source => source.source_kind === 'health_connect');
   let authenticated = false;
   let checkingSession = true;
   let loading = false;
   let error = '';
   let token = '';
+  let authConfig: AuthConfig | undefined;
+  let clerk: ClerkClient | undefined;
+  let clerkLoading = false;
+  let clerkError = '';
+  let clerkUserId = '';
+  let clerkAccessBlocked = false;
+  let pairingId = '';
+  let pairing: PairingDetails | undefined;
+  let pairingLoading = false;
+  let pairingError = '';
+  let pairingIntent = false;
+  let pairingApproved = false;
+  let clerkUnsubscribe: (() => void) | undefined;
   let sources: SourceSummary[] = [];
   let observations: Observation[] = [];
   let selectedSource = '';
@@ -96,6 +122,139 @@
     try { localStorage.setItem('telemetry-theme-mode', themeMode); } catch {}
   }
 
+  function clerkAccessMessage(cause: unknown): string {
+    if (cause instanceof APIError && cause.status === 403) {
+      return clerkUserId ? `Access is not enabled for ${clerkUserId}.` : 'This Clerk account is not enabled for the panel.';
+    }
+    return cause instanceof APIError ? cause.message : 'Unable to authenticate with Clerk.';
+  }
+
+  function syncClerkSession(): void {
+    clerkUserId = clerk?.user?.id ?? '';
+    setClerkTokenProvider(clerk?.session ? () => clerk?.session?.getToken() ?? Promise.resolve(null) : undefined);
+  }
+
+  const pairingIntentKey = 'telemetry-pairing-intent';
+
+  function rememberPairingIntent(): void {
+    if (!pairingId) return;
+    try { sessionStorage.setItem(pairingIntentKey, JSON.stringify({ pairingId, expiresAt: Date.now() + 10 * 60_000 })); } catch {}
+  }
+
+  function consumePairingIntent(): boolean {
+    try {
+      const raw = sessionStorage.getItem(pairingIntentKey);
+      if (!raw) return false;
+      sessionStorage.removeItem(pairingIntentKey);
+      const intent = JSON.parse(raw) as { pairingId?: string; expiresAt?: number };
+      return intent.pairingId === pairingId && Number(intent.expiresAt) > Date.now();
+    } catch { return false; }
+  }
+
+  function onClerkChange(): void {
+    syncClerkSession();
+    if (!clerk?.isSignedIn) {
+      authenticated = false;
+      return;
+    }
+    if (pairingId && (pairingIntent || consumePairingIntent())) {
+      pairingIntent = false;
+      void connectPairing();
+    } else {
+      void establishClerkSession();
+    }
+  }
+
+  async function refreshDevices(): Promise<void> {
+    devicesLoading = true;
+    devicesError = '';
+    try {
+      devices = await listDevices();
+    } catch (cause) {
+      devicesError = cause instanceof Error ? cause.message : 'Unable to load devices.';
+      if (cause instanceof APIError && cause.status === 401) authenticated = false;
+    } finally {
+      devicesLoading = false;
+    }
+  }
+
+  async function refreshPairing(): Promise<void> {
+    if (!pairingId || !clerk?.isSignedIn) return;
+    pairingLoading = true;
+    pairingError = '';
+    try {
+      pairing = await pairingDetails(pairingId);
+    } catch (cause) {
+      pairingError = clerkAccessMessage(cause);
+    } finally {
+      pairingLoading = false;
+    }
+  }
+
+  async function connectPairing(): Promise<void> {
+    if (!pairingId || !clerk?.isSignedIn) return;
+    pairingLoading = true;
+    pairingError = '';
+    try {
+      if (!pairing) pairing = await pairingDetails(pairingId);
+      await approvePairing(pairingId);
+      pairingApproved = true;
+      if (pairing) pairing = { ...pairing, status: 'approved' };
+    } catch (cause) {
+      pairingError = clerkAccessMessage(cause);
+    } finally {
+      pairingLoading = false;
+    }
+  }
+
+  async function establishClerkSession(): Promise<void> {
+    syncClerkSession();
+    try {
+      authenticated = await panelSession();
+      clerkAccessBlocked = !authenticated;
+      if (!authenticated) clerkError = `Access is not enabled for ${clerkUserId}.`;
+      if (authenticated) await refresh();
+    } catch (cause) {
+      if (cause instanceof APIError && cause.status === 403) {
+        authenticated = false;
+        clerkAccessBlocked = true;
+        clerkError = clerkAccessMessage(cause);
+        return;
+      }
+      throw cause;
+    }
+  }
+
+  async function signInWithClerk(): Promise<void> {
+    if (!clerk) return;
+    clerkLoading = true;
+    clerkError = '';
+    pairingIntent = Boolean(pairingId);
+    if (pairingIntent) rememberPairingIntent();
+    try {
+      if (clerk.isSignedIn) {
+        if (pairingIntent && pairingId) await connectPairing();
+        else await establishClerkSession();
+        return;
+      }
+      await clerk.openSignIn({ redirectUrl: window.location.href });
+    } catch (cause) {
+      clerkError = clerkAccessMessage(cause);
+    } finally {
+      clerkLoading = false;
+    }
+  }
+
+  async function revoke(device: Device): Promise<void> {
+    devicesError = '';
+    try {
+      await revokeDevice(device.device_id);
+      devices = devices.map(item => item.device_id === device.device_id ? { ...item, revoked_at: new Date().toISOString() } : item);
+    } catch (cause) {
+      devicesError = cause instanceof Error ? cause.message : 'Unable to revoke device.';
+    }
+  }
+
   async function refresh() {
     if (!authenticated || loading) return;
     loading = true;
@@ -111,6 +270,8 @@
         });
       } else if (view === 'health') {
         await refreshHealth();
+      } else if (view === 'devices') {
+        await refreshDevices();
       } else {
         await refreshDay();
       }
@@ -194,7 +355,10 @@
   }
 
   async function signOut() {
-    await endPanelSession();
+    await endPanelSession().catch(() => undefined);
+    if (clerk?.isSignedIn) await clerk.signOut().catch(() => undefined);
+    clearClerk();
+    setClerkTokenProvider(undefined);
     healthRequest?.abort();
     authenticated = false;
     dayRequest?.abort();
@@ -202,6 +366,9 @@
     sources = [];
     observations = [];
     healthObservations = [];
+    devices = [];
+    clerkUserId = '';
+    clerkAccessBlocked = false;
     selectedObservation = undefined;
   }
 
@@ -225,10 +392,40 @@
     themeQuery.addEventListener('change', applyTheme);
     applyTheme();
     try {
+      pairingId = new URLSearchParams(window.location.search).get('pair') ?? '';
+      try {
+        authConfig = await getAuthConfig();
+      } catch (cause) {
+        if (!(cause instanceof APIError && cause.status === 404)) {
+          clerkError = 'Clerk sign-in is unavailable; use the panel token if configured.';
+        }
+      }
+      if (authConfig?.publishable_key) {
+        clerkLoading = true;
+        try {
+          clerk = await loadClerk(authConfig.publishable_key);
+          syncClerkSession();
+          clerkUnsubscribe = clerk.addListener?.(() => onClerkChange());
+          if (pairingId && clerk.isSignedIn) await refreshPairing();
+        } catch (cause) {
+          clerkError = cause instanceof Error ? cause.message : 'Unable to load Clerk.';
+        } finally {
+          clerkLoading = false;
+        }
+      }
       authenticated = await panelSession();
+      if (clerk?.isSignedIn && !authenticated) {
+        clerkAccessBlocked = true;
+        clerkError = `Access is not enabled for ${clerkUserId}.`;
+      }
       if (authenticated) await refresh();
     } catch (cause) {
-      error = cause instanceof APIError && cause.status === 404 ? 'Panel sessions are not configured on this server.' : 'Unable to check the panel session.';
+      if (cause instanceof APIError && cause.status === 403 && clerkUserId) {
+        clerkAccessBlocked = true;
+        clerkError = clerkAccessMessage(cause);
+      } else {
+        error = cause instanceof APIError && cause.status === 404 ? 'Panel sessions are not configured on this server.' : 'Unable to check the panel session.';
+      }
     } finally {
       checkingSession = false;
     }
@@ -241,6 +438,8 @@
   onDestroy(() => {
     if (timer) clearInterval(timer);
     themeQuery?.removeEventListener('change', applyTheme);
+    clerkUnsubscribe?.();
+    setClerkTokenProvider(undefined);
     healthRequest?.abort();
     dayRequest?.abort();
   });
@@ -258,7 +457,7 @@
       <h1>Telemetry</h1>
     </div>
     <div class="header-actions"><button class="quiet-button" aria-label="Change theme" on:click={cycleTheme}>{themeMode === 'system' ? `System · ${theme}` : `Theme · ${themeMode}`}</button>
-    {#if authenticated}<button class="quiet-button" on:click={signOut}>Sign out</button>{/if}</div>
+    {#if authenticated || clerk?.isSignedIn}<button class="quiet-button" on:click={signOut}>Sign out</button>{/if}</div>
   </header>
 
   {#if fixtureMode}
@@ -271,19 +470,47 @@
   {:else if !authenticated}
     <section class="login state" aria-labelledby="panel-login-heading">
       <h2 id="panel-login-heading">Sign in</h2>
-      <form on:submit|preventDefault={signIn}>
-        <label for="panel-token">Panel token</label>
-        <input id="panel-token" bind:value={token} type="password" autocomplete="current-password" required />
-        <button type="submit" disabled={loading}>{loading ? 'Opening…' : 'Open panel'}</button>
-      </form>
-      {#if error}<p class="error" role="alert">{error}</p>{/if}
+      {#if pairingId && clerk?.isSignedIn}
+        <div class="pairing pairing-login" aria-labelledby="pairing-login-heading">
+          <div class="section-title"><h3 id="pairing-login-heading">Connect device</h3><span class="count">{pairing?.status ?? 'pending'}</span></div>
+          {#if pairingLoading}<p class="muted">Checking pairing…</p>
+          {:else if pairingApproved}<p>{pairing?.device_name ?? 'Device'} connected.</p>
+          {:else if pairing}<div class="pairing-row"><strong>{pairing.device_name}</strong><span>{pairing.device_id}</span><button on:click={connectPairing} disabled={pairing.status !== 'pending'}>Connect</button></div>
+          {:else}<p class="error" role="alert">{pairingError || 'Pairing session unavailable.'}</p>{/if}
+          {#if pairingError && pairing}<p class="error" role="alert">{pairingError}</p>{/if}
+        </div>
+      {:else if authConfig?.publishable_key && clerk}
+        <button type="button" on:click={signInWithClerk} disabled={clerkLoading}>{clerkLoading ? 'Loading Clerk…' : 'Sign in with Clerk'}</button>
+        {#if clerkAccessBlocked && clerkUserId}<p class="access-note">Signed in as <code>{clerkUserId}</code></p>{/if}
+        {#if clerkError}<p class="error" role="alert">{clerkError}</p>{/if}
+      {:else}
+        <form on:submit|preventDefault={signIn}>
+          <label for="panel-token">Panel token</label>
+          <input id="panel-token" bind:value={token} type="password" autocomplete="current-password" required />
+          <button type="submit" disabled={loading}>{loading ? 'Opening…' : 'Open panel'}</button>
+        </form>
+        {#if error}<p class="error" role="alert">{error}</p>{/if}
+      {/if}
     </section>
   {:else}
     <nav class="view-tabs" aria-label="Panel views">
       <button class:active={view === 'day'} aria-pressed={view === 'day'} disabled={loading} on:click={() => { view = 'day'; void refresh(); }}>Day</button>
       <button class:active={view === 'health'} aria-pressed={view === 'health'} disabled={loading} on:click={() => { view = 'health'; void refresh(); }}>Health</button>
       <button class:active={view === 'collection'} aria-pressed={view === 'collection'} disabled={loading} on:click={() => { view = 'collection'; void refresh(); }}>Sources</button>
+      <button class:active={view === 'devices'} aria-pressed={view === 'devices'} disabled={loading} on:click={() => { view = 'devices'; void refresh(); }}>Devices</button>
     </nav>
+    {#if pairingId}
+      <section class="pairing" aria-labelledby="pairing-heading">
+        <div class="section-title"><h2 id="pairing-heading">Connect device</h2><span class="count">{pairing?.status ?? 'pending'}</span></div>
+        {#if pairingLoading}<p class="muted">Checking pairing…</p>
+        {:else if pairingApproved}<p>{pairing?.device_name ?? 'Device'} connected.</p>
+        {:else if pairing}
+          <div class="pairing-row"><strong>{pairing.device_name}</strong><span>{pairing.device_id}</span><button on:click={connectPairing} disabled={pairingLoading || pairing.status !== 'pending'}>Connect</button></div>
+        {:else if clerk?.isSignedIn}<p class="error" role="alert">{pairingError || 'Pairing session unavailable.'}</p>
+        {:else}<button on:click={signInWithClerk} disabled={clerkLoading}>{clerkLoading ? 'Loading Clerk…' : 'Sign in to connect'}</button>{/if}
+        {#if pairingError && pairing}<p class="error" role="alert">{pairingError}</p>{/if}
+      </section>
+    {/if}
     {#if view === 'day'}
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       <DayTimeline observations={dayObservations} {sources} bind:date={selectedDay} loading={dayLoading || loading} error={dayError || error} status={dayStatus} ondatechange={refresh} oninspect={(o) => selectedObservation = o} />
@@ -297,6 +524,19 @@
       </div>
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       <HealthHistory observations={healthObservations} loading={healthLoading} error={healthError} oninspect={(o) => selectedObservation = o} />
+    {:else if view === 'devices'}
+      <section class="devices" aria-labelledby="devices-heading">
+        <div class="section-title"><h2 id="devices-heading">Devices</h2><button class="quiet-button" on:click={refreshDevices} disabled={devicesLoading}>{devicesLoading ? 'Refreshing…' : 'Refresh'}</button></div>
+        {#if devicesError}<p class="error" role="alert">{devicesError}</p>{/if}
+        <div class="device-list">
+          {#each devices as device (device.device_id)}
+            <div class:revoked={device.revoked_at} class="device-row">
+              <div><strong>{device.device_name}</strong><span>{device.device_id}</span></div>
+              {#if device.revoked_at}<span class="muted">Revoked</span>{:else}<button class="quiet-button" on:click={() => revoke(device)}>Revoke</button>{/if}
+            </div>
+          {:else}<p class="empty">No devices</p>{/each}
+        </div>
+      </section>
     {:else}
     <section class="controls" aria-label="History controls">
       <div class="control-group">
@@ -407,6 +647,16 @@
   .fixture { margin-top: 16px; padding: 9px 12px; font-size: .78rem; font-weight: 700; }
   .state { width: min(550px, 100%); margin: 36px auto; padding: 20px; }
   .login p { color: var(--muted); line-height: 1.6; }
+  .access-note, .muted { color: var(--muted); font-size: .8rem; }
+  .pairing, .devices { border: 1px solid var(--fg); background: var(--panel); margin: 16px 0; padding: 12px; }
+  .pairing h3 { margin: 0; font-size: 1rem; }
+  .pairing-login { border: 0; margin: 18px 0 0; padding: 0; }
+  .pairing-row, .device-row { align-items: center; display: flex; gap: 12px; justify-content: space-between; }
+  .pairing-row span, .device-row span { color: var(--muted); font-size: .78rem; overflow-wrap: anywhere; }
+  .device-list { border-top: 1px solid var(--line); }
+  .device-row { border-bottom: 1px solid var(--line); padding: 11px 0; }
+  .device-row > div { display: grid; gap: 3px; }
+  .device-row.revoked { opacity: .55; }
   form { display: grid; gap: 8px; margin-top: 16px; }
   label { font-size: .8rem; font-weight: 700; }
   input { border: 1px solid var(--fg); border-radius: 0; padding: 9px 10px; background: var(--panel); color: var(--fg); }

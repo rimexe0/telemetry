@@ -1,7 +1,10 @@
 import { afterEach, expect, test, vi } from 'vitest';
-import { APIError, listObservations, startPanelSession } from './api';
+import { APIError, listObservations, setClerkTokenProvider, startPanelSession } from './api';
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  setClerkTokenProvider(undefined);
+  vi.unstubAllGlobals();
+});
 
 test('observation queries remain bounded, time-scoped and same-origin', async () => {
   const fetch = vi.fn().mockResolvedValue(
@@ -31,6 +34,18 @@ test('panel login sends the owner token only to the same-origin session endpoint
     '/v1/panel/session',
     expect.objectContaining({ method: 'POST', body: '{"token":"panel-token"}', credentials: 'same-origin' })
   );
+});
+
+test('Clerk session tokens are attached in memory to owner API requests', async () => {
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ authenticated: true }), { status: 200 }));
+  vi.stubGlobal('fetch', fetch);
+  setClerkTokenProvider(async () => 'clerk-session-token');
+
+  await startPanelSession('legacy-token');
+
+  const request = fetch.mock.calls[0][1] as RequestInit;
+  expect(new Headers(request.headers).get('Authorization')).toBe('Bearer clerk-session-token');
+  expect(request.body).toBe('{"token":"legacy-token"}');
 });
 
 test('API errors preserve the server message without returning a token', async () => {

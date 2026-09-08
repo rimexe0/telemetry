@@ -18,6 +18,7 @@ import (
 type Client struct {
 	BaseURL    string
 	Token      string
+	DeviceID   string
 	HTTPClient *http.Client
 }
 
@@ -35,11 +36,20 @@ func (c Client) Send(ctx context.Context, batch model.Batch) (store.Receipt, err
 	}
 	request.Header.Set("Authorization", "Bearer "+c.Token)
 	request.Header.Set("Content-Type", "application/json")
+	if c.DeviceID != "" {
+		if batch.DeviceID != c.DeviceID {
+			return store.Receipt{}, errors.New("paired device does not match queued batch")
+		}
+		request.Header.Set("X-Telemetry-Device-ID", c.DeviceID)
+	}
 	client := c.HTTPClient
 	if client == nil {
 		client = http.DefaultClient
 	}
-	response, err := client.Do(request)
+	// Credentials must never follow redirects to another endpoint.
+	copyClient := *client
+	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	response, err := copyClient.Do(request)
 	if err != nil {
 		return store.Receipt{}, fmt.Errorf("deliver batch: %w", err)
 	}

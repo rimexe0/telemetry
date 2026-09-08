@@ -33,12 +33,15 @@ class HealthConnectCollector(
     private val queue: HealthQueue,
     private val deviceId: String,
 ) {
-    suspend fun collectAll(): HealthCollectionResult {
+    suspend fun collectAll(
+        start: Instant = Instant.EPOCH,
+        end: Instant = Instant.now(),
+    ): HealthCollectionResult {
         val resultsByType = linkedMapOf(
-            "steps" to collectType(StepsRecord::class, "steps", ::stepsObservation),
-            "heart_rate" to collectType(HeartRateRecord::class, "heart_rate", ::heartRateObservation),
-            "sleep_session" to collectType(SleepSessionRecord::class, "sleep_session", ::sleepObservation),
-            "exercise_session" to collectType(ExerciseSessionRecord::class, "exercise_session", ::exerciseObservation),
+            "steps" to collectType(StepsRecord::class, "steps", ::stepsObservation, start, end),
+            "heart_rate" to collectType(HeartRateRecord::class, "heart_rate", ::heartRateObservation, start, end),
+            "sleep_session" to collectType(SleepSessionRecord::class, "sleep_session", ::sleepObservation, start, end),
+            "exercise_session" to collectType(ExerciseSessionRecord::class, "exercise_session", ::exerciseObservation, start, end),
         )
         return HealthCollectionResult(
             recordsRead = resultsByType.values.sumOf { it.recordsRead },
@@ -53,21 +56,28 @@ class HealthConnectCollector(
         recordClass: KClass<T>,
         recordType: String,
         toObservation: (T) -> HealthObservation,
+        start: Instant,
+        end: Instant,
     ): TypeCollectionResult {
         var pageToken: String? = null
         var recordsRead = 0
         var inserted = 0
-        val end = Instant.now()
         do {
-            val response = client.readRecords(
-                ReadRecordsRequest(
-                    recordType = recordClass,
-                    timeRangeFilter = TimeRangeFilter.between(Instant.EPOCH, end),
-                    ascendingOrder = true,
-                    pageSize = 500,
-                    pageToken = pageToken,
-                ),
-            )
+            val response = try {
+                client.readRecords(
+                    ReadRecordsRequest(
+                        recordType = recordClass,
+                        timeRangeFilter = TimeRangeFilter.between(start, end),
+                        ascendingOrder = true,
+                        pageSize = 500,
+                        pageToken = pageToken,
+                    ),
+                )
+            } catch (_: SecurityException) {
+                // A source may have been revoked independently. Keep the other
+                // approved types collecting and let the next run retry this one.
+                return TypeCollectionResult(recordsRead, inserted)
+            }
             recordsRead += response.records.size
             inserted += queue.enqueue(response.records.map(toObservation)).insertedRevisions
             pageToken = response.pageToken

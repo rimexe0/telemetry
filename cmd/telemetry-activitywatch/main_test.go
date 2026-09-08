@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/rimexe0/telemetry/internal/deviceauth"
 	"os"
 	"path/filepath"
 	"testing"
@@ -21,5 +22,34 @@ func TestReadToken(t *testing.T) {
 	}
 	if _, err := readToken("inline", path); err == nil {
 		t.Fatal("both token forms unexpectedly succeeded")
+	}
+}
+
+func TestPairingConfigPreservesDeviceAndQueuesWhilePending(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "device.json")
+	c := deviceauth.Config{ServerURL: "https://private.example", DeviceID: "existing-mac", DeviceName: "Mac", Secret: "secret"}
+	if err := deviceauth.Save(path, c); err != nil {
+		t.Fatal(err)
+	}
+	device, server, token, file := "existing-mac", "", "", ""
+	paired, err := applyPairing(path, &device, &server, &token, &file)
+	if err != nil || paired || device != "existing-mac" || server != "" || token != "" {
+		t.Fatalf("pending should queue only: %v %v", paired, err)
+	}
+	c.Approved = true
+	if err := deviceauth.Save(path, c); err != nil {
+		t.Fatal(err)
+	}
+	paired, err = applyPairing(path, &device, &server, &token, &file)
+	if err != nil || !paired || server != c.ServerURL || token != c.Secret {
+		t.Fatal("approved config not loaded")
+	}
+	device, server, token, file = "another-mac", "", "", ""
+	if _, err = applyPairing(path, &device, &server, &token, &file); err == nil {
+		t.Fatal("changed existing device ID")
+	}
+	device, server = "existing-mac", "https://another-server.example"
+	if _, err = applyPairing(path, &device, &server, &token, &file); err == nil {
+		t.Fatal("credential sent to another server")
 	}
 }

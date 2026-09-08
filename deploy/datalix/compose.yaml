@@ -1,0 +1,29 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: telemetry
+      POSTGRES_USER: telemetry
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - telemetry-postgres:/var/lib/postgresql/data
+    networks:
+      - telemetry-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U telemetry -d telemetry"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    mem_limit: 1g
+    cpus: 1.0
+
+networks:
+  telemetry-internal:
+    name: telemetry-internal
+
+volumes:
+  telemetry-postgres:
+    name: telemetry-postgres

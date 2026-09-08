@@ -1,0 +1,21 @@
+[Unit]
+Description=Telemetry core service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/telemetry/.env
+WorkingDirectory=%h/telemetry
+ExecStartPre=/usr/bin/docker compose --project-name telemetry --env-file %h/telemetry/.env --file %h/telemetry/deploy/datalix/compose.yaml up --detach --wait
+ExecStartPre=%h/telemetry/bin/telemetryd -migrate
+ExecStart=%h/telemetry/bin/telemetryd
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=20s
+MemoryMax=512M
+CPUQuota=100%
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

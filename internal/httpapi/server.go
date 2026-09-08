@@ -2,6 +2,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -28,6 +29,11 @@ type Config struct {
 	PanelSessionTTL    time.Duration
 	PanelCookieSecure  bool
 	MaxRequestSize     int64
+	// OwnerAuthorized verifies an external owner session. It must reject all other accounts.
+	OwnerAuthorized     func(*http.Request) bool
+	DeviceAuthorized    func(context.Context, string, string) (bool, bool, error)
+	ClerkPublishableKey string
+	PairingEnabled      bool
 }
 
 type Server struct {
@@ -48,6 +54,10 @@ func New(repository store.Repository, config Config) (*Server, error) {
 	}
 	server := &Server{repository: repository, config: config, mux: http.NewServeMux()}
 	server.mux.HandleFunc("GET /healthz", server.health)
+	server.mux.HandleFunc("GET /v1/auth/config", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, map[string]any{"publishable_key": config.ClerkPublishableKey, "pairing_enabled": config.PairingEnabled})
+	})
 	server.mux.HandleFunc("POST /v1/ingest/batches", server.ingest)
 	server.mux.HandleFunc("GET /v1/observations", server.observations)
 	server.mux.HandleFunc("GET /v1/sources", server.sources)
@@ -150,10 +160,20 @@ func (s *Server) authorized(request *http.Request, token string) bool {
 // scoped request must carry both the device header and a matching batch ID.
 func (s *Server) ingestAuthorized(request *http.Request, deviceID string) bool {
 	claimedDevice := strings.TrimSpace(request.Header.Get("X-Telemetry-Device-ID"))
-	if claimedDevice != "" {
-		if claimedDevice != deviceID {
+	if claimedDevice != "" && claimedDevice != deviceID {
+		return false
+	}
+	token, bearer := strings.CutPrefix(request.Header.Get("Authorization"), "Bearer ")
+	if s.config.DeviceAuthorized != nil {
+		registered, authorized, err := s.config.DeviceAuthorized(request.Context(), deviceID, token)
+		if err != nil {
 			return false
 		}
+		if registered {
+			return bearer && claimedDevice == deviceID && authorized
+		}
+	}
+	if claimedDevice != "" {
 		token, exists := s.config.IngestDeviceTokens[claimedDevice]
 		return exists && s.authorized(request, token)
 	}
@@ -161,14 +181,22 @@ func (s *Server) ingestAuthorized(request *http.Request, deviceID string) bool {
 }
 
 func (s *Server) readAuthorized(request *http.Request) bool {
+	if s.config.OwnerAuthorized != nil {
+		return s.authorized(request, s.config.ReadToken) || s.config.OwnerAuthorized(request)
+	}
 	return s.authorized(request, s.config.ReadToken) || s.panelSessionAuthorized(request)
 }
 
 func (s *Server) panelSessionsEnabled() bool {
-	return s.config.PanelToken != "" && s.config.PanelSessionSecret != ""
+	return s.config.OwnerAuthorized == nil && s.config.PanelToken != "" && s.config.PanelSessionSecret != ""
 }
 
 func (s *Server) panelSessionStatus(writer http.ResponseWriter, request *http.Request) {
+	if s.config.OwnerAuthorized != nil {
+		writer.Header().Set("Cache-Control", "no-store")
+		writeJSON(writer, http.StatusOK, map[string]bool{"authenticated": s.config.OwnerAuthorized(request)})
+		return
+	}
 	if !s.panelSessionsEnabled() {
 		writeError(writer, http.StatusNotFound, "panel_unavailable", "panel sessions are not configured")
 		return

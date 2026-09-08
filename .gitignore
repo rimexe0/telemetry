@@ -11,5 +11,12 @@ android/**/build/
 
 # Local artifacts and private analysis output
 .DS_Store
-telemetryd
+/telemetryd
 analysis/
+
+# Host credentials and prepared deployment artifacts
+.env
+.env.local
+deploy/datalix/bin/
+
+.pnpm-store/

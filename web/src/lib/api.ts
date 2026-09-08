@@ -21,6 +21,26 @@ export type Observation = {
   projection: unknown;
 };
 
+export type AuthConfig = {
+  publishable_key?: string;
+  pairing_enabled?: boolean;
+};
+
+export type Device = {
+  device_id: string;
+  device_name: string;
+  created_at: string;
+  revoked_at?: string;
+};
+
+export type PairingDetails = {
+  pairing_id: string;
+  device_id: string;
+  device_name: string;
+  status: string;
+  expires_at: string;
+};
+
 export class APIError extends Error {
   readonly status: number;
 
@@ -30,11 +50,23 @@ export class APIError extends Error {
   }
 }
 
+let clerkTokenProvider: (() => Promise<string | null>) | undefined;
+
+export function setClerkTokenProvider(provider?: () => Promise<string | null>): void {
+  clerkTokenProvider = provider;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  headers.set('Accept', 'application/json');
+  if (clerkTokenProvider) {
+    const token = await clerkTokenProvider();
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+  }
   const response = await fetch(path, {
+    ...init,
     credentials: 'same-origin',
-    headers: { Accept: 'application/json', ...(init?.headers ?? {}) },
-    ...init
+    headers
   });
   const payload = (await response.json().catch(() => undefined)) as
     | { error?: { detail?: string } }
@@ -45,6 +77,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new APIError(response.status, detail ?? `Request failed (${response.status})`);
   }
   return payload as T;
+}
+
+export async function getAuthConfig(): Promise<AuthConfig> {
+  return request<AuthConfig>('/v1/auth/config');
 }
 
 export async function panelSession(): Promise<boolean> {
@@ -62,6 +98,23 @@ export async function startPanelSession(token: string): Promise<void> {
 
 export async function endPanelSession(): Promise<void> {
   await request('/v1/panel/session', { method: 'DELETE' });
+}
+
+export async function listDevices(): Promise<Device[]> {
+  const result = await request<{ devices: Device[] | null }>('/v1/devices');
+  return result.devices ?? [];
+}
+
+export async function revokeDevice(deviceId: string): Promise<void> {
+  await request(`/v1/devices/${encodeURIComponent(deviceId)}/revoke`, { method: 'POST' });
+}
+
+export async function pairingDetails(pairingId: string): Promise<PairingDetails> {
+  return request<PairingDetails>(`/v1/pairing/sessions/${encodeURIComponent(pairingId)}/details`);
+}
+
+export async function approvePairing(pairingId: string): Promise<void> {
+  await request(`/v1/pairing/sessions/${encodeURIComponent(pairingId)}/approve`, { method: 'POST' });
 }
 
 export async function listSources(): Promise<SourceSummary[]> {

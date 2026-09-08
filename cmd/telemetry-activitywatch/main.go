@@ -25,6 +25,8 @@ func main() {
 		os.Exit(2)
 	}
 	switch os.Args[1] {
+	case "login":
+		login(os.Args[2:])
 	case "discover":
 		discover(os.Args[2:])
 	case "backfill":
@@ -102,6 +104,7 @@ func discover(arguments []string) {
 
 func sync(arguments []string) {
 	flags := flag.NewFlagSet("sync", flag.ExitOnError)
+	configPath := flags.String("config", "", "paired device configuration")
 	url := flags.String("url", "http://127.0.0.1:5600", "ActivityWatch server URL")
 	queuePath := flags.String("queue", "", "collector SQLite queue path (required)")
 	deviceID := flags.String("device", "", "Telemetry device ID (required)")
@@ -115,6 +118,10 @@ func sync(arguments []string) {
 	drainAll := flags.Bool("drain-all", false, "continue bounded delivery until no claimable queue items remain")
 	maxBatches := flags.Int("max-batches", 10000, "maximum batches when -drain-all is set")
 	flags.Parse(arguments)
+	paired, err := applyPairing(*configPath, deviceID, serverURL, ingestToken, ingestTokenFile)
+	if err != nil {
+		log.Fatal(err)
+	}
 	if *queuePath == "" || *deviceID == "" || *bucketID == "" {
 		log.Fatal("-queue, -device, and -bucket are required")
 	}
@@ -161,6 +168,9 @@ func sync(arguments []string) {
 			Version:       collectorVersion,
 		}
 		client := ingest.Client{BaseURL: *serverURL, Token: token, HTTPClient: &http.Client{Timeout: 30 * time.Second}}
+		if paired {
+			client.DeviceID = *deviceID
+		}
 		if *drainAll {
 			drainResult, err := ingest.DrainAll(context.Background(), localQueue, client, ingest.DrainAllOptions{DrainOptions: drainOptions, MaxBatches: *maxBatches})
 			if err != nil {
@@ -180,6 +190,7 @@ func sync(arguments []string) {
 
 func drain(arguments []string) {
 	flags := flag.NewFlagSet("drain", flag.ExitOnError)
+	configPath := flags.String("config", "", "paired device configuration")
 	queuePath := flags.String("queue", "", "collector SQLite queue path (required)")
 	deviceID := flags.String("device", "", "Telemetry device ID (required)")
 	serverURL := flags.String("server", "", "Telemetry core URL (required)")
@@ -190,6 +201,10 @@ func drain(arguments []string) {
 	maxBatches := flags.Int("max-batches", 10000, "maximum batches when -all is set")
 	retryAfter := flags.Duration("retry-after", time.Minute, "delay before retry after a failed delivery")
 	flags.Parse(arguments)
+	paired, err := applyPairing(*configPath, deviceID, serverURL, ingestToken, ingestTokenFile)
+	if err != nil {
+		log.Fatal(err)
+	}
 	token, err := readToken(*ingestToken, *ingestTokenFile)
 	if err != nil {
 		log.Fatal(err)
@@ -211,6 +226,9 @@ func drain(arguments []string) {
 		Version:       collectorVersion,
 	}
 	client := ingest.Client{BaseURL: *serverURL, Token: token, HTTPClient: &http.Client{Timeout: 30 * time.Second}}
+	if paired {
+		client.DeviceID = *deviceID
+	}
 	if *drainAll {
 		result, err := ingest.DrainAll(context.Background(), localQueue, client, ingest.DrainAllOptions{DrainOptions: drainOptions, MaxBatches: *maxBatches})
 		if err != nil {
@@ -249,5 +267,5 @@ func printJSON(value any) {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: telemetry-activitywatch <discover|backfill|sync|drain> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: telemetry-activitywatch <login|discover|backfill|sync|drain> [flags]")
 }

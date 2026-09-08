@@ -6,12 +6,22 @@ android {
     namespace = "cyou.rime.telemetry.collector"
     compileSdk = 36
 
+    buildFeatures {
+        buildConfig = true
+    }
+
     defaultConfig {
         applicationId = "cyou.rime.telemetry.collector"
         minSdk = 28
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+        val telemetryServerUrl = project.findProperty("telemetryServerUrl")?.toString()
+            ?.trim()
+            ?.trimEnd('/')
+            ?.takeIf { it.isNotBlank() }
+            ?: "https://server.example.ts.net:8443"
+        buildConfigField("String", "TELEMETRY_SERVER_URL", "\"$telemetryServerUrl\"")
     }
 }
 

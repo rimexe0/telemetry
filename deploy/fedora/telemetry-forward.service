@@ -1,0 +1,15 @@
+[Unit]
+Description=Forward legacy Telemetry collectors to Datalix
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/socat TCP4-LISTEN:18080,bind=100.64.0.2,reuseaddr,fork OPENSSL:server.example.ts.net:8443,verify=1,cafile=/etc/ssl/certs/ca-certificates.crt,snihost=server.example.ts.net,commonname=server.example.ts.net
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+MemoryMax=128M
+TasksMax=64
+
+[Install]
+WantedBy=default.target
