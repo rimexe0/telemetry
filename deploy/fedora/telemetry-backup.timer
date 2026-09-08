@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Telemetry PostgreSQL snapshot
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+RandomizedDelaySec=15m
+Persistent=true
+Unit=telemetry-backup.service
+
+[Install]
+WantedBy=timers.target

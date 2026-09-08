@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.rime.telemetry.activitywatch-codex</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/ri/Library/Application Support/Telemetry/bin/run-activitywatch-codex.sh</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>300</integer>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>Nice</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/ri/Library/Application Support/Telemetry/activitywatch-codex.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/ri/Library/Application Support/Telemetry/activitywatch-codex.stderr.log</string>
+</dict>
+</plist>

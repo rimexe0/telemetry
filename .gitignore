@@ -1,0 +1,15 @@
+deploy/fedora/.env
+deploy/fedora/bin/
+deploy/macos/*.stdout.log
+deploy/macos/*.stderr.log
+web/node_modules/
+web/.svelte-kit/
+web/build/
+android/.gradle/
+android/local.properties
+android/**/build/
+
+# Local artifacts and private analysis output
+.DS_Store
+telemetryd
+analysis/
