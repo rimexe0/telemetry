@@ -1,0 +1,15 @@
+[Unit]
+Description=Replicate Telemetry PostgreSQL snapshots to the reviewed offsite target
+Requires=telemetry-backup.service
+Wants=network-online.target
+After=network-online.target telemetry-backup.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/telemetry
+EnvironmentFile=-%h/.config/telemetry/offsite-backup.env
+ExecStart=%h/telemetry/deploy/datalix/replicate-backups.sh
+TimeoutStartSec=15min
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true

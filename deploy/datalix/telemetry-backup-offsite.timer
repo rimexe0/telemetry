@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Telemetry offsite PostgreSQL snapshot replication
+
+[Timer]
+OnCalendar=*-*-* 03:45:00
+RandomizedDelaySec=15m
+Persistent=true
+Unit=telemetry-backup-offsite.service
+
+[Install]
+WantedBy=timers.target

@@ -32,8 +32,8 @@ ENV
  chmod 600 "$env_file"
 fi
 install -d -m 0755 "$unit_dir"
-for unit in telemetry.service telemetry-backup.service telemetry-backup.timer; do
- install -m 0644 "$script_dir/$unit" "$unit_dir/$unit"
+for unit in telemetry.service telemetry-backup.service telemetry-backup.timer telemetry-backup-offsite.service telemetry-backup-offsite.timer; do
+  install -m 0644 "$script_dir/$unit" "$unit_dir/$unit"
 done
 systemctl --user daemon-reload
 systemctl --user enable telemetry.service telemetry-backup.timer
