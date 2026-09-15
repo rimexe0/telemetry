@@ -66,6 +66,87 @@ func TestPostgresIngestPreservesEffectiveRevisionFields(t *testing.T) {
 	}
 }
 
+func TestPostgresCollectionHealthReturnsBoundedResourceHistory(t *testing.T) {
+	databaseURL := os.Getenv("TELEMETRY_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TELEMETRY_TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	database, err := OpenPostgres(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(database.Close)
+	if err := database.ApplyMigrations(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := clearIntegrationData(ctx, database); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := clearIntegrationData(ctx, database); err != nil {
+			t.Error(err)
+		}
+	})
+
+	start := time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC)
+	observations := make([]model.Observation, 0, 3)
+	for i := range 3 {
+		observations = append(observations, model.Observation{
+			SourceInstanceKey: "android:health-device:collector",
+			SourceKind:        "telemetry_collector",
+			DeviceID:          "health-device",
+			SourceRecordKey:   fmt.Sprintf("collector:%d", i),
+			Kind:              "telemetry.collector_status",
+			OccurredAt:        start.Add(time.Duration(i) * time.Minute),
+			CollectedAt:       start.Add(time.Duration(i) * time.Minute),
+			OriginalPayload:   json.RawMessage(fmt.Sprintf(`{"sample":%d}`, i)),
+		})
+	}
+	if _, err := database.Ingest(ctx, model.Batch{
+		ID:               "health-batch",
+		DeviceID:         "health-device",
+		CollectorVersion: "test",
+		Observations:     observations,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	health, err := database.CollectionHealth(ctx, CollectionHealthQuery{SourceLimit: 1, ResourceSamples: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if health.SourcesTruncated || len(health.Sources) != 1 {
+		t.Fatalf("sources = %+v, truncated=%v", health.Sources, health.SourcesTruncated)
+	}
+	if len(health.Devices) != 1 || health.Devices[0].DeviceID != "health-device" {
+		t.Fatalf("devices = %+v", health.Devices)
+	}
+	device := health.Devices[0]
+	if device.LastReceivedAt == nil || len(device.ResourceHistory) != 2 {
+		t.Fatalf("device health = %+v", device)
+	}
+	if device.ResourceHistory[0].SourceKind != "telemetry_collector" || device.ResourceHistory[0].Kind != "telemetry.collector_status" {
+		t.Fatalf("resource identity = %+v", device.ResourceHistory[0])
+	}
+	if device.ResourceHistory[0].SourceRecordKey != "collector:2" || device.ResourceHistory[1].SourceRecordKey != "collector:1" {
+		t.Fatalf("resource order = %+v", device.ResourceHistory)
+	}
+}
+
+func TestCollectionHealthRejectsInvalidBounds(t *testing.T) {
+	for _, query := range []CollectionHealthQuery{
+		{SourceLimit: -1, ResourceSamples: 1},
+		{SourceLimit: 1001, ResourceSamples: 1},
+		{SourceLimit: 1, ResourceSamples: -1},
+		{SourceLimit: 1, ResourceSamples: 73},
+	} {
+		var database Postgres
+		if _, err := database.CollectionHealth(context.Background(), query); err == nil {
+			t.Fatalf("query %+v was accepted", query)
+		}
+	}
+}
+
 func clearIntegrationData(ctx context.Context, database *Postgres) error {
 	_, err := database.pool.Exec(ctx, `
 		TRUNCATE ingestion_batch_observations, observation_revisions, observations,

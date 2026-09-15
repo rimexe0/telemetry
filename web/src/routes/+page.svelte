@@ -4,11 +4,13 @@
   import HealthHistory from '$lib/HealthHistory.svelte';
   import DayTimeline from '$lib/DayTimeline.svelte';
   import EventDetail from '$lib/EventDetail.svelte';
+  import CollectionStatus from '$lib/CollectionStatus.svelte';
   import { dayKey, dayStart } from '$lib/health';
   import { clearClerk, loadClerk, type ClerkClient } from '$lib/clerk';
   import {
     APIError,
     approvePairing,
+    collectionHealth,
     endPanelSession,
     getAuthConfig,
     listObservations,
@@ -22,6 +24,7 @@
     setClerkTokenProvider,
     startPanelSession,
     type AuthConfig,
+    type CollectionHealth,
     type Device,
     type Observation,
     type PairingDetails,
@@ -48,6 +51,9 @@
   let devices: Device[] = [];
   let devicesLoading = false;
   let devicesError = '';
+  let collectionStatus: CollectionHealth | undefined;
+  let collectionError = '';
+  let collectionRequest: AbortController | undefined;
   $: healthSources = sources.filter(source => source.source_kind === 'health_connect');
   let authenticated = false;
   let checkingSession = true;
@@ -155,6 +161,8 @@
     syncClerkSession();
     if (!clerk?.isSignedIn) {
       authenticated = false;
+      selectedObservation = undefined;
+      collectionStatus = undefined;
       return;
     }
     if (pairingId && (pairingIntent || consumePairingIntent())) {
@@ -261,27 +269,52 @@
     error = '';
     try {
       const now = new Date();
-      sources = await listSources();
       if (view === 'collection') {
-        observations = await listObservations({
+        const [rows] = await Promise.all([listObservations({
           sourceInstanceKey: selectedSource || undefined,
           from: rangeStart(range),
           to: now
-        });
-      } else if (view === 'health') {
-        await refreshHealth();
-      } else if (view === 'devices') {
-        await refreshDevices();
+        }), refreshCollection()]);
+        if (authenticated) {
+          observations = rows;
+          // The health response has source summaries from the same snapshot.
+          // Older servers can still serve the existing source inspection view.
+          sources = collectionStatus?.sources ?? await listSources();
+        }
       } else {
-        await refreshDay();
+        sources = await listSources();
+        if (view === 'health') await refreshHealth();
+        else if (view === 'devices') await refreshDevices();
+        else await refreshDay();
       }
-      if (selectedObservation) selectedObservation = (view === 'health' ? healthObservations : view === 'day' ? dayObservations : observations).find(event => event.source_record_key === selectedObservation?.source_record_key && event.source_instance_key === selectedObservation?.source_instance_key);
+      if (selectedObservation) selectedObservation = (view === 'health' ? healthObservations : view === 'day' ? dayObservations : [...observations, ...(collectionStatus?.devices.flatMap(d => d.resource_history) ?? [])]).find(event => event.source_record_key === selectedObservation?.source_record_key && event.source_instance_key === selectedObservation?.source_instance_key);
       updatedAt = now;
     } catch (cause) {
       error = cause instanceof APIError ? cause.message : 'Unable to load the current telemetry view.';
       if (cause instanceof APIError && cause.status === 401) authenticated = false;
     } finally {
       loading = false;
+    }
+  }
+
+  async function refreshCollection() {
+    collectionRequest?.abort();
+    const request = new AbortController();
+    collectionRequest = request;
+    collectionError = '';
+    try {
+      const result = await collectionHealth(request.signal);
+      if (!request.signal.aborted && authenticated) collectionStatus = result;
+    } catch (cause) {
+      if (request.signal.aborted) return;
+      collectionError = cause instanceof APIError && cause.status === 404
+        ? 'This server does not provide collection-health reports yet.'
+        : cause instanceof Error ? cause.message : 'Unable to load collection reports.';
+      if (cause instanceof APIError && (cause.status === 401 || cause.status === 403)) {
+        collectionStatus = undefined;
+        selectedObservation = undefined;
+        authenticated = false;
+      }
     }
   }
 
@@ -360,6 +393,9 @@
     clearClerk();
     setClerkTokenProvider(undefined);
     healthRequest?.abort();
+    collectionRequest?.abort();
+    collectionStatus = undefined;
+    collectionError = '';
     authenticated = false;
     dayRequest?.abort();
     dayObservations = [];
@@ -442,6 +478,7 @@
     setClerkTokenProvider(undefined);
     healthRequest?.abort();
     dayRequest?.abort();
+    collectionRequest?.abort();
   });
 </script>
 
@@ -538,23 +575,17 @@
         </div>
       </section>
     {:else}
-    <section class="controls" aria-label="History controls">
-      <div class="control-group">
-        <span>Window</span>
-        <button class:active={range === '24h'} on:click={() => selectRange('24h')}>24 hours</button>
-        <button class:active={range === '7d'} on:click={() => selectRange('7d')}>7 days</button>
-      </div>
-      <p class="updated">{loading ? 'Refreshing…' : updatedAt ? `Last refreshed ${date(updatedAt.toISOString())}` : 'No data loaded'}</p>
-    </section>
-
     {#if error}<p class="error" role="alert">{error}</p>{/if}
 
-    <section aria-labelledby="sources-heading">
+    <CollectionStatus data={collectionStatus} {loading} error={collectionError} {selectedSource}
+      onsource={selectSource} oninspect={(observation) => selectedObservation = observation} onrefresh={refresh} />
+
+    {#if !collectionStatus}<section aria-labelledby="sources-heading">
       <div class="section-title">
         <div>
           <h2 id="sources-heading">Sources</h2>
         </div>
-        <span class="count">{sources.length} connected</span>
+        <span class="count">{sources.length} recorded</span>
       </div>
       <div class="source-grid">
         {#each sources as source (source.source_instance_key)}
@@ -571,6 +602,15 @@
           <p class="empty">No sources</p>
         {/each}
       </div>
+    </section>{/if}
+
+    <section class="controls" aria-label="History controls">
+      <div class="control-group">
+        <span>Observation window</span>
+        <button class:active={range === '24h'} on:click={() => selectRange('24h')}>24 hours</button>
+        <button class:active={range === '7d'} on:click={() => selectRange('7d')}>7 days</button>
+      </div>
+      <p class="updated">{loading ? 'Refreshing…' : updatedAt ? `Last refreshed ${date(updatedAt.toISOString())}` : 'No data loaded'}</p>
     </section>
 
     <section class="timeline-section" aria-labelledby="timeline-heading">
@@ -617,7 +657,7 @@
   {/if}
 </main>
 
-{#if selectedObservation}
+{#if authenticated && selectedObservation}
   <div class="drawer-backdrop" role="presentation" on:click={() => (selectedObservation = undefined)}></div>
   <aside class="drawer" aria-label="Observation detail">
     <button class="quiet-button drawer-close" on:click={() => (selectedObservation = undefined)}>Close</button>
@@ -682,7 +722,7 @@
   .timeline-frame { min-height: 260px; padding: 12px; }
   .chart-empty { margin: 0; }
   .caption { margin: 7px 0 0; line-height: 1.5; }
-  .table-wrap { overflow: auto; max-height:480px; }
+  .table-wrap { overflow: auto; max-height:480px; position: relative; }
   table { border-collapse: collapse; min-width: 760px; width: 100%; }
   th, td { border-bottom: 1px solid var(--line); padding: 9px 11px; text-align: left; font-size: .78rem; }
   th { background: var(--soft); font-size: .72rem; letter-spacing: .05em; text-transform: uppercase; }
@@ -697,6 +737,7 @@
   .sr-only { height: 1px; margin: -1px; overflow: hidden; position: absolute; width: 1px; }
   @media (max-width: 620px) {
     main { width: min(100% - 20px, 1280px); padding-top: 16px; }
+    .masthead { flex-wrap: wrap; }
     .controls, .section-title { align-items: flex-start; flex-direction: column; }
     .updated { text-align: left; }
     .control-group { flex-wrap: wrap; }

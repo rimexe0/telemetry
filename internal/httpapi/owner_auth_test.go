@@ -14,7 +14,7 @@ func TestExternalOwnerCannotUseLegacyPanelLogin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/v1/sources", "/v1/observations"} {
+	for _, path := range []string{"/v1/sources", "/v1/observations", "/v1/collection/health"} {
 		for _, token := range []string{"", "other-user", "owner"} {
 			r := httptest.NewRequest("GET", path, nil)
 			r.Header.Set("Authorization", "Bearer "+token)

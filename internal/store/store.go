@@ -45,11 +45,33 @@ type SourceSummary struct {
 	ObservationCount  int64      `json:"observation_count"`
 }
 
+// CollectionHealthQuery bounds the source and resource history returned by a
+// collection health read. Resource samples are returned newest first for each
+// device.
+type CollectionHealthQuery struct {
+	SourceLimit     int
+	ResourceSamples int
+}
+
+type CollectionHealthDevice struct {
+	DeviceID        string            `json:"device_id"`
+	LastReceivedAt  *time.Time        `json:"last_received_at,omitempty"`
+	ResourceHistory []ObservationView `json:"resource_history"`
+}
+
+type CollectionHealth struct {
+	CheckedAt        time.Time                `json:"checked_at"`
+	Sources          []SourceSummary          `json:"sources"`
+	SourcesTruncated bool                     `json:"sources_truncated"`
+	Devices          []CollectionHealthDevice `json:"devices"`
+}
+
 // Repository is deliberately bounded. HTTP and MCP use this interface rather
 // than receiving raw database access.
 type Repository interface {
 	Ingest(context.Context, model.Batch) (Receipt, error)
 	QueryObservations(context.Context, Query) ([]ObservationView, error)
 	ListSources(context.Context, int) ([]SourceSummary, error)
+	CollectionHealth(context.Context, CollectionHealthQuery) (CollectionHealth, error)
 	Ping(context.Context) error
 }

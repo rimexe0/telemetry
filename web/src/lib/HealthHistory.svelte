@@ -201,13 +201,14 @@
     </div>
   </div>
 
-  {#if loading}
+  {#if loading && observations.length === 0}
     <p class="health-status">Loading health history…</p>
-  {:else if error}
-    <p class="health-error" role="alert">{error}</p>
-  {:else if observations.length === 0 || days.length === 0}
-    <div class="health-empty"><strong>No health records</strong></div>
   {:else}
+    {#if loading}<p class="health-status">Refreshing health history…</p>{/if}
+    {#if error}<p class="health-error" role="alert">{error}</p>{/if}
+    {#if observations.length === 0 || days.length === 0}
+      {#if !loading}<div class="health-empty"><strong>No health records</strong></div>{/if}
+    {:else}
 
     <div class="day-overview" aria-label="Thirty day health overview">
       <div class="overview-axis"><span>Daily steps · {days.some(d => d.steps !== null) ? `0–${numberText(dayStepMaximum)}` : 'no valid totals'} / Sleep session time · {days.some(d => d.sleepMinutes !== null) ? `0–${formatMinutes(daySleepMaximum)}` : 'unavailable'}</span><span>{dayText(fromDay)} → {dayText(toDay)}</span></div>
@@ -313,7 +314,7 @@
       {/if}
     {/if}
 
-
+    {/if}
   {/if}
 </section>
 

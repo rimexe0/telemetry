@@ -61,6 +61,7 @@ func New(repository store.Repository, config Config) (*Server, error) {
 	server.mux.HandleFunc("POST /v1/ingest/batches", server.ingest)
 	server.mux.HandleFunc("GET /v1/observations", server.observations)
 	server.mux.HandleFunc("GET /v1/sources", server.sources)
+	server.mux.HandleFunc("GET /v1/collection/health", server.collectionHealth)
 	server.mux.HandleFunc("GET /v1/panel/session", server.panelSessionStatus)
 	server.mux.HandleFunc("POST /v1/panel/session", server.startPanelSession)
 	server.mux.HandleFunc("DELETE /v1/panel/session", server.endPanelSession)
@@ -145,6 +146,24 @@ func (s *Server) sources(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"sources": values})
+}
+
+func (s *Server) collectionHealth(writer http.ResponseWriter, request *http.Request) {
+	if !s.readAuthorized(request) {
+		writeError(writer, http.StatusUnauthorized, "unauthorized", "valid read credentials are required")
+		return
+	}
+	query, err := collectionHealthQuery(request)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_query", err.Error())
+		return
+	}
+	value, err := s.repository.CollectionHealth(request.Context(), query)
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
+	writeJSON(writer, http.StatusOK, value)
 }
 
 func (s *Server) authorized(request *http.Request, token string) bool {
@@ -332,6 +351,21 @@ func observationQuery(request *http.Request) (store.Query, error) {
 		return parsed, errors.New("from must be before to")
 	}
 	return parsed, nil
+}
+
+func collectionHealthQuery(request *http.Request) (store.CollectionHealthQuery, error) {
+	sourceLimit, err := limit(request, 100)
+	if err != nil {
+		return store.CollectionHealthQuery{}, err
+	}
+	samples := 24
+	if value := request.URL.Query().Get("samples"); value != "" {
+		samples, err = strconv.Atoi(value)
+		if err != nil || samples < 1 || samples > 72 {
+			return store.CollectionHealthQuery{}, errors.New("samples must be an integer from 1 through 72")
+		}
+	}
+	return store.CollectionHealthQuery{SourceLimit: sourceLimit, ResourceSamples: samples}, nil
 }
 
 func parseTime(value string) (*time.Time, error) {

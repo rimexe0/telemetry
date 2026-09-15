@@ -21,6 +21,19 @@ export type Observation = {
   projection: unknown;
 };
 
+export type CollectionDevice = {
+  device_id: string;
+  last_received_at?: string;
+  resource_history: Observation[];
+};
+
+export type CollectionHealth = {
+  checked_at: string;
+  sources: SourceSummary[];
+  sources_truncated: boolean;
+  devices: CollectionDevice[];
+};
+
 export type AuthConfig = {
   publishable_key?: string;
   pairing_enabled?: boolean;
@@ -120,6 +133,10 @@ export async function approvePairing(pairingId: string): Promise<void> {
 export async function listSources(): Promise<SourceSummary[]> {
   const result = await request<{ sources: SourceSummary[] }>('/v1/sources?limit=100');
   return result.sources;
+}
+
+export async function collectionHealth(signal?: AbortSignal): Promise<CollectionHealth> {
+  return request<CollectionHealth>('/v1/collection/health?limit=100&samples=24', { signal });
 }
 
 export async function listObservations(input: {

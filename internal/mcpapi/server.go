@@ -51,6 +51,24 @@ type ListSourcesOutput struct {
 	Sources []store.SourceSummary `json:"sources"`
 }
 
+type CollectionHealthInput struct {
+	Limit   int `json:"limit,omitempty" jsonschema:"maximum source summaries from 1 through 1000"`
+	Samples int `json:"samples,omitempty" jsonschema:"latest resource observations per device from 1 through 72"`
+}
+
+type CollectionHealthOutput struct {
+	CheckedAt        time.Time                      `json:"checked_at"`
+	Sources          []store.SourceSummary          `json:"sources"`
+	SourcesTruncated bool                           `json:"sources_truncated"`
+	Devices          []CollectionHealthDeviceOutput `json:"devices"`
+}
+
+type CollectionHealthDeviceOutput struct {
+	DeviceID        string              `json:"device_id"`
+	LastReceivedAt  *time.Time          `json:"last_received_at,omitempty"`
+	ResourceHistory []ObservationOutput `json:"resource_history"`
+}
+
 // New returns an authenticated stateless MCP handler. Tool handlers receive
 // only the repository interface, never an unrestricted SQL connection.
 func New(repository store.Repository, readToken string) (http.Handler, error) {
@@ -97,6 +115,10 @@ func New(repository store.Repository, readToken string) (http.Handler, error) {
 		}
 		return nil, ListSourcesOutput{Sources: sources}, nil
 	})
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "collection_health",
+		Description: "Read bounded source coverage and recent collector resource status observations. This reports collection evidence and limits, not a health diagnosis.",
+	}, collectionHealthTool(repository))
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{
 		Stateless:                    true,
 		JSONResponse:                 true,
@@ -104,6 +126,24 @@ func New(repository store.Repository, readToken string) (http.Handler, error) {
 		PropagateRequestCancellation: true,
 	})
 	return tokenHandler{next: handler, token: readToken}, nil
+}
+
+func collectionHealthTool(repository store.Repository) func(context.Context, *mcp.CallToolRequest, CollectionHealthInput) (*mcp.CallToolResult, CollectionHealthOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input CollectionHealthInput) (*mcp.CallToolResult, CollectionHealthOutput, error) {
+		query, err := parseCollectionHealth(input)
+		if err != nil {
+			return nil, CollectionHealthOutput{}, err
+		}
+		health, err := repository.CollectionHealth(ctx, query)
+		if err != nil {
+			return nil, CollectionHealthOutput{}, err
+		}
+		output, err := collectionHealthOutput(health)
+		if err != nil {
+			return nil, CollectionHealthOutput{}, err
+		}
+		return nil, output, nil
+	}
 }
 
 func observationOutput(input store.ObservationView) (ObservationOutput, error) {
@@ -125,6 +165,49 @@ func observationOutput(input store.ObservationView) (ObservationOutput, error) {
 		return ObservationOutput{}, fmt.Errorf("decode projection for MCP: %w", err)
 	}
 	return output, nil
+}
+
+func collectionHealthOutput(input store.CollectionHealth) (CollectionHealthOutput, error) {
+	output := CollectionHealthOutput{
+		CheckedAt:        input.CheckedAt,
+		Sources:          input.Sources,
+		SourcesTruncated: input.SourcesTruncated,
+		Devices:          make([]CollectionHealthDeviceOutput, 0, len(input.Devices)),
+	}
+	for _, device := range input.Devices {
+		converted := CollectionHealthDeviceOutput{
+			DeviceID:        device.DeviceID,
+			LastReceivedAt:  device.LastReceivedAt,
+			ResourceHistory: make([]ObservationOutput, 0, len(device.ResourceHistory)),
+		}
+		for _, resource := range device.ResourceHistory {
+			value, err := observationOutput(resource)
+			if err != nil {
+				return CollectionHealthOutput{}, err
+			}
+			converted.ResourceHistory = append(converted.ResourceHistory, value)
+		}
+		output.Devices = append(output.Devices, converted)
+	}
+	return output, nil
+}
+
+func parseCollectionHealth(input CollectionHealthInput) (store.CollectionHealthQuery, error) {
+	limit := input.Limit
+	if limit == 0 {
+		limit = 100
+	}
+	if limit < 1 || limit > 1000 {
+		return store.CollectionHealthQuery{}, errors.New("limit must be between 1 and 1000")
+	}
+	samples := input.Samples
+	if samples == 0 {
+		samples = 24
+	}
+	if samples < 1 || samples > 72 {
+		return store.CollectionHealthQuery{}, errors.New("samples must be between 1 and 72")
+	}
+	return store.CollectionHealthQuery{SourceLimit: limit, ResourceSamples: samples}, nil
 }
 
 type tokenHandler struct {

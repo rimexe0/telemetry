@@ -75,3 +75,14 @@ test('an unsplittable saturated health window fails instead of returning partial
   vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({observations:Array(1000).fill({})}),{status:200})));
   await expect(loadHealthHistory('health',new Date(0),new Date(1))).rejects.toThrow('paginated API');
 });
+
+test('collection health stays bounded, same-origin and cancellable', async () => {
+  const { collectionHealth } = await import('./api');
+  const result = { checked_at: '2026-09-12T10:00:00Z', sources: [], sources_truncated: false, devices: [] };
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(result), { status: 200 }));
+  vi.stubGlobal('fetch', fetch);
+  const controller = new AbortController();
+  expect(await collectionHealth(controller.signal)).toEqual(result);
+  expect(fetch).toHaveBeenCalledWith('/v1/collection/health?limit=100&samples=24',
+    expect.objectContaining({ credentials: 'same-origin', signal: controller.signal }));
+});

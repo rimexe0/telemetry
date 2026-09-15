@@ -321,10 +321,14 @@
     <div><span>Phone</span><strong>{phoneCount.toLocaleString()} events</strong></div>
     <div><span>Browser</span><strong>{duration(browserTotal)}</strong></div>
   </div>
-  {#if loading}<div class="inline-state" role="status">Loading</div>{/if}
-  {#if error}<div class="inline-state error" role="alert">{error}</div>{/if}
+  {#if loading && observations.length === 0}
+    <div class="inline-state" role="status">Loading</div>
+  {:else if error && observations.length === 0}
+    <div class="inline-state error" role="alert">{error}</div>
+  {:else}
+    {#if loading}<div class="inline-state" role="status">Refreshing…</div>{/if}
+    {#if error}<div class="inline-state error" role="alert">{error}</div>{/if}
 
-  {#if !loading && !error}
     <section class="timeline-card" aria-labelledby="timeline-title">
       <div class="card-head">
         <h3 id="timeline-title">Timeline</h3>
@@ -411,7 +415,6 @@
         <div class="empty">No events</div>
       {/if}
     </section>
-
 
   {/if}
 </section>

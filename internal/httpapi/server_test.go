@@ -105,6 +105,74 @@ func TestObservationsUsesBoundedQuery(t *testing.T) {
 	}
 }
 
+func TestCollectionHealthRequiresReadCredentials(t *testing.T) {
+	repository := &fakeRepository{}
+	server := testServer(t, repository)
+	request := httptest.NewRequest(http.MethodGet, "/v1/collection/health", nil)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("collection health unauthorized status = %d: %s", response.Code, response.Body.String())
+	}
+	if repository.healthCalled {
+		t.Fatal("unauthorized request reached repository")
+	}
+}
+
+func TestCollectionHealthUsesBoundedQuery(t *testing.T) {
+	now := time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC)
+	repository := &fakeRepository{health: store.CollectionHealth{
+		CheckedAt: now,
+		Sources:   []store.SourceSummary{{SourceInstanceKey: "android:phone:collector"}},
+		Devices:   []store.CollectionHealthDevice{{DeviceID: "phone", ResourceHistory: []store.ObservationView{}}},
+	}}
+	server := testServer(t, repository)
+	request := httptest.NewRequest(http.MethodGet, "/v1/collection/health?limit=7&samples=12", nil)
+	request.Header.Set("Authorization", "Bearer read-secret")
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("collection health status = %d: %s", response.Code, response.Body.String())
+	}
+	if repository.healthQuery.SourceLimit != 7 || repository.healthQuery.ResourceSamples != 12 {
+		t.Fatalf("collection health query = %+v", repository.healthQuery)
+	}
+	var output store.CollectionHealth
+	if err := json.Unmarshal(response.Body.Bytes(), &output); err != nil {
+		t.Fatal(err)
+	}
+	if !output.CheckedAt.Equal(now) || len(output.Devices) != 1 {
+		t.Fatalf("collection health output = %+v", output)
+	}
+}
+
+func TestCollectionHealthRejectsInvalidSamples(t *testing.T) {
+	repository := &fakeRepository{}
+	server := testServer(t, repository)
+	request := httptest.NewRequest(http.MethodGet, "/v1/collection/health?samples=73", nil)
+	request.Header.Set("Authorization", "Bearer read-secret")
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid samples status = %d: %s", response.Code, response.Body.String())
+	}
+	if repository.healthCalled {
+		t.Fatal("invalid request reached repository")
+	}
+}
+
+func TestCollectionHealthReturnsStorageError(t *testing.T) {
+	repository := &fakeRepository{healthErr: context.DeadlineExceeded}
+	server := testServer(t, repository)
+	request := httptest.NewRequest(http.MethodGet, "/v1/collection/health", nil)
+	request.Header.Set("Authorization", "Bearer read-secret")
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("storage error status = %d: %s", response.Code, response.Body.String())
+	}
+}
+
 func TestPanelSessionCanReadButCannotUseTheBearerToken(t *testing.T) {
 	repository := &fakeRepository{
 		observations: []store.ObservationView{{SourceRecordKey: "one"}},
@@ -189,6 +257,10 @@ type fakeRepository struct {
 	query        store.Query
 	observations []store.ObservationView
 	sources      []store.SourceSummary
+	health       store.CollectionHealth
+	healthQuery  store.CollectionHealthQuery
+	healthErr    error
+	healthCalled bool
 }
 
 func (f *fakeRepository) Ingest(_ context.Context, batch model.Batch) (store.Receipt, error) {
@@ -203,6 +275,11 @@ func (f *fakeRepository) QueryObservations(_ context.Context, query store.Query)
 
 func (f *fakeRepository) ListSources(context.Context, int) ([]store.SourceSummary, error) {
 	return f.sources, nil
+}
+func (f *fakeRepository) CollectionHealth(_ context.Context, query store.CollectionHealthQuery) (store.CollectionHealth, error) {
+	f.healthCalled = true
+	f.healthQuery = query
+	return f.health, f.healthErr
 }
 func (f *fakeRepository) Ping(context.Context) error { return nil }
 

@@ -3,24 +3,32 @@ package mcpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/rimexe0/telemetry/internal/model"
 	"github.com/rimexe0/telemetry/internal/store"
 )
 
 func TestMCPRequiresReadCredentials(t *testing.T) {
-	handler, err := New(fakeRepository{}, "read-token")
+	handler, err := New(&fakeRepository{}, "read-token")
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodPost, "/mcp", nil)
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d", response.Code)
+	for _, token := range []string{"", "wrong-token"} {
+		request := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+		if token != "" {
+			request.Header.Set("Authorization", "Bearer "+token)
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("token %q status = %d", token, response.Code)
+		}
 	}
 }
 
@@ -44,7 +52,81 @@ func TestObservationOutputUsesJSONValues(t *testing.T) {
 	}
 }
 
-type fakeRepository struct{}
+func TestParseCollectionHealthBounds(t *testing.T) {
+	query, err := parseCollectionHealth(CollectionHealthInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if query.SourceLimit != 100 || query.ResourceSamples != 24 {
+		t.Fatalf("defaults = %+v", query)
+	}
+	for _, input := range []CollectionHealthInput{{Limit: 0, Samples: 73}, {Limit: 1001, Samples: 1}, {Limit: 1, Samples: -1}} {
+		if _, err := parseCollectionHealth(input); err == nil {
+			t.Fatalf("input %+v was accepted", input)
+		}
+	}
+}
+
+func TestCollectionHealthToolReturnsBoundedObjectPayloads(t *testing.T) {
+	now := time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC)
+	repository := fakeRepository{health: store.CollectionHealth{
+		CheckedAt:        now,
+		Sources:          []store.SourceSummary{{SourceInstanceKey: "android:phone:collector"}},
+		SourcesTruncated: true,
+		Devices: []store.CollectionHealthDevice{{
+			DeviceID:       "phone",
+			LastReceivedAt: &now,
+			ResourceHistory: []store.ObservationView{{
+				DeviceID:        "phone",
+				OriginalPayload: json.RawMessage(`{"delivery_state":"delivered"}`),
+				Projection:      json.RawMessage(`{"delivery_state":"delivered"}`),
+			}},
+		}},
+	}}
+	_, output, err := collectionHealthTool(&repository)(context.Background(), nil, CollectionHealthInput{Limit: 4, Samples: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output.SourcesTruncated != true || len(output.Devices) != 1 || output.Devices[0].DeviceID != "phone" {
+		t.Fatalf("output = %+v", output)
+	}
+	if _, ok := output.Devices[0].ResourceHistory[0].OriginalPayload.(map[string]any); !ok {
+		t.Fatalf("resource payload type = %T", output.Devices[0].ResourceHistory[0].OriginalPayload)
+	}
+	if repository.healthQuery.SourceLimit != 4 || repository.healthQuery.ResourceSamples != 8 {
+		t.Fatalf("query = %+v", repository.healthQuery)
+	}
+}
+
+func TestCollectionHealthToolReturnsStorageError(t *testing.T) {
+	repository := fakeRepository{healthErr: errors.New("database unavailable")}
+	_, _, err := collectionHealthTool(&repository)(context.Background(), nil, CollectionHealthInput{})
+	if err == nil || err.Error() != "database unavailable" {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestCollectionHealthToolRejectsMalformedResourceJSON(t *testing.T) {
+	repository := fakeRepository{health: store.CollectionHealth{
+		Devices: []store.CollectionHealthDevice{{
+			DeviceID: "phone",
+			ResourceHistory: []store.ObservationView{{
+				OriginalPayload: json.RawMessage(`{"not-json"`),
+				Projection:      json.RawMessage(`{}`),
+			}},
+		}},
+	}}
+	_, _, err := collectionHealthTool(&repository)(context.Background(), nil, CollectionHealthInput{})
+	if err == nil || !strings.Contains(err.Error(), "decode original payload") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+type fakeRepository struct {
+	health      store.CollectionHealth
+	healthQuery store.CollectionHealthQuery
+	healthErr   error
+}
 
 func (fakeRepository) Ingest(context.Context, model.Batch) (store.Receipt, error) {
 	return store.Receipt{}, nil
@@ -54,5 +136,9 @@ func (fakeRepository) QueryObservations(context.Context, store.Query) ([]store.O
 }
 func (fakeRepository) ListSources(context.Context, int) ([]store.SourceSummary, error) {
 	return nil, nil
+}
+func (f *fakeRepository) CollectionHealth(_ context.Context, query store.CollectionHealthQuery) (store.CollectionHealth, error) {
+	f.healthQuery = query
+	return f.health, f.healthErr
 }
 func (fakeRepository) Ping(context.Context) error { return nil }
