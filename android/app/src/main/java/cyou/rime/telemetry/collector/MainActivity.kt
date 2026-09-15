@@ -18,6 +18,7 @@ import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.health.connect.client.HealthConnectFeatures
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import androidx.health.connect.client.permission.HealthPermission
@@ -74,6 +75,13 @@ class MainActivity : ComponentActivity() {
     private lateinit var deliveryUrlInput: EditText
     private lateinit var deliveryTokenInput: EditText
     private var pairingJob: Job? = null
+    private lateinit var freshnessStatus: TextView
+    private lateinit var notificationPermissionLauncher: ActivityResultLauncher<String>
+    private lateinit var smsPermissionLauncher: ActivityResultLauncher<String>
+    private lateinit var smsStatus: TextView
+    private lateinit var smsSwitch: Switch
+    private lateinit var smsCollectButton: Button
+    private var enableSmsAfterPermission = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -93,13 +101,23 @@ class MainActivity : ComponentActivity() {
             ActivityResultContracts.RequestPermission(),
         ) { granted -> status.text = if (granted) "Background location is granted." else "Background location was not granted." }
 
+        notificationPermissionLauncher = registerForActivityResult(
+            ActivityResultContracts.RequestPermission(),
+        ) { startFastCollection() }
+        smsPermissionLauncher = registerForActivityResult(
+            ActivityResultContracts.RequestPermission(),
+        ) { granted ->
+            if (granted && enableSmsAfterPermission) smsSwitch.isChecked = true
+            enableSmsAfterPermission = false
+            refreshSmsStatus()
+        }
         val padding = (24 * resources.displayMetrics.density).toInt()
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(padding, padding, padding, padding)
         }
         content.addView(TextView(this).apply {
-            text = "Telemetry health collector"
+            text = "Telemetry collector"
             textSize = 24f
         })
         status = TextView(this).apply { textSize = 16f }
@@ -110,6 +128,7 @@ class MainActivity : ComponentActivity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ).apply { topMargin = padding },
         )
+        addFreshnessControls(content)
         content.addView(Button(this).apply {
             text = "Check Health Connect"
             setOnClickListener { checkHealthConnect() }
@@ -136,12 +155,13 @@ class MainActivity : ComponentActivity() {
         }
         content.addView(collectButton)
         content.addView(TextView(this).apply {
-            text = "Collection runs every 15 minutes when permissions are available. Records stay in the app-private queue until delivery succeeds."
+            text = "Start fresh collection for frequent updates. Android also schedules a 15-minute fallback; timing may be delayed by sleep or battery restrictions. Missing health data does not stop other sources."
         })
         content.addView(TextView(this).apply {
             text = "Device context"
             textSize = 20f
         })
+        addSmsControls(content)
         content.addView(Button(this).apply {
             text = "Open Usage Access settings"
             setOnClickListener { startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
@@ -245,6 +265,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         if (::status.isInitialized) {
             checkHealthConnect()
+            refreshSmsStatus()
             resumePairingIfNeeded()
         }
     }
@@ -259,7 +280,7 @@ class MainActivity : ComponentActivity() {
             HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED -> {
                 client = null
                 collectButton.isEnabled = false
-                status.text = "Install or update Health Connect, then enable Samsung Health sharing."
+                status.text = "Health Connect needs installation or an update. Other device sources can continue without it."
             }
             else -> {
                 client = HealthConnectClient.getOrCreate(this, HEALTH_CONNECT_PACKAGE)
@@ -291,7 +312,11 @@ class MainActivity : ComponentActivity() {
             checkHealthConnect()
             return
         }
-        permissionLauncher.launch(requestedPermissions)
+        val background = if (client?.features?.getFeatureStatus(
+                HealthConnectFeatures.FEATURE_READ_HEALTH_DATA_IN_BACKGROUND,
+            ) == HealthConnectFeatures.FEATURE_STATUS_AVAILABLE
+        ) setOf(HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND) else emptySet()
+        permissionLauncher.launch(requestedPermissions + background)
     }
 
     private fun openSamsungHealth() {
@@ -309,11 +334,11 @@ class MainActivity : ComponentActivity() {
             try {
                 val granted = activeClient.permissionController.getGrantedPermissions()
                 val missing = (requestedPermissions - granted).size
-                collectButton.isEnabled = missing == 0
+                collectButton.isEnabled = granted.intersect(requestedPermissions).isNotEmpty()
                 status.text = if (missing == 0) {
-                    "Selected permissions are granted. The local queue is ready."
+                    "Selected health permissions are granted. Background health: ${if (HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND in granted) "granted" else "unavailable or needs consent"}."
                 } else {
-                    "$missing selected permission(s) still need consent."
+                    "$missing health permission(s) need consent. Granted sources can collect independently."
                 }
             } catch (error: Exception) {
                 status.text = "Unable to read Health Connect permissions: ${error.javaClass.simpleName}"
@@ -358,13 +383,101 @@ class MainActivity : ComponentActivity() {
                         DeviceIdentity.get(applicationContext),
                     ).collect()
                 }
-                status.text = "Read ${result.eventsRead} app events; queued ${result.insertedRevisions} new context revision(s)."
+                status.text = "Read ${result.eventsRead} app events; queued ${result.insertedRevisions} context revisions. Usage: ${result.usageState}."
             } catch (error: UsageAccessRequiredException) {
                 status.text = "Enable Usage Access first, then collect device context again."
             } catch (error: Exception) {
                 status.text = "Device context collection stopped: ${error.javaClass.simpleName}"
             } finally {
                 collectDeviceButton.isEnabled = true
+            }
+        }
+    }
+
+    private fun addSmsControls(content: LinearLayout) {
+        content.addView(TextView(this).apply {
+            text = "SMS inbox for banking activity"
+            textSize = 20f
+        })
+        smsStatus = TextView(this)
+        content.addView(smsStatus)
+        smsSwitch = Switch(this).apply {
+            text = "Capture incoming SMS inbox"
+            isChecked = SmsCollectionSettings(this@MainActivity).enabled
+            setOnCheckedChangeListener { _, checked ->
+                val settings = SmsCollectionSettings(this@MainActivity)
+                if (checked && !SmsCollectionSettings.hasReadPermission(this@MainActivity)) {
+                    enableSmsAfterPermission = true
+                    isChecked = false
+                    smsStatus.text = "SMS read permission is required. Android will ask for it now."
+                    smsPermissionLauncher.launch(Manifest.permission.READ_SMS)
+                } else {
+                    settings.enabled = checked
+                    refreshSmsStatus()
+                }
+            }
+        }
+        content.addView(smsSwitch)
+        content.addView(Button(this).apply {
+            text = "Grant SMS read permission"
+            setOnClickListener {
+                enableSmsAfterPermission = false
+                if (SmsCollectionSettings.hasReadPermission(this@MainActivity)) {
+                    refreshSmsStatus()
+                } else {
+                    smsPermissionLauncher.launch(Manifest.permission.READ_SMS)
+                }
+            }
+        })
+        smsCollectButton = Button(this).apply {
+            text = "Collect SMS inbox now"
+            setOnClickListener { collectSms() }
+        }
+        content.addView(smsCollectButton)
+        content.addView(TextView(this).apply {
+            text = "Reads incoming text SMS rows only. It preserves sender, body, timestamps " +
+                "and provider flags for later interpretation. It does not read sent messages, " +
+                "MMS or RCS. Collection stays off until you enable it and grant Android SMS " +
+                "read access."
+        })
+        refreshSmsStatus()
+    }
+
+    private fun refreshSmsStatus() {
+        if (!::smsStatus.isInitialized) return
+        val enabled = SmsCollectionSettings(this).enabled
+        val granted = SmsCollectionSettings.hasReadPermission(this)
+        smsCollectButton.isEnabled = enabled && granted
+        smsStatus.text = when {
+            !enabled -> "SMS inbox collection is off."
+            !granted -> "SMS read permission is required before collection can start."
+            else -> "SMS inbox collection is enabled. The next collection cycle will read a bounded page."
+        }
+    }
+
+    private fun collectSms() {
+        smsCollectButton.isEnabled = false
+        smsStatus.text = "Reading approved SMS inbox rows…"
+        lifecycleScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    SmsCollector(
+                        applicationContext,
+                        HealthQueue(applicationContext),
+                        DeviceIdentity.get(applicationContext),
+                    ).collect()
+                }
+                smsStatus.text = "Read ${result.recordsRead} SMS inbox row(s); queued " +
+                    "${result.insertedRevisions} new revision(s). State: ${result.state}."
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                smsStatus.text = "SMS collection cancelled; queued records remain."
+                throw error
+            } catch (error: Exception) {
+                smsStatus.text = "SMS collection failed; queued records remain. Error: " +
+                    error.javaClass.simpleName + "."
+            } finally {
+                smsCollectButton.isEnabled = SmsCollectionSettings(this@MainActivity).enabled &&
+                    SmsCollectionSettings.hasReadPermission(this@MainActivity)
             }
         }
     }
@@ -568,36 +681,87 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun uploadPendingQueue() {
-        val config = DeliveryConfig(this)
-        val url = config.serverUrl
-        val token = runCatching { config.token() }.getOrNull()
-        if (url.isBlank() || token.isNullOrBlank()) {
-            status.text = "Save delivery provisioning first."
-            return
-        }
-        status.text = "Uploading one bounded queue batch…"
+        freshnessStatus.text = "Collecting available sources and delivering within resource limits…"
         lifecycleScope.launch {
-            try {
-                val result = withContext(Dispatchers.IO) {
-                    TelemetryDeliveryClient(
-                        HealthQueue(applicationContext),
-                        DeviceIdentity.get(applicationContext),
-                        url,
-                        token,
-                    ).drainOnce()
-                }
-                status.text = if (result.claimed == 0) {
-                    "The local queue is empty."
+            CollectionRuntime.runCycle(applicationContext, backgroundHealth = false, forceHealth = true)
+            freshnessStatus.text = CollectionRuntime.latest(applicationContext)
+        }
+    }
+
+    private fun addFreshnessControls(content: LinearLayout) {
+        content.addView(TextView(this).apply {
+            text = "Fresh data"
+            textSize = 20f
+        })
+        freshnessStatus = TextView(this).apply { text = CollectionRuntime.latest(this@MainActivity) }
+        content.addView(freshnessStatus)
+        content.addView(Button(this).apply {
+            text = "Start fresh collection"
+            setOnClickListener {
+                if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(
+                        this@MainActivity, Manifest.permission.POST_NOTIFICATIONS,
+                    ) != PackageManager.PERMISSION_GRANTED
+                ) notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                else startFastCollection()
+            }
+        })
+        content.addView(Button(this).apply {
+            text = "Stop fresh collection"
+            setOnClickListener {
+                stopService(Intent(this@MainActivity, TelemetryCollectionService::class.java))
+                freshnessStatus.text = "Fresh mode stopped. The Android-scheduled fallback remains available."
+            }
+        })
+        content.addView(Button(this).apply {
+            text = "Collect now and refresh status"
+            setOnClickListener { uploadPendingQueue() }
+        })
+        content.addView(TextView(this).apply {
+            text = "Health records appear after their provider writes them to Health Connect. A phone with no health records still collects its other approved sources. GPS and notification access remain separate controls below."
+        })
+        val store = CollectionSettingsStore(this)
+        val current = store.current
+        fun number(label: String, value: Int): EditText {
+            content.addView(TextView(this).apply { text = label })
+            return EditText(this).apply {
+                inputType = InputType.TYPE_CLASS_NUMBER
+                setText(value.toString())
+                content.addView(this)
+            }
+        }
+        val cycle = number("Collection target, seconds (30–300)", current.cycleSeconds)
+        val health = number("Health check, minutes (1–30)", current.healthMinutes)
+        val metered = number("Metered upload per cycle, KiB (16–1024)", current.meteredKiB)
+        val daily = number("Metered upload per UTC day, MiB (1–1024)", current.meteredDailyMiB)
+        val battery = number("Slow down below battery % (5–50)", current.batteryFloorPercent)
+        val heat = number("Slow down at battery temperature C (35–50)", current.hotTemperatureC)
+        content.addView(TextView(this).apply {
+            text = "Limits count attempted upload payloads, including retries. Headers, downloads and VPN overhead add traffic; app TX/RX counters are shown separately. Heat, low battery or Battery Saver slows collection to five minutes."
+        })
+        content.addView(Button(this).apply {
+            text = "Save collection settings"
+            setOnClickListener {
+                val values = listOf(cycle, health, metered, daily, battery, heat).map { it.text.toString().toIntOrNull() }
+                if (values.any { it == null }) {
+                    freshnessStatus.text = "Enter a whole number for each setting."
                 } else {
-                    "Acknowledged ${result.acknowledged}/${result.claimed} queued revision(s)."
-                }
-            } catch (error: Exception) {
-                status.text = if (error is DeliveryException) {
-                    "Delivery rejected with HTTP ${error.status}; queued records remain."
-                } else {
-                    "Delivery stopped; queued records remain: ${error.javaClass.simpleName}"
+                    val saved = store.save(CollectionSettings(values[0]!!, values[1]!!, values[2]!!,
+                        values[3]!!, values[4]!!, values[5]!!))
+                    listOf(cycle, health, metered, daily, battery, heat).zip(listOf(saved.cycleSeconds,
+                        saved.healthMinutes, saved.meteredKiB, saved.meteredDailyMiB,
+                        saved.batteryFloorPercent, saved.hotTemperatureC)).forEach { (input, value) -> input.setText(value.toString()) }
+                    freshnessStatus.text = "Saved. Settings take effect on the next collection cycle."
                 }
             }
+        })
+    }
+
+    private fun startFastCollection() {
+        try {
+            ContextCompat.startForegroundService(this, Intent(this, TelemetryCollectionService::class.java))
+            freshnessStatus.text = "Fresh collection starting. Use refresh status to inspect the next cycle."
+        } catch (error: Exception) {
+            freshnessStatus.text = "Could not start collection: ${error.javaClass.simpleName}"
         }
     }
 

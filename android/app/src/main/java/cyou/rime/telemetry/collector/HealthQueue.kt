@@ -28,6 +28,20 @@ data class HealthQueueStats(
     val pendingRevisions: Long,
 )
 
+data class HealthQueuePendingStats(
+    val pendingRevisions: Long,
+    val oldestPendingOccurredAt: String?,
+    val oldestPendingCollectedAt: String?,
+)
+
+data class HealthQueueDeliveryStats(
+    val lastAttemptedAt: String?,
+    val lastSuccessfulAt: String?,
+    val attemptedBodyBytes: Long,
+    val attemptedBatches: Long,
+    val failedBatches: Long,
+)
+
 data class HealthQueueInsertResult(
     val insertedRevisions: Int,
 )
@@ -53,7 +67,7 @@ data class QueuedObservation(
  * digest; rerunning the same read is a no-op.
  */
 class HealthQueue(context: Context) {
-    private val helper = QueueDatabase(context.applicationContext)
+    private val helper = sharedHelper(context.applicationContext)
 
     fun enqueue(records: List<LocalObservation>): HealthQueueInsertResult {
         if (records.isEmpty()) return HealthQueueInsertResult(0)
@@ -100,6 +114,95 @@ class HealthQueue(context: Context) {
         ).use { cursor ->
             if (!cursor.moveToFirst()) return HealthQueueStats(0, 0, 0)
             return HealthQueueStats(cursor.getLong(0), cursor.getLong(1), cursor.getLong(2))
+        }
+    }
+
+    /** Returns the oldest pending row in FIFO order without scanning payloads. */
+    fun pendingStats(): HealthQueuePendingStats {
+        helper.readableDatabase.rawQuery(
+            """
+            SELECT COUNT(*),
+                   (SELECT occurred_at FROM health_observations
+                    WHERE delivered_at IS NULL ORDER BY row_id LIMIT 1),
+                   (SELECT collected_at FROM health_observations
+                    WHERE delivered_at IS NULL ORDER BY row_id LIMIT 1)
+            FROM health_observations
+            WHERE delivered_at IS NULL
+            """.trimIndent(),
+            null,
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return HealthQueuePendingStats(0, null, null)
+            return HealthQueuePendingStats(
+                pendingRevisions = cursor.getLong(0),
+                oldestPendingOccurredAt = cursor.getStringOrNull(1),
+                oldestPendingCollectedAt = cursor.getStringOrNull(2),
+            )
+        }
+    }
+
+    /**
+     * Persists delivery counters alongside the queue. It never changes or
+     * removes a queued observation.
+     */
+    fun recordDeliveryAttempt(
+        attemptedAt: String,
+        bodyBytes: Long,
+        successful: Boolean,
+    ) {
+        require(bodyBytes >= 0) { "bodyBytes must not be negative" }
+        val database = helper.writableDatabase
+        database.beginTransaction()
+        try {
+            ensureDeliveryMetricsRow(database)
+            if (successful) {
+                database.execSQL(
+                    """
+                    UPDATE delivery_metrics
+                    SET last_attempted_at = ?,
+                        last_successful_at = ?,
+                        attempted_body_bytes = attempted_body_bytes + ?,
+                        attempted_batches = attempted_batches + 1
+                    WHERE singleton_id = 1
+                    """.trimIndent(),
+                    arrayOf(attemptedAt, attemptedAt, bodyBytes),
+                )
+            } else {
+                database.execSQL(
+                    """
+                    UPDATE delivery_metrics
+                    SET last_attempted_at = ?,
+                        attempted_body_bytes = attempted_body_bytes + ?,
+                        attempted_batches = attempted_batches + 1,
+                        failed_batches = failed_batches + 1
+                    WHERE singleton_id = 1
+                    """.trimIndent(),
+                    arrayOf(attemptedAt, bodyBytes),
+                )
+            }
+            database.setTransactionSuccessful()
+        } finally {
+            database.endTransaction()
+        }
+    }
+
+    fun deliveryStats(): HealthQueueDeliveryStats {
+        helper.readableDatabase.rawQuery(
+            """
+            SELECT last_attempted_at, last_successful_at, attempted_body_bytes,
+                   attempted_batches, failed_batches
+            FROM delivery_metrics
+            WHERE singleton_id = 1
+            """.trimIndent(),
+            null,
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return HealthQueueDeliveryStats(null, null, 0, 0, 0)
+            return HealthQueueDeliveryStats(
+                lastAttemptedAt = cursor.getStringOrNull(0),
+                lastSuccessfulAt = cursor.getStringOrNull(1),
+                attemptedBodyBytes = cursor.getLong(2),
+                attemptedBatches = cursor.getLong(3),
+                failedBatches = cursor.getLong(4),
+            )
         }
     }
 
@@ -197,6 +300,7 @@ class HealthQueue(context: Context) {
             database.execSQL(
                 "CREATE INDEX health_observations_delivery ON health_observations(delivered_at, row_id)",
             )
+            createDeliveryMetrics(database)
         }
 
         override fun onUpgrade(database: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -208,18 +312,51 @@ class HealthQueue(context: Context) {
                 database.execSQL("ALTER TABLE health_observations ADD COLUMN delivered_at TEXT")
                 database.execSQL("CREATE INDEX IF NOT EXISTS health_observations_delivery ON health_observations(delivered_at, row_id)")
             }
-            if (newVersion > 2) {
+            if (oldVersion < 3) {
+                createDeliveryMetrics(database)
+            }
+            if (newVersion > 3) {
                 throw IllegalStateException("unsupported Health Connect queue schema upgrade")
             }
         }
 
+        private fun createDeliveryMetrics(database: SQLiteDatabase) {
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS delivery_metrics (
+                    singleton_id INTEGER PRIMARY KEY CHECK(singleton_id = 1),
+                    last_attempted_at TEXT,
+                    last_successful_at TEXT,
+                    attempted_body_bytes INTEGER NOT NULL DEFAULT 0,
+                    attempted_batches INTEGER NOT NULL DEFAULT 0,
+                    failed_batches INTEGER NOT NULL DEFAULT 0
+                )
+                """.trimIndent(),
+            )
+            database.execSQL(
+                "INSERT OR IGNORE INTO delivery_metrics (singleton_id) VALUES (1)",
+            )
+        }
+
         private companion object {
             const val DATABASE_NAME = "telemetry-health.sqlite3"
-            const val DATABASE_VERSION = 2
+            const val DATABASE_VERSION = 3
         }
     }
 
+    private fun ensureDeliveryMetricsRow(database: SQLiteDatabase) {
+        database.execSQL("INSERT OR IGNORE INTO delivery_metrics (singleton_id) VALUES (1)")
+    }
+
     private companion object {
+        private val HELPER_LOCK = Any()
+        @Volatile private var sharedQueueDatabase: QueueDatabase? = null
+
+        private fun sharedHelper(context: Context): QueueDatabase =
+            sharedQueueDatabase ?: synchronized(HELPER_LOCK) {
+                sharedQueueDatabase ?: QueueDatabase(context).also { sharedQueueDatabase = it }
+            }
+
         fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
             .digest(value.toByteArray(Charsets.UTF_8))
             .joinToString("") { byte -> "%02x".format(byte) }

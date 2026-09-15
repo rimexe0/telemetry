@@ -1,5 +1,7 @@
 package cyou.rime.telemetry.collector
 
+import android.app.AppOpsManager
+import android.os.Process
 import android.app.KeyguardManager
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
@@ -17,7 +19,7 @@ import org.json.JSONObject
 data class DeviceCollectionResult(
     val eventsRead: Int,
     val insertedRevisions: Int,
-    val queueStats: HealthQueueStats,
+    val usageState: String = "ok",
 )
 
 class UsageAccessRequiredException : IllegalStateException(
@@ -30,16 +32,26 @@ class DeviceTelemetryCollector(
     private val queue: HealthQueue,
     private val deviceId: String,
 ) {
-    fun collect(windowMillis: Long = 24 * 60 * 60 * 1000L): DeviceCollectionResult {
+    fun collect(windowMillis: Long? = null): DeviceCollectionResult = synchronized(collectionLock) {
         val now = System.currentTimeMillis()
-        val begin = now - windowMillis
+        val cursors = context.getSharedPreferences("telemetry-usage-cursor", Context.MODE_PRIVATE)
+        val begin = windowMillis?.let { now - it }
+            ?: UsageCollectionWindow.begin(now, cursors.getLong("last-success", 0L))
         val usage = context.getSystemService(UsageStatsManager::class.java)
-        val usageEvents = usage.queryEvents(begin, now)
-            ?: throw UsageAccessRequiredException()
+        val allowed = context.getSystemService(AppOpsManager::class.java).checkOpNoThrow(
+            AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), context.packageName,
+        ) == AppOpsManager.MODE_ALLOWED
+        var usageState = if (allowed) "ok" else "permission_required"
+        val usageEvents = if (allowed) try {
+            usage.queryEvents(begin, now).also { if (it == null) usageState = "unavailable" }
+        } catch (_: Exception) {
+            usageState = "error"
+            null
+        } else null
         val observations = mutableListOf<LocalObservation>()
         val event = UsageEvents.Event()
         var eventsRead = 0
-        while (usageEvents.hasNextEvent()) {
+        while (usageEvents?.hasNextEvent() == true) {
             usageEvents.getNextEvent(event)
             if (event.packageName.isNullOrBlank()) continue
             if (event.eventType !in INTERESTING_USAGE_EVENTS) continue
@@ -69,7 +81,12 @@ class DeviceTelemetryCollector(
         }
         observations += deviceStateObservation(now)
         val inserted = queue.enqueue(observations).insertedRevisions
-        return DeviceCollectionResult(eventsRead, inserted, queue.stats())
+        // Advance only after all observations are durably queued. A crash replays
+        // the overlap, which the queue deduplicates by source identity and bytes.
+        if (usageState == "ok" && !cursors.edit().putLong("last-success", now).commit()) {
+            usageState = "cursor_write_error"
+        }
+        DeviceCollectionResult(eventsRead, inserted, usageState)
     }
 
     private fun deviceStateObservation(now: Long): LocalObservation {
@@ -117,6 +134,7 @@ class DeviceTelemetryCollector(
     }
 
     private companion object {
+        val collectionLock = Any()
         const val STATE_BUCKET_MILLIS = 60_000L
         val INTERESTING_USAGE_EVENTS = setOf(
             UsageEvents.Event.ACTIVITY_RESUMED,

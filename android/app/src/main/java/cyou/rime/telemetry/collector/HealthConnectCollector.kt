@@ -22,9 +22,11 @@ data class HealthCollectionResult(
     val queueStats: HealthQueueStats,
 )
 
-private data class TypeCollectionResult(
+internal data class HealthTypeCollectionResult(
     val recordsRead: Int,
     val insertedRevisions: Int,
+    /** True when Health Connect revoked this type while it was being read. */
+    val permissionRevoked: Boolean = false,
 )
 
 /** Reads approved Health Connect types page-by-page into the local queue. */
@@ -38,10 +40,10 @@ class HealthConnectCollector(
         end: Instant = Instant.now(),
     ): HealthCollectionResult {
         val resultsByType = linkedMapOf(
-            "steps" to collectType(StepsRecord::class, "steps", ::stepsObservation, start, end),
-            "heart_rate" to collectType(HeartRateRecord::class, "heart_rate", ::heartRateObservation, start, end),
-            "sleep_session" to collectType(SleepSessionRecord::class, "sleep_session", ::sleepObservation, start, end),
-            "exercise_session" to collectType(ExerciseSessionRecord::class, "exercise_session", ::exerciseObservation, start, end),
+            "steps" to collectType("steps", start, end),
+            "heart_rate" to collectType("heart_rate", start, end),
+            "sleep_session" to collectType("sleep_session", start, end),
+            "exercise_session" to collectType("exercise_session", start, end),
         )
         return HealthCollectionResult(
             recordsRead = resultsByType.values.sumOf { it.recordsRead },
@@ -52,13 +54,38 @@ class HealthConnectCollector(
         )
     }
 
-    private suspend fun <T : Record> collectType(
+    /**
+     * Collect one approved type over a bounded range. The sync wrapper uses
+     * this to isolate a revoked or failing type from the other types.
+     */
+    internal suspend fun collectType(
+        recordType: String,
+        start: Instant,
+        end: Instant,
+    ): HealthTypeCollectionResult = when (recordType) {
+        "steps" -> collectRecords(StepsRecord::class, "steps", ::stepsObservation, start, end)
+        "heart_rate" -> collectRecords(HeartRateRecord::class, "heart_rate", ::heartRateObservation, start, end)
+        "sleep_session" -> collectRecords(SleepSessionRecord::class, "sleep_session", ::sleepObservation, start, end)
+        "exercise_session" -> collectRecords(ExerciseSessionRecord::class, "exercise_session", ::exerciseObservation, start, end)
+        else -> throw IllegalArgumentException("unsupported Health Connect record type: $recordType")
+    }
+
+    /** Converts a change-log upsertion using the same schema as a range read. */
+    internal fun observationFor(recordType: String, record: Record): HealthObservation = when (recordType) {
+        "steps" -> (record as? StepsRecord)?.let(::stepsObservation)
+        "heart_rate" -> (record as? HeartRateRecord)?.let(::heartRateObservation)
+        "sleep_session" -> (record as? SleepSessionRecord)?.let(::sleepObservation)
+        "exercise_session" -> (record as? ExerciseSessionRecord)?.let(::exerciseObservation)
+        else -> null
+    } ?: throw IllegalArgumentException("Health Connect change has unexpected type for $recordType")
+
+    private suspend fun <T : Record> collectRecords(
         recordClass: KClass<T>,
         recordType: String,
         toObservation: (T) -> HealthObservation,
         start: Instant,
         end: Instant,
-    ): TypeCollectionResult {
+    ): HealthTypeCollectionResult {
         var pageToken: String? = null
         var recordsRead = 0
         var inserted = 0
@@ -76,13 +103,13 @@ class HealthConnectCollector(
             } catch (_: SecurityException) {
                 // A source may have been revoked independently. Keep the other
                 // approved types collecting and let the next run retry this one.
-                return TypeCollectionResult(recordsRead, inserted)
+                return HealthTypeCollectionResult(recordsRead, inserted, permissionRevoked = true)
             }
             recordsRead += response.records.size
             inserted += queue.enqueue(response.records.map(toObservation)).insertedRevisions
             pageToken = response.pageToken
         } while (!pageToken.isNullOrEmpty())
-        return TypeCollectionResult(recordsRead, inserted)
+        return HealthTypeCollectionResult(recordsRead, inserted)
     }
 
     private fun stepsObservation(record: StepsRecord): HealthObservation {

@@ -26,6 +26,9 @@ android {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
+    // JVM tests need real JSON behavior; Android's mockable jar only has stubs.
+    testImplementation("org.json:json:20260814")
     implementation("androidx.activity:activity-ktx:1.10.1")
     implementation("androidx.health.connect:connect-client:1.1.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")

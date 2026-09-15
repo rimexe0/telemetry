@@ -11,6 +11,8 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.IBinder
+import android.os.Handler
+import android.os.Looper
 import androidx.core.app.ActivityCompat
 import java.time.Instant
 import org.json.JSONObject
@@ -18,6 +20,14 @@ import org.json.JSONObject
 class TelemetryLocationService : Service() {
     private lateinit var locationManager: LocationManager
     private lateinit var listener: LocationListener
+    private val handler = Handler(Looper.getMainLooper())
+    private var intervalMillis = 0L
+    private val resourceCheck = object : Runnable {
+        override fun run() {
+            updateLocationRequest()
+            handler.postDelayed(this, 60_000L)
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -34,30 +44,54 @@ class TelemetryLocationService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (!hasLocationPermission()) {
-            stopSelf()
-            return START_NOT_STICKY
-        }
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
-            ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        ) {
-            locationManager.requestLocationUpdates(
-                LocationManager.GPS_PROVIDER,
-                60_000L,
-                25f,
-                listener,
-                mainLooper,
-            )
-        }
+        handler.removeCallbacks(resourceCheck)
+        handler.post(resourceCheck)
         return START_STICKY
     }
 
     override fun onDestroy() {
+        handler.removeCallbacks(resourceCheck)
+        getSharedPreferences("telemetry-location-status", MODE_PRIVATE).edit().putString("state", "stopped").apply()
         stopLocationUpdates()
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun updateLocationRequest() {
+        val prefs = getSharedPreferences("telemetry-location-status", MODE_PRIVATE)
+        prefs.edit().putLong("last_service_check_at", System.currentTimeMillis()).apply()
+        if (!hasLocationPermission()) {
+            prefs.edit().putString("state", "permission_required").apply()
+            stopSelf()
+            return
+        }
+        val settings = CollectionSettingsStore(this).current
+        val snapshot = CollectorResources(this).sample()
+        val budget = snapshot.budget(settings)
+        // Continuous GPS reception is the expensive part. Release it while
+        // resources are constrained and try again after the phone recovers.
+        if (budget.constrainedReason != null) {
+            stopLocationUpdates()
+            intervalMillis = 0L
+            prefs.edit().putString("state", "paused_resources:${budget.constrainedReason}").apply()
+            return
+        }
+        if (intervalMillis == budget.intervalMillis) return
+        try {
+            stopLocationUpdates()
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            ) {
+                locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER,
+                    budget.intervalMillis, 25f, listener, mainLooper)
+                intervalMillis = budget.intervalMillis
+                prefs.edit().putString("state", "active_waiting_for_fix").apply()
+            }
+        } catch (error: Exception) {
+            prefs.edit().putString("state", "error:${error.javaClass.simpleName}").apply()
+        }
+    }
 
     private fun enqueue(location: Location) {
         val deviceId = DeviceIdentity.get(this)
@@ -70,6 +104,9 @@ class TelemetryLocationService : Service() {
             .putNullable("altitude_meters", if (location.hasAltitude()) location.altitude else null)
             .putNullable("speed_meters_per_second", if (location.hasSpeed()) location.speed else null)
             .putNullable("bearing_degrees", if (location.hasBearing()) location.bearing else null)
+        getSharedPreferences("telemetry-location-status", MODE_PRIVATE).edit()
+            .putString("state", "fix_received")
+            .putLong("last_fix_at", location.time).apply()
         HealthQueue(this).enqueue(
             listOf(
                 LocalObservation(
