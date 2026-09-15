@@ -32,7 +32,9 @@ func main() {
 	case "backfill":
 		backfill(os.Args[2:])
 	case "sync":
-		sync(os.Args[2:])
+		if err := sync(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
 	case "drain":
 		drain(os.Args[2:])
 	default:
@@ -102,7 +104,7 @@ func discover(arguments []string) {
 	printJSON(map[string]any{"info": json.RawMessage(info), "buckets": buckets})
 }
 
-func sync(arguments []string) {
+func sync(arguments []string) error {
 	flags := flag.NewFlagSet("sync", flag.ExitOnError)
 	configPath := flags.String("config", "", "paired device configuration")
 	url := flags.String("url", "http://127.0.0.1:5600", "ActivityWatch server URL")
@@ -112,34 +114,63 @@ func sync(arguments []string) {
 	from := flags.String("from", "", "initial RFC3339 time range start (required until a watermark exists)")
 	overlap := flags.Duration("overlap", 15*time.Minute, "reconciliation overlap for mutable events")
 	limit := flags.Int("limit", 1000, "maximum events to retrieve")
+	passTimeout := flags.Duration("timeout", 20*time.Second, "maximum duration of one collection and delivery pass")
+	httpTimeout := flags.Duration("http-timeout", 5*time.Second, "maximum duration of one ActivityWatch or core HTTP request")
 	serverURL := flags.String("server", "", "Telemetry core URL; omit to queue only")
 	ingestToken := flags.String("ingest-token", "", "Telemetry core ingest token")
 	ingestTokenFile := flags.String("ingest-token-file", "", "path to a file containing the Telemetry core ingest token")
 	drainAll := flags.Bool("drain-all", false, "continue bounded delivery until no claimable queue items remain")
 	maxBatches := flags.Int("max-batches", 10000, "maximum batches when -drain-all is set")
 	flags.Parse(arguments)
+	started := time.Now()
+	beforeUsage, _ := readProcessUsage()
+	bodyBytes := &bodyByteCounter{}
+	output := map[string]any{}
+	var localQueue *queue.Queue
+	finish := func() {
+		stats := queue.Stats{}
+		if localQueue != nil {
+			if value, err := localQueue.Stats(context.Background()); err == nil {
+				stats = value
+			}
+		}
+		afterUsage, _ := readProcessUsage()
+		output["metrics"] = makePassMetrics(started, time.Now(), beforeUsage, afterUsage, bodyBytes, stats)
+		printJSON(output)
+	}
+	fail := func(err error) error {
+		output["error"] = err.Error()
+		finish()
+		return err
+	}
 	paired, err := applyPairing(*configPath, deviceID, serverURL, ingestToken, ingestTokenFile)
 	if err != nil {
-		log.Fatal(err)
+		return fail(err)
 	}
 	if *queuePath == "" || *deviceID == "" || *bucketID == "" {
-		log.Fatal("-queue, -device, and -bucket are required")
+		return fail(fmt.Errorf("-queue, -device, and -bucket are required"))
+	}
+	if *passTimeout <= 0 || *httpTimeout <= 0 {
+		return fail(fmt.Errorf("-timeout and -http-timeout must be positive"))
 	}
 	var start *time.Time
 	if *from != "" {
 		value, err := time.Parse(time.RFC3339, *from)
 		if err != nil {
-			log.Fatal("-from must be RFC3339")
+			return fail(fmt.Errorf("-from must be RFC3339"))
 		}
 		start = &value
 	}
-	localQueue, err := queue.Open(*queuePath)
+	localQueue, err = queue.Open(*queuePath)
 	if err != nil {
-		log.Fatal(err)
+		return fail(err)
 	}
 	defer localQueue.Close()
 	now := time.Now().UTC()
-	result, err := activitywatch.SyncBucket(context.Background(), activitywatch.Client{BaseURL: *url, HTTPClient: &http.Client{Timeout: 30 * time.Second}}, localQueue, activitywatch.SyncOptions{
+	passContext, cancel := context.WithTimeout(context.Background(), *passTimeout)
+	defer cancel()
+	httpClient := &http.Client{Timeout: *httpTimeout, Transport: countingTransport{base: http.DefaultTransport, bytes: bodyBytes}}
+	result, err := activitywatch.SyncBucket(passContext, activitywatch.Client{BaseURL: *url, HTTPClient: httpClient}, localQueue, activitywatch.SyncOptions{
 		DeviceID: *deviceID,
 		Bucket:   activitywatch.Bucket{ID: *bucketID},
 		From:     start,
@@ -148,16 +179,16 @@ func sync(arguments []string) {
 		Now:      now,
 	})
 	if err != nil {
-		log.Fatal(err)
+		return fail(err)
 	}
-	output := map[string]any{"sync": result}
+	output["sync"] = result
 	token, err := readToken(*ingestToken, *ingestTokenFile)
 	if err != nil {
-		log.Fatal(err)
+		return fail(err)
 	}
 	if *serverURL != "" || token != "" {
 		if *serverURL == "" || token == "" {
-			log.Fatal("-server and -ingest-token must be provided together")
+			return fail(fmt.Errorf("-server and -ingest-token must be provided together"))
 		}
 		drainOptions := ingest.DrainOptions{
 			Limit:         100,
@@ -167,25 +198,26 @@ func sync(arguments []string) {
 			DeviceID:      *deviceID,
 			Version:       collectorVersion,
 		}
-		client := ingest.Client{BaseURL: *serverURL, Token: token, HTTPClient: &http.Client{Timeout: 30 * time.Second}}
+		client := ingest.Client{BaseURL: *serverURL, Token: token, HTTPClient: httpClient}
 		if paired {
 			client.DeviceID = *deviceID
 		}
 		if *drainAll {
-			drainResult, err := ingest.DrainAll(context.Background(), localQueue, client, ingest.DrainAllOptions{DrainOptions: drainOptions, MaxBatches: *maxBatches})
+			drainResult, err := ingest.DrainAll(passContext, localQueue, client, ingest.DrainAllOptions{DrainOptions: drainOptions, MaxBatches: *maxBatches})
 			if err != nil {
-				log.Fatal(err)
+				return fail(err)
 			}
 			output["delivery"] = drainResult
 		} else {
-			drainResult, err := ingest.Drain(context.Background(), localQueue, client, drainOptions)
+			drainResult, err := ingest.Drain(passContext, localQueue, client, drainOptions)
 			if err != nil {
-				log.Fatal(err)
+				return fail(err)
 			}
 			output["delivery"] = drainResult
 		}
 	}
-	printJSON(output)
+	finish()
+	return nil
 }
 
 func drain(arguments []string) {
