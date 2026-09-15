@@ -261,6 +261,18 @@ type fakeRepository struct {
 	healthQuery  store.CollectionHealthQuery
 	healthErr    error
 	healthCalled bool
+
+	activities     []store.Activity
+	activityInput  store.Activity
+	activityErr    error
+	plan           *store.Plan
+	planInput      store.PlanInput
+	planDate       time.Time
+	planErr        error
+	blockState     store.PlanBlock
+	blockID        int64
+	blockStateName string
+	blockErr       error
 }
 
 func (f *fakeRepository) Ingest(_ context.Context, batch model.Batch) (store.Receipt, error) {
@@ -280,6 +292,48 @@ func (f *fakeRepository) CollectionHealth(_ context.Context, query store.Collect
 	f.healthCalled = true
 	f.healthQuery = query
 	return f.health, f.healthErr
+}
+func (f *fakeRepository) CreateActivity(_ context.Context, activity store.Activity) (store.Activity, error) {
+	if f.activityErr != nil {
+		return store.Activity{}, f.activityErr
+	}
+	activity.ID = 1
+	f.activityInput = activity
+	return activity, nil
+}
+func (f *fakeRepository) ListActivities(_ context.Context, filter store.ActivityFilter) ([]store.Activity, error) {
+	return f.activities, nil
+}
+func (f *fakeRepository) UpdateActivity(_ context.Context, activity store.Activity) (store.Activity, error) {
+	if f.activityErr != nil {
+		return store.Activity{}, f.activityErr
+	}
+	f.activityInput = activity
+	return activity, nil
+}
+func (f *fakeRepository) LatestPlan(_ context.Context, planDate time.Time) (*store.Plan, error) {
+	f.planDate = planDate
+	return f.plan, nil
+}
+func (f *fakeRepository) SavePlan(_ context.Context, planDate time.Time, input store.PlanInput) (store.Plan, error) {
+	if f.planErr != nil {
+		return store.Plan{}, f.planErr
+	}
+	f.planDate = planDate
+	f.planInput = input
+	blocks := make([]store.PlanBlock, 0, len(input.Blocks))
+	for i, spec := range input.Blocks {
+		blocks = append(blocks, store.PlanBlock{ID: int64(i + 1), ActivityID: spec.ActivityID, Title: spec.Title, StartTime: spec.StartTime, DurationMinutes: spec.DurationMinutes, Fixed: spec.Fixed, State: "planned", Position: i})
+	}
+	return store.Plan{PlanDate: planDate.Format("2006-01-02"), VersionID: 1, Blocks: blocks}, nil
+}
+func (f *fakeRepository) SetPlanBlockState(_ context.Context, blockID int64, state, _ string) (store.PlanBlock, error) {
+	if f.blockErr != nil {
+		return store.PlanBlock{}, f.blockErr
+	}
+	f.blockID = blockID
+	f.blockStateName = state
+	return f.blockState, nil
 }
 func (f *fakeRepository) Ping(context.Context) error { return nil }
 

@@ -5,14 +5,18 @@
   import DayTimeline from '$lib/DayTimeline.svelte';
   import EventDetail from '$lib/EventDetail.svelte';
   import CollectionStatus from '$lib/CollectionStatus.svelte';
+  import PlanView from '$lib/PlanView.svelte';
   import { dayKey, dayStart } from '$lib/health';
   import { clearClerk, loadClerk, type ClerkClient } from '$lib/clerk';
   import {
     APIError,
     approvePairing,
     collectionHealth,
+    createActivity,
     endPanelSession,
     getAuthConfig,
+    getPlan,
+    listActivities,
     listObservations,
     listDevices,
     listSources,
@@ -21,13 +25,20 @@
     pairingDetails,
     revokeDevice,
     panelSession,
+    savePlan,
     setClerkTokenProvider,
+    setPlanBlockState,
     startPanelSession,
+    updateActivity,
+    type Activity,
     type AuthConfig,
     type CollectionHealth,
     type Device,
     type Observation,
     type PairingDetails,
+    type Plan,
+    type PlanBlock,
+    type PlanInput,
     type SourceSummary
   } from '$lib/api';
 
@@ -35,7 +46,7 @@
 
   const fixtureMode = import.meta.env.VITE_TELEMETRY_FIXTURE === '1';
   const snapshotMode = import.meta.env.VITE_TELEMETRY_SNAPSHOT === '1';
-  let view: 'day' | 'health' | 'collection' | 'devices' = 'day';
+  let view: 'day' | 'plan' | 'health' | 'collection' | 'devices' = 'day';
   let selectedDay = dayKey(Date.now());
   let dayObservations: Observation[] = [];
   let dayLoading = false;
@@ -51,6 +62,12 @@
   let devices: Device[] = [];
   let devicesLoading = false;
   let devicesError = '';
+  let activities: Activity[] = [];
+  let activitiesLoading = false;
+  let activitiesError = '';
+  let plan: Plan | null = null;
+  let planLoading = false;
+  let planError = '';
   let collectionStatus: CollectionHealth | undefined;
   let collectionError = '';
   let collectionRequest: AbortController | undefined;
@@ -186,6 +203,44 @@
     }
   }
 
+  async function refreshPlan(): Promise<void> {
+    if (!authenticated) return;
+    planLoading = true;
+    planError = '';
+    activitiesLoading = true;
+    activitiesError = '';
+    try {
+      const [dayPlan, rows] = await Promise.all([getPlan(selectedDay), listActivities()]);
+      plan = dayPlan;
+      activities = rows;
+    } catch (cause) {
+      planError = cause instanceof Error ? cause.message : 'Unable to load the plan.';
+      if (cause instanceof APIError && cause.status === 401) authenticated = false;
+    } finally {
+      planLoading = false;
+      activitiesLoading = false;
+    }
+  }
+
+  async function handleSavePlan(input: PlanInput): Promise<void> {
+    plan = await savePlan(selectedDay, input);
+  }
+
+  async function handleBlockState(blockId: number, state: PlanBlock['state'], note: string): Promise<void> {
+    const updated = await setPlanBlockState(selectedDay, blockId, state, note);
+    if (plan) plan = { ...plan, blocks: plan.blocks.map(block => block.id === updated.id ? updated : block) };
+  }
+
+  async function handleCreateActivity(input: { title: string; next_action: string; effort_estimate_minutes?: number }): Promise<void> {
+    const created = await createActivity(input);
+    activities = [...activities, created];
+  }
+
+  async function handleUpdateActivity(activity: Activity): Promise<void> {
+    const updated = await updateActivity(activity.id, activity);
+    activities = activities.map(row => row.id === updated.id ? updated : row);
+  }
+
   async function refreshPairing(): Promise<void> {
     if (!pairingId || !clerk?.isSignedIn) return;
     pairingLoading = true;
@@ -285,6 +340,7 @@
         sources = await listSources();
         if (view === 'health') await refreshHealth();
         else if (view === 'devices') await refreshDevices();
+        else if (view === 'plan') await refreshPlan();
         else await refreshDay();
       }
       if (selectedObservation) selectedObservation = (view === 'health' ? healthObservations : view === 'day' ? dayObservations : [...observations, ...(collectionStatus?.devices.flatMap(d => d.resource_history) ?? [])]).find(event => event.source_record_key === selectedObservation?.source_record_key && event.source_instance_key === selectedObservation?.source_instance_key);
@@ -532,6 +588,7 @@
   {:else}
     <nav class="view-tabs" aria-label="Panel views">
       <button class:active={view === 'day'} aria-pressed={view === 'day'} disabled={loading} on:click={() => { view = 'day'; void refresh(); }}>Day</button>
+      <button class:active={view === 'plan'} aria-pressed={view === 'plan'} disabled={loading} on:click={() => { view = 'plan'; void refresh(); }}>Plan</button>
       <button class:active={view === 'health'} aria-pressed={view === 'health'} disabled={loading} on:click={() => { view = 'health'; void refresh(); }}>Health</button>
       <button class:active={view === 'collection'} aria-pressed={view === 'collection'} disabled={loading} on:click={() => { view = 'collection'; void refresh(); }}>Sources</button>
       <button class:active={view === 'devices'} aria-pressed={view === 'devices'} disabled={loading} on:click={() => { view = 'devices'; void refresh(); }}>Devices</button>
@@ -561,6 +618,10 @@
       </div>
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       <HealthHistory observations={healthObservations} loading={healthLoading} error={healthError} oninspect={(o) => selectedObservation = o} />
+    {:else if view === 'plan'}
+      <PlanView day={selectedDay} {activities} {plan} activitiesError={activitiesError} planError={planError}
+        onrefresh={refreshPlan} onsave={handleSavePlan} onsetstate={handleBlockState}
+        oncreateactivity={handleCreateActivity} onupdateactivity={handleUpdateActivity} />
     {:else if view === 'devices'}
       <section class="devices" aria-labelledby="devices-heading">
         <div class="section-title"><h2 id="devices-heading">Devices</h2><button class="quiet-button" on:click={refreshDevices} disabled={devicesLoading}>{devicesLoading ? 'Refreshing…' : 'Refresh'}</button></div>

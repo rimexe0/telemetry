@@ -20,3 +20,6 @@ analysis/
 deploy/datalix/bin/
 
 .pnpm-store/
+
+# Local release staging and build output
+/build/

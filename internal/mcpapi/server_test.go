@@ -141,4 +141,22 @@ func (f *fakeRepository) CollectionHealth(_ context.Context, query store.Collect
 	f.healthQuery = query
 	return f.health, f.healthErr
 }
+func (fakeRepository) CreateActivity(context.Context, store.Activity) (store.Activity, error) {
+	return store.Activity{}, store.ErrNotFound
+}
+func (fakeRepository) ListActivities(context.Context, store.ActivityFilter) ([]store.Activity, error) {
+	return []store.Activity{}, nil
+}
+func (fakeRepository) UpdateActivity(context.Context, store.Activity) (store.Activity, error) {
+	return store.Activity{}, store.ErrNotFound
+}
+func (fakeRepository) LatestPlan(context.Context, time.Time) (*store.Plan, error) {
+	return nil, nil
+}
+func (fakeRepository) SavePlan(context.Context, time.Time, store.PlanInput) (store.Plan, error) {
+	return store.Plan{}, store.ErrNotFound
+}
+func (fakeRepository) SetPlanBlockState(context.Context, int64, string, string) (store.PlanBlock, error) {
+	return store.PlanBlock{}, store.ErrNotFound
+}
 func (fakeRepository) Ping(context.Context) error { return nil }

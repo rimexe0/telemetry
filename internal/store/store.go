@@ -73,5 +73,11 @@ type Repository interface {
 	QueryObservations(context.Context, Query) ([]ObservationView, error)
 	ListSources(context.Context, int) ([]SourceSummary, error)
 	CollectionHealth(context.Context, CollectionHealthQuery) (CollectionHealth, error)
+	CreateActivity(context.Context, Activity) (Activity, error)
+	ListActivities(context.Context, ActivityFilter) ([]Activity, error)
+	UpdateActivity(context.Context, Activity) (Activity, error)
+	LatestPlan(context.Context, time.Time) (*Plan, error)
+	SavePlan(context.Context, time.Time, PlanInput) (Plan, error)
+	SetPlanBlockState(context.Context, int64, string, string) (PlanBlock, error)
 	Ping(context.Context) error
 }

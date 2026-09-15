@@ -65,6 +65,10 @@ func New(repository store.Repository, config Config) (*Server, error) {
 	server.mux.HandleFunc("GET /v1/panel/session", server.panelSessionStatus)
 	server.mux.HandleFunc("POST /v1/panel/session", server.startPanelSession)
 	server.mux.HandleFunc("DELETE /v1/panel/session", server.endPanelSession)
+	server.mux.HandleFunc("/v1/activities", server.activities)
+	server.mux.HandleFunc("PATCH /v1/activities/{id}", server.activity)
+	server.mux.HandleFunc("/v1/plans/{date}", server.plan)
+	server.mux.HandleFunc("PATCH /v1/plans/{date}/blocks/{id}", server.planBlock)
 	return server, nil
 }
 

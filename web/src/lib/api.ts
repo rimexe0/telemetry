@@ -178,3 +178,78 @@ export async function loadObservationHistory(sourceInstanceKey: string, from: Da
 }
 
 export const loadHealthHistory = loadObservationHistory;
+
+export type Activity = {
+  id: number;
+  title: string;
+  notes: string;
+  next_action: string;
+  status: 'active' | 'waiting' | 'blocked' | 'done' | 'abandoned';
+  priority: number;
+  deadline?: string;
+  effort_estimate_minutes?: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ActivityInput = Partial<Omit<Activity, 'id' | 'created_at' | 'updated_at'>> & { title: string };
+
+export type PlanBlock = {
+  id: number;
+  activity_id?: number;
+  title: string;
+  start_time: string;
+  duration_minutes: number;
+  fixed: boolean;
+  state: 'planned' | 'active' | 'done' | 'skipped' | 'switched';
+  state_note: string;
+  position: number;
+};
+
+export type PlanBlockSpec = {
+  activity_id?: number;
+  title?: string;
+  start_time: string;
+  duration_minutes: number;
+  fixed?: boolean;
+};
+
+export type Plan = {
+  plan_date: string;
+  version_id: number;
+  created_at: string;
+  note: string;
+  blocks: PlanBlock[];
+};
+
+export type PlanInput = { note?: string; blocks: PlanBlockSpec[] };
+
+export async function listActivities(): Promise<Activity[]> {
+  const result = await request<{ activities: Activity[] }>('/v1/activities?limit=200');
+  return result.activities ?? [];
+}
+
+export async function createActivity(input: ActivityInput): Promise<Activity> {
+  return request<Activity>('/v1/activities', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+}
+
+export async function updateActivity(id: number, input: ActivityInput): Promise<Activity> {
+  return request<Activity>(`/v1/activities/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+}
+
+export async function getPlan(planDate: string): Promise<Plan | null> {
+  const result = await request<{ plan: Plan | null }>(`/v1/plans/${encodeURIComponent(planDate)}`);
+  return result.plan;
+}
+
+export async function savePlan(planDate: string, input: PlanInput): Promise<Plan> {
+  return request<Plan>(`/v1/plans/${encodeURIComponent(planDate)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+}
+
+export async function setPlanBlockState(planDate: string, blockId: number, state: PlanBlock['state'], stateNote = ''): Promise<PlanBlock> {
+  return request<PlanBlock>(`/v1/plans/${encodeURIComponent(planDate)}/blocks/${encodeURIComponent(blockId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ state, state_note: stateNote })
+  });
+}
