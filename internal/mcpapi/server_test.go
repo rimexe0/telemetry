@@ -171,4 +171,19 @@ func (fakeRepository) GetPlanningSettings(context.Context) (store.PlanningSettin
 func (fakeRepository) UpdatePlanningSettings(context.Context, bool) (store.PlanningSettings, error) {
 	return store.PlanningSettings{}, nil
 }
+func (fakeRepository) StartExecutionSession(context.Context, store.ExecutionSessionInput) (store.ExecutionSession, error) {
+	return store.ExecutionSession{}, store.ErrNotFound
+}
+func (fakeRepository) TransitionExecutionSession(context.Context, int64, store.ExecutionEventInput) (store.ExecutionSession, error) {
+	return store.ExecutionSession{}, store.ErrNotFound
+}
+func (fakeRepository) CurrentExecutionSession(context.Context) (*store.ExecutionSession, error) {
+	return nil, nil
+}
+func (fakeRepository) GetExecutionSession(context.Context, int64) (*store.ExecutionSession, error) {
+	return nil, store.ErrNotFound
+}
+func (fakeRepository) ListExecutionSessions(context.Context, int) ([]store.ExecutionSession, error) {
+	return []store.ExecutionSession{}, nil
+}
 func (fakeRepository) Ping(context.Context) error { return nil }

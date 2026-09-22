@@ -277,6 +277,15 @@ type fakeRepository struct {
 	versions       []store.PlanVersionSummary
 	settings       store.PlanningSettings
 	settingsInput  bool
+
+	executionSession      *store.ExecutionSession
+	executionCurrent      *store.ExecutionSession
+	executionSessions     []store.ExecutionSession
+	executionStartInput   store.ExecutionSessionInput
+	executionEventInput   store.ExecutionEventInput
+	executionEventSession int64
+	executionLimit        int
+	executionErr          error
 }
 
 func (f *fakeRepository) Ingest(_ context.Context, batch model.Batch) (store.Receipt, error) {
@@ -354,6 +363,49 @@ func (f *fakeRepository) UpdatePlanningSettings(_ context.Context, enabled bool)
 	f.settingsInput = enabled
 	f.settings.DailyPlanGateEnabled = enabled
 	return f.settings, nil
+}
+func (f *fakeRepository) StartExecutionSession(_ context.Context, input store.ExecutionSessionInput) (store.ExecutionSession, error) {
+	if f.executionErr != nil {
+		return store.ExecutionSession{}, f.executionErr
+	}
+	f.executionStartInput = input
+	if f.executionSession != nil {
+		return *f.executionSession, nil
+	}
+	return store.ExecutionSession{ID: 1, ActivityID: input.ActivityID, PlanBlockID: input.PlanBlockID, State: "active", Events: []store.ExecutionEvent{{ID: 1, SessionID: 1, EventType: "started"}}}, nil
+}
+func (f *fakeRepository) TransitionExecutionSession(_ context.Context, sessionID int64, input store.ExecutionEventInput) (store.ExecutionSession, error) {
+	if f.executionErr != nil {
+		return store.ExecutionSession{}, f.executionErr
+	}
+	f.executionEventSession = sessionID
+	f.executionEventInput = input
+	if f.executionSession != nil {
+		return *f.executionSession, nil
+	}
+	return store.ExecutionSession{ID: sessionID, State: "active", Events: []store.ExecutionEvent{{ID: 1, SessionID: sessionID, EventType: input.EventType, Note: input.Note}}}, nil
+}
+func (f *fakeRepository) CurrentExecutionSession(context.Context) (*store.ExecutionSession, error) {
+	if f.executionErr != nil {
+		return nil, f.executionErr
+	}
+	return f.executionCurrent, nil
+}
+func (f *fakeRepository) GetExecutionSession(_ context.Context, sessionID int64) (*store.ExecutionSession, error) {
+	if f.executionErr != nil {
+		return nil, f.executionErr
+	}
+	if f.executionSession == nil || f.executionSession.ID != sessionID {
+		return nil, store.ErrNotFound
+	}
+	return f.executionSession, nil
+}
+func (f *fakeRepository) ListExecutionSessions(_ context.Context, limit int) ([]store.ExecutionSession, error) {
+	if f.executionErr != nil {
+		return nil, f.executionErr
+	}
+	f.executionLimit = limit
+	return f.executionSessions, nil
 }
 func (f *fakeRepository) Ping(context.Context) error { return nil }
 

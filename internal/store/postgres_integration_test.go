@@ -151,6 +151,7 @@ func clearIntegrationData(ctx context.Context, database *Postgres) error {
 	_, err := database.pool.Exec(ctx, `
 		TRUNCATE ingestion_batch_observations, observation_revisions, observations,
 				source_instances, ingestion_batches,
+			execution_events, execution_sessions,
 				plan_block_events, plan_blocks, plan_versions, activities, planning_settings RESTART IDENTITY`)
 	return err
 }
