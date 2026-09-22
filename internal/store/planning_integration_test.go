@@ -20,7 +20,7 @@ func TestPostgresPlanningRetainsVersionsAndStates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(database.Close)
+	t.Cleanup(func() { database.Close() })
 	if err := database.ApplyMigrations(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -33,12 +33,15 @@ func TestPostgresPlanningRetainsVersionsAndStates(t *testing.T) {
 		}
 	})
 
-	activity, err := database.CreateActivity(ctx, Activity{Title: "Practice piano", NextAction: "Open page 12", Priority: 5})
+	activity, err := database.CreateActivity(ctx, Activity{Title: "Practice piano", NextAction: "Open page 12", ResumeMarker: "Start with the left-hand exercise", ActivityState: "maintenance", Priority: 5})
 	if err != nil {
 		t.Fatalf("create activity: %v", err)
 	}
 	if activity.ID == 0 || activity.Status != "active" {
 		t.Fatalf("unexpected activity: %+v", activity)
+	}
+	if activity.ActivityState != "maintenance" || activity.ResumeMarker == "" {
+		t.Fatalf("activity phase/resume marker = %+v", activity)
 	}
 	if _, err := database.CreateActivity(ctx, Activity{Title: "   "}); err == nil {
 		t.Fatal("empty title accepted")
@@ -83,6 +86,18 @@ func TestPostgresPlanningRetainsVersionsAndStates(t *testing.T) {
 	if plan2.VersionID == firstVersionID {
 		t.Fatal("second save reused the version")
 	}
+	database.Close()
+	database, err = OpenPostgres(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.ApplyMigrations(ctx); err != nil {
+		t.Fatal(err)
+	}
+	restartedActivities, err := database.ListActivities(ctx, ActivityFilter{})
+	if err != nil || len(restartedActivities) != 1 || restartedActivities[0].ResumeMarker != "Start with the left-hand exercise" {
+		t.Fatalf("activities after restart = %+v, %v", restartedActivities, err)
+	}
 	latest, err := database.LatestPlan(ctx, day)
 	if err != nil || latest == nil || latest.VersionID != plan2.VersionID {
 		t.Fatalf("latest plan = %+v, %v", latest, err)
@@ -91,15 +106,34 @@ func TestPostgresPlanningRetainsVersionsAndStates(t *testing.T) {
 		t.Fatalf("latest plan blocks = %+v", latest.Blocks)
 	}
 
-	stated, err := database.SetPlanBlockState(ctx, latest.Blocks[0].ID, "done", "went well")
+	stated, err := database.SetPlanBlockState(ctx, day, latest.Blocks[0].ID, "done", "went well", "finished_early", "explanation")
 	if err != nil || stated.State != "done" {
 		t.Fatalf("set state = %+v, %v", stated, err)
 	}
-	if _, err := database.SetPlanBlockState(ctx, plan.Blocks[0].ID, "done", ""); !errors.Is(err, ErrNotFound) {
+	if stated.ExplanationCode != "finished_early" || stated.ExplanationProvenance == nil {
+		t.Fatalf("explanation = %+v", stated)
+	}
+	events, err := database.ListPlanBlockEvents(ctx, day, latest.Blocks[0].ID)
+	if err != nil || len(events) != 1 || events[0].Note != "went well" || events[0].Provenance == nil {
+		t.Fatalf("block events = %+v, %v", events, err)
+	}
+	if _, err := database.SetPlanBlockState(ctx, day, plan.Blocks[0].ID, "done", "", "", "state"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("older version block state error = %v", err)
 	}
-	if _, err := database.SetPlanBlockState(ctx, latest.Blocks[0].ID, "maybe", ""); err == nil {
+	if _, err := database.SetPlanBlockState(ctx, day, latest.Blocks[0].ID, "maybe", "", "", "state"); err == nil {
 		t.Fatal("invalid state accepted")
+	}
+	versions, err := database.ListPlanVersions(ctx, day)
+	if err != nil || len(versions) != 2 || versions[0].VersionID != plan2.VersionID || versions[1].VersionID != firstVersionID {
+		t.Fatalf("plan versions = %+v, %v", versions, err)
+	}
+	settings, err := database.GetPlanningSettings(ctx)
+	if err != nil || settings.DailyPlanGateEnabled {
+		t.Fatalf("default planning settings = %+v, %v", settings, err)
+	}
+	settings, err = database.UpdatePlanningSettings(ctx, true)
+	if err != nil || !settings.DailyPlanGateEnabled {
+		t.Fatalf("updated planning settings = %+v, %v", settings, err)
 	}
 
 	activities, err := database.ListActivities(ctx, ActivityFilter{Status: "waiting"})

@@ -184,10 +184,13 @@ export type Activity = {
   title: string;
   notes: string;
   next_action: string;
-  status: 'active' | 'waiting' | 'blocked' | 'done' | 'abandoned';
+  resume_marker: string;
+  status: 'active' | 'waiting' | 'blocked' | 'done' | 'completed' | 'abandoned' | 'unknown';
+  activity_state: 'growth' | 'maintenance' | 'parked';
   priority: number;
   deadline?: string;
   effort_estimate_minutes?: number;
+  details?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 };
@@ -201,8 +204,12 @@ export type PlanBlock = {
   start_time: string;
   duration_minutes: number;
   fixed: boolean;
-  state: 'planned' | 'active' | 'done' | 'skipped' | 'switched';
+  state: 'planned' | 'active' | 'done' | 'skipped' | 'switched' | 'blocked' | 'unknown';
   state_note: string;
+  explanation_code?: string;
+  explanation_note?: string;
+  explanation_provenance?: Record<string, unknown>;
+  last_changed_at?: string;
   position: number;
 };
 
@@ -224,6 +231,31 @@ export type Plan = {
 
 export type PlanInput = { note?: string; blocks: PlanBlockSpec[] };
 
+export type PlanVersionSummary = {
+  version_id: number;
+  plan_date: string;
+  created_at: string;
+  note: string;
+  block_count: number;
+};
+
+export type PlanBlockEvent = {
+  id: number;
+  plan_block_id: number;
+  state: PlanBlock['state'];
+  action: 'planned' | 'state' | 'explanation' | 'return';
+  explanation_code?: string;
+  note?: string;
+  provenance: Record<string, unknown>;
+  created_at: string;
+};
+
+export type PlanningSettings = {
+  daily_plan_gate_enabled: boolean;
+  enforcement_active: boolean;
+  updated_at?: string;
+};
+
 export async function listActivities(): Promise<Activity[]> {
   const result = await request<{ activities: Activity[] }>('/v1/activities?limit=200');
   return result.activities ?? [];
@@ -237,6 +269,11 @@ export async function updateActivity(id: number, input: ActivityInput): Promise<
   return request<Activity>(`/v1/activities/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
 }
 
+export async function listPlanVersions(planDate: string): Promise<PlanVersionSummary[]> {
+  const result = await request<{ versions: PlanVersionSummary[] | null }>(`/v1/plans/${encodeURIComponent(planDate)}/versions`);
+  return result.versions ?? [];
+}
+
 export async function getPlan(planDate: string): Promise<Plan | null> {
   const result = await request<{ plan: Plan | null }>(`/v1/plans/${encodeURIComponent(planDate)}`);
   return result.plan;
@@ -246,10 +283,27 @@ export async function savePlan(planDate: string, input: PlanInput): Promise<Plan
   return request<Plan>(`/v1/plans/${encodeURIComponent(planDate)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
 }
 
-export async function setPlanBlockState(planDate: string, blockId: number, state: PlanBlock['state'], stateNote = ''): Promise<PlanBlock> {
+export async function setPlanBlockState(planDate: string, blockId: number, state: PlanBlock['state'], stateNote = '', explanationCode = '', action: 'state' | 'explanation' | 'return' = 'state'): Promise<PlanBlock> {
   return request<PlanBlock>(`/v1/plans/${encodeURIComponent(planDate)}/blocks/${encodeURIComponent(blockId)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ state, state_note: stateNote })
+    body: JSON.stringify({ state, state_note: stateNote, explanation_code: explanationCode, action })
+  });
+}
+
+export async function listPlanBlockEvents(planDate: string, blockId: number): Promise<PlanBlockEvent[]> {
+  const result = await request<{ events: PlanBlockEvent[] | null }>(`/v1/plans/${encodeURIComponent(planDate)}/blocks/${encodeURIComponent(blockId)}/events`);
+  return result.events ?? [];
+}
+
+export async function getPlanningSettings(): Promise<PlanningSettings> {
+  return request<PlanningSettings>('/v1/planning/settings');
+}
+
+export async function updatePlanningSettings(dailyPlanGateEnabled: boolean): Promise<PlanningSettings> {
+  return request<PlanningSettings>('/v1/planning/settings', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ daily_plan_gate_enabled: dailyPlanGateEnabled })
   });
 }

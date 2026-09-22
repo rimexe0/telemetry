@@ -156,7 +156,34 @@ func (fakeRepository) LatestPlan(context.Context, time.Time) (*store.Plan, error
 func (fakeRepository) SavePlan(context.Context, time.Time, store.PlanInput) (store.Plan, error) {
 	return store.Plan{}, store.ErrNotFound
 }
-func (fakeRepository) SetPlanBlockState(context.Context, int64, string, string) (store.PlanBlock, error) {
+func (fakeRepository) SetPlanBlockState(context.Context, time.Time, int64, string, string, string, string) (store.PlanBlock, error) {
 	return store.PlanBlock{}, store.ErrNotFound
+}
+func (fakeRepository) ListPlanVersions(context.Context, time.Time) ([]store.PlanVersionSummary, error) {
+	return nil, nil
+}
+func (fakeRepository) ListPlanBlockEvents(context.Context, time.Time, int64) ([]store.PlanBlockEvent, error) {
+	return nil, nil
+}
+func (fakeRepository) GetPlanningSettings(context.Context) (store.PlanningSettings, error) {
+	return store.PlanningSettings{}, nil
+}
+func (fakeRepository) UpdatePlanningSettings(context.Context, bool) (store.PlanningSettings, error) {
+	return store.PlanningSettings{}, nil
+}
+func (fakeRepository) StartExecutionSession(context.Context, store.ExecutionSessionInput) (store.ExecutionSession, error) {
+	return store.ExecutionSession{}, store.ErrNotFound
+}
+func (fakeRepository) TransitionExecutionSession(context.Context, int64, store.ExecutionEventInput) (store.ExecutionSession, error) {
+	return store.ExecutionSession{}, store.ErrNotFound
+}
+func (fakeRepository) CurrentExecutionSession(context.Context) (*store.ExecutionSession, error) {
+	return nil, nil
+}
+func (fakeRepository) GetExecutionSession(context.Context, int64) (*store.ExecutionSession, error) {
+	return nil, store.ErrNotFound
+}
+func (fakeRepository) ListExecutionSessions(context.Context, int) ([]store.ExecutionSession, error) {
+	return []store.ExecutionSession{}, nil
 }
 func (fakeRepository) Ping(context.Context) error { return nil }

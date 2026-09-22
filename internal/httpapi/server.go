@@ -68,7 +68,14 @@ func New(repository store.Repository, config Config) (*Server, error) {
 	server.mux.HandleFunc("/v1/activities", server.activities)
 	server.mux.HandleFunc("PATCH /v1/activities/{id}", server.activity)
 	server.mux.HandleFunc("/v1/plans/{date}", server.plan)
+	server.mux.HandleFunc("GET /v1/plans/{date}/versions", server.planVersions)
 	server.mux.HandleFunc("PATCH /v1/plans/{date}/blocks/{id}", server.planBlock)
+	server.mux.HandleFunc("GET /v1/plans/{date}/blocks/{id}/events", server.planBlockEvents)
+	server.mux.HandleFunc("/v1/planning/settings", server.planningSettings)
+	server.mux.HandleFunc("/v1/execution/sessions", server.executionSessions)
+	server.mux.HandleFunc("GET /v1/execution/current", server.currentExecutionSession)
+	server.mux.HandleFunc("GET /v1/execution/sessions/{id}", server.executionSession)
+	server.mux.HandleFunc("POST /v1/execution/sessions/{id}/events", server.executionSessionEvents)
 	return server, nil
 }
 

@@ -16,7 +16,9 @@
     endPanelSession,
     getAuthConfig,
     getPlan,
+    getPlanningSettings,
     listActivities,
+    listPlanVersions,
     listObservations,
     listDevices,
     listSources,
@@ -29,8 +31,10 @@
     setClerkTokenProvider,
     setPlanBlockState,
     startPanelSession,
+    updatePlanningSettings,
     updateActivity,
     type Activity,
+    type ActivityInput,
     type AuthConfig,
     type CollectionHealth,
     type Device,
@@ -39,8 +43,11 @@
     type Plan,
     type PlanBlock,
     type PlanInput,
+    type PlanVersionSummary,
+    type PlanningSettings,
     type SourceSummary
   } from '$lib/api';
+  import { assessPlanBlock, type PlanAssessment } from '$lib/planActual';
 
   type Range = '24h' | '7d';
 
@@ -68,6 +75,12 @@
   let plan: Plan | null = null;
   let planLoading = false;
   let planError = '';
+  let planVersions: PlanVersionSummary[] = [];
+  let planningSettings: PlanningSettings | undefined;
+  let planObservations: Observation[] = [];
+  let planEvidenceLoading = false;
+  let planEvidenceError = '';
+  $: planAssessments = Object.fromEntries((plan?.blocks ?? []).map(block => [block.id, assessPlanBlock(block, block.activity_id ? activities.find(activity => activity.id === block.activity_id) : undefined, planObservations, sources)])) as Record<number, PlanAssessment>;
   let collectionStatus: CollectionHealth | undefined;
   let collectionError = '';
   let collectionRequest: AbortController | undefined;
@@ -210,9 +223,11 @@
     activitiesLoading = true;
     activitiesError = '';
     try {
-      const [dayPlan, rows] = await Promise.all([getPlan(selectedDay), listActivities()]);
+      const [dayPlan, rows, versions, settings] = await Promise.all([getPlan(selectedDay), listActivities(), listPlanVersions(selectedDay), getPlanningSettings()]);
       plan = dayPlan;
       activities = rows;
+      planVersions = versions;
+      planningSettings = settings;
     } catch (cause) {
       planError = cause instanceof Error ? cause.message : 'Unable to load the plan.';
       if (cause instanceof APIError && cause.status === 401) authenticated = false;
@@ -220,18 +235,20 @@
       planLoading = false;
       activitiesLoading = false;
     }
+    await refreshPlanEvidence();
   }
 
   async function handleSavePlan(input: PlanInput): Promise<void> {
     plan = await savePlan(selectedDay, input);
+    planVersions = await listPlanVersions(selectedDay);
   }
 
-  async function handleBlockState(blockId: number, state: PlanBlock['state'], note: string): Promise<void> {
-    const updated = await setPlanBlockState(selectedDay, blockId, state, note);
+  async function handleBlockState(blockId: number, state: PlanBlock['state'], note: string, explanationCode = '', action: 'state' | 'explanation' | 'return' = 'state'): Promise<void> {
+    const updated = await setPlanBlockState(selectedDay, blockId, state, note, explanationCode, action);
     if (plan) plan = { ...plan, blocks: plan.blocks.map(block => block.id === updated.id ? updated : block) };
   }
 
-  async function handleCreateActivity(input: { title: string; next_action: string; effort_estimate_minutes?: number }): Promise<void> {
+  async function handleCreateActivity(input: ActivityInput): Promise<void> {
     const created = await createActivity(input);
     activities = [...activities, created];
   }
@@ -239,6 +256,39 @@
   async function handleUpdateActivity(activity: Activity): Promise<void> {
     const updated = await updateActivity(activity.id, activity);
     activities = activities.map(row => row.id === updated.id ? updated : row);
+  }
+
+  async function handleUpdatePlanningSettings(enabled: boolean): Promise<void> {
+    planningSettings = await updatePlanningSettings(enabled);
+  }
+
+  async function refreshPlanEvidence(): Promise<void> {
+    planEvidenceLoading = true;
+    planEvidenceError = '';
+    try {
+      if (!plan) {
+        planObservations = [];
+        return;
+      }
+      const available = sources.filter(source => source.source_kind === 'activitywatch' || source.source_kind === 'android_usage');
+      if (available.length > 16) throw new Error('Plan evidence supports up to 16 activity sources. Source selection is needed for larger installations.');
+      const fromMs = dayStart(selectedDay);
+      const toMs = Math.min(fromMs + 86_400_000, Date.now());
+      if (!Number.isFinite(fromMs) || toMs <= fromMs) {
+        planObservations = [];
+        return;
+      }
+      const rows: Observation[] = [];
+      for (const source of available) {
+        rows.push(...await loadObservationHistory(source.source_instance_key, new Date(fromMs), new Date(toMs)));
+        if (rows.length > 25_000) throw new Error('Plan evidence exceeds the browser record budget. No partial alignment is shown.');
+      }
+      if (authenticated) planObservations = rows;
+    } catch (cause) {
+      planEvidenceError = cause instanceof Error ? cause.message : 'Unable to load plan evidence.';
+    } finally {
+      planEvidenceLoading = false;
+    }
   }
 
   async function refreshPairing(): Promise<void> {
@@ -620,8 +670,9 @@
       <HealthHistory observations={healthObservations} loading={healthLoading} error={healthError} oninspect={(o) => selectedObservation = o} />
     {:else if view === 'plan'}
       <PlanView day={selectedDay} {activities} {plan} activitiesError={activitiesError} planError={planError}
+        {planVersions} {planningSettings} assessments={planAssessments} {planEvidenceLoading} {planEvidenceError}
         onrefresh={refreshPlan} onsave={handleSavePlan} onsetstate={handleBlockState}
-        oncreateactivity={handleCreateActivity} onupdateactivity={handleUpdateActivity} />
+        oncreateactivity={handleCreateActivity} onupdateactivity={handleUpdateActivity} onupdatesettings={handleUpdatePlanningSettings} />
     {:else if view === 'devices'}
       <section class="devices" aria-labelledby="devices-heading">
         <div class="section-title"><h2 id="devices-heading">Devices</h2><button class="quiet-button" on:click={refreshDevices} disabled={devicesLoading}>{devicesLoading ? 'Refreshing…' : 'Refresh'}</button></div>

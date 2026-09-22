@@ -46,7 +46,7 @@ describe('planning helpers', () => {
   });
 
   it('labels every state', () => {
-    expect(stateLabel.done).toBe('Done');
+    expect(stateLabel.done).toBe('Completed');
     expect(stateLabel.switched).toBe('Switched');
   });
 });

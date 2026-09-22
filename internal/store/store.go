@@ -77,7 +77,16 @@ type Repository interface {
 	ListActivities(context.Context, ActivityFilter) ([]Activity, error)
 	UpdateActivity(context.Context, Activity) (Activity, error)
 	LatestPlan(context.Context, time.Time) (*Plan, error)
+	ListPlanVersions(context.Context, time.Time) ([]PlanVersionSummary, error)
 	SavePlan(context.Context, time.Time, PlanInput) (Plan, error)
-	SetPlanBlockState(context.Context, int64, string, string) (PlanBlock, error)
+	SetPlanBlockState(context.Context, time.Time, int64, string, string, string, string) (PlanBlock, error)
+	ListPlanBlockEvents(context.Context, time.Time, int64) ([]PlanBlockEvent, error)
+	GetPlanningSettings(context.Context) (PlanningSettings, error)
+	UpdatePlanningSettings(context.Context, bool) (PlanningSettings, error)
+	StartExecutionSession(context.Context, ExecutionSessionInput) (ExecutionSession, error)
+	TransitionExecutionSession(context.Context, int64, ExecutionEventInput) (ExecutionSession, error)
+	CurrentExecutionSession(context.Context) (*ExecutionSession, error)
+	GetExecutionSession(context.Context, int64) (*ExecutionSession, error)
+	ListExecutionSessions(context.Context, int) ([]ExecutionSession, error)
 	Ping(context.Context) error
 }

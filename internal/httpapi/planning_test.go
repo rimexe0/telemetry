@@ -35,6 +35,7 @@ func TestPlanningEndpointsRejectMissingOwner(t *testing.T) {
 		httptest.NewRequest(http.MethodGet, "/v1/plans/2026-09-15", nil),
 		httptest.NewRequest(http.MethodPut, "/v1/plans/2026-09-15", strings.NewReader(`{"blocks":[]}`)),
 		httptest.NewRequest(http.MethodPatch, "/v1/plans/2026-09-15/blocks/1", strings.NewReader(`{"state":"done"}`)),
+		httptest.NewRequest(http.MethodGet, "/v1/planning/settings", nil),
 	}
 	for _, request := range requests {
 		response := httptest.NewRecorder()
@@ -147,7 +148,7 @@ func TestPlanBlockStateUpdate(t *testing.T) {
 	repository := &fakeRepository{}
 	repository.blockState = store.PlanBlock{ID: 4, State: "switched", StateNote: "agent finished it instead"}
 	server := ownerTestServer(t, repository)
-	request := httptest.NewRequest(http.MethodPatch, "/v1/plans/2026-09-15/blocks/4", strings.NewReader(`{"state":"switched","state_note":"agent finished it instead"}`))
+	request := httptest.NewRequest(http.MethodPatch, "/v1/plans/2026-09-15/blocks/4", strings.NewReader(`{"state":"switched","state_note":"agent finished it instead","explanation_code":"intentional_switch","action":"explanation"}`))
 	request.SetPathValue("id", "4")
 	request.SetPathValue("date", "2026-09-15")
 	response := httptest.NewRecorder()
@@ -158,6 +159,9 @@ func TestPlanBlockStateUpdate(t *testing.T) {
 	if repository.blockID != 4 || repository.blockStateName != "switched" {
 		t.Fatalf("state update not carried: id=%d state=%s", repository.blockID, repository.blockStateName)
 	}
+	if !repository.blockPlanDate.Equal(time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("block plan date = %v", repository.blockPlanDate)
+	}
 
 	repository.blockErr = store.ErrNotFound
 	missing := httptest.NewRequest(http.MethodPatch, "/v1/plans/2026-09-15/blocks/99", strings.NewReader(`{"state":"done"}`))
@@ -167,6 +171,29 @@ func TestPlanBlockStateUpdate(t *testing.T) {
 	server.ServeHTTP(missingResponse, missing)
 	if missingResponse.Code != http.StatusNotFound {
 		t.Fatalf("missing block status = %d, want 404", missingResponse.Code)
+	}
+}
+
+func TestPlanVersionsAndPlanningSettings(t *testing.T) {
+	repository := &fakeRepository{
+		versions: []store.PlanVersionSummary{{VersionID: 3, PlanDate: "2026-09-15", BlockCount: 2}},
+		settings: store.PlanningSettings{DailyPlanGateEnabled: false},
+	}
+	server := ownerTestServer(t, repository)
+	versionsResponse := httptest.NewRecorder()
+	server.ServeHTTP(versionsResponse, httptest.NewRequest(http.MethodGet, "/v1/plans/2026-09-15/versions", nil))
+	if versionsResponse.Code != http.StatusOK || !strings.Contains(versionsResponse.Body.String(), `"version_id":3`) {
+		t.Fatalf("versions response = %d: %s", versionsResponse.Code, versionsResponse.Body.String())
+	}
+	settingsResponse := httptest.NewRecorder()
+	server.ServeHTTP(settingsResponse, httptest.NewRequest(http.MethodGet, "/v1/planning/settings", nil))
+	if settingsResponse.Code != http.StatusOK || !strings.Contains(settingsResponse.Body.String(), `"enforcement_active":false`) {
+		t.Fatalf("settings response = %d: %s", settingsResponse.Code, settingsResponse.Body.String())
+	}
+	update := httptest.NewRecorder()
+	server.ServeHTTP(update, httptest.NewRequest(http.MethodPatch, "/v1/planning/settings", strings.NewReader(`{"daily_plan_gate_enabled":true}`)))
+	if update.Code != http.StatusOK || !repository.settingsInput || !strings.Contains(update.Body.String(), `"daily_plan_gate_enabled":true`) {
+		t.Fatalf("settings update = %d: %s", update.Code, update.Body.String())
 	}
 }
 

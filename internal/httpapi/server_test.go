@@ -271,8 +271,20 @@ type fakeRepository struct {
 	planErr        error
 	blockState     store.PlanBlock
 	blockID        int64
+	blockPlanDate  time.Time
 	blockStateName string
 	blockErr       error
+	versions       []store.PlanVersionSummary
+	settings       store.PlanningSettings
+	settingsInput  bool
+
+	executionSession      *store.ExecutionSession
+	executionCurrent      *store.ExecutionSession
+	executionSessions     []store.ExecutionSession
+	executionStartInput   store.ExecutionSessionInput
+	executionEventInput   store.ExecutionEventInput
+	executionEventSession int64
+	executionErr          error
 }
 
 func (f *fakeRepository) Ingest(_ context.Context, batch model.Batch) (store.Receipt, error) {
@@ -315,6 +327,10 @@ func (f *fakeRepository) LatestPlan(_ context.Context, planDate time.Time) (*sto
 	f.planDate = planDate
 	return f.plan, nil
 }
+func (f *fakeRepository) ListPlanVersions(_ context.Context, planDate time.Time) ([]store.PlanVersionSummary, error) {
+	f.planDate = planDate
+	return f.versions, nil
+}
 func (f *fakeRepository) SavePlan(_ context.Context, planDate time.Time, input store.PlanInput) (store.Plan, error) {
 	if f.planErr != nil {
 		return store.Plan{}, f.planErr
@@ -327,13 +343,67 @@ func (f *fakeRepository) SavePlan(_ context.Context, planDate time.Time, input s
 	}
 	return store.Plan{PlanDate: planDate.Format("2006-01-02"), VersionID: 1, Blocks: blocks}, nil
 }
-func (f *fakeRepository) SetPlanBlockState(_ context.Context, blockID int64, state, _ string) (store.PlanBlock, error) {
+func (f *fakeRepository) SetPlanBlockState(_ context.Context, planDate time.Time, blockID int64, state, _, _, _ string) (store.PlanBlock, error) {
 	if f.blockErr != nil {
 		return store.PlanBlock{}, f.blockErr
 	}
 	f.blockID = blockID
+	f.blockPlanDate = planDate
 	f.blockStateName = state
 	return f.blockState, nil
+}
+func (f *fakeRepository) ListPlanBlockEvents(context.Context, time.Time, int64) ([]store.PlanBlockEvent, error) {
+	return []store.PlanBlockEvent{}, nil
+}
+func (f *fakeRepository) GetPlanningSettings(context.Context) (store.PlanningSettings, error) {
+	return f.settings, nil
+}
+func (f *fakeRepository) UpdatePlanningSettings(_ context.Context, enabled bool) (store.PlanningSettings, error) {
+	f.settingsInput = enabled
+	f.settings.DailyPlanGateEnabled = enabled
+	return f.settings, nil
+}
+func (f *fakeRepository) StartExecutionSession(_ context.Context, input store.ExecutionSessionInput) (store.ExecutionSession, error) {
+	if f.executionErr != nil {
+		return store.ExecutionSession{}, f.executionErr
+	}
+	f.executionStartInput = input
+	if f.executionSession != nil {
+		return *f.executionSession, nil
+	}
+	return store.ExecutionSession{ID: 1, ActivityID: input.ActivityID, PlanBlockID: input.PlanBlockID, State: "active", Events: []store.ExecutionEvent{{ID: 1, SessionID: 1, EventType: "started"}}}, nil
+}
+func (f *fakeRepository) TransitionExecutionSession(_ context.Context, sessionID int64, input store.ExecutionEventInput) (store.ExecutionSession, error) {
+	if f.executionErr != nil {
+		return store.ExecutionSession{}, f.executionErr
+	}
+	f.executionEventSession = sessionID
+	f.executionEventInput = input
+	if f.executionSession != nil {
+		return *f.executionSession, nil
+	}
+	return store.ExecutionSession{ID: sessionID, State: "active", Events: []store.ExecutionEvent{{ID: 1, SessionID: sessionID, EventType: input.EventType, Note: input.Note}}}, nil
+}
+func (f *fakeRepository) CurrentExecutionSession(context.Context) (*store.ExecutionSession, error) {
+	if f.executionErr != nil {
+		return nil, f.executionErr
+	}
+	return f.executionCurrent, nil
+}
+func (f *fakeRepository) GetExecutionSession(_ context.Context, sessionID int64) (*store.ExecutionSession, error) {
+	if f.executionErr != nil {
+		return nil, f.executionErr
+	}
+	if f.executionSession == nil || f.executionSession.ID != sessionID {
+		return nil, store.ErrNotFound
+	}
+	return f.executionSession, nil
+}
+func (f *fakeRepository) ListExecutionSessions(context.Context, int) ([]store.ExecutionSession, error) {
+	if f.executionErr != nil {
+		return nil, f.executionErr
+	}
+	return f.executionSessions, nil
 }
 func (f *fakeRepository) Ping(context.Context) error { return nil }
 

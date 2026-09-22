@@ -1,22 +1,33 @@
 import type { Activity, PlanBlock } from './api';
 
-export const activityStatuses = ['active', 'waiting', 'blocked', 'done', 'abandoned'] as const;
-export const blockStates = ['planned', 'active', 'done', 'skipped', 'switched'] as const;
+export const activityStatuses = ['active', 'waiting', 'blocked', 'completed', 'abandoned', 'unknown'] as const;
+export const activityStates = ['growth', 'maintenance', 'parked'] as const;
+export const blockStates = ['planned', 'active', 'done', 'skipped', 'switched', 'blocked', 'unknown'] as const;
 
 export const statusLabel: Record<Activity['status'], string> = {
   active: 'Active',
   waiting: 'Waiting',
   blocked: 'Blocked',
-  done: 'Done',
-  abandoned: 'Abandoned'
+  done: 'Completed',
+  completed: 'Completed',
+  abandoned: 'Abandoned',
+  unknown: 'Unknown'
+};
+
+export const activityStateLabel: Record<Activity['activity_state'], string> = {
+  growth: 'Growth',
+  maintenance: 'Maintenance',
+  parked: 'Parked'
 };
 
 export const stateLabel: Record<PlanBlock['state'], string> = {
   planned: 'Planned',
   active: 'In progress',
-  done: 'Done',
+  done: 'Completed',
   skipped: 'Skipped',
-  switched: 'Switched'
+  switched: 'Switched',
+  blocked: 'Blocked',
+  unknown: 'Unknown'
 };
 
 // Istanbul is the owner's local day; the panel keeps one day-key convention.
