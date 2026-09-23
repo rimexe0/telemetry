@@ -1,5 +1,6 @@
 import { afterEach, expect, test, vi } from 'vitest';
-import { APIError, listObservations, setClerkTokenProvider, startPanelSession } from './api';
+import { APIError, getCurrentAlignment, getExecutionSummary, iterateObservationHistory, listObservations, setClerkTokenProvider, startPanelSession } from './api';
+import type { Observation } from './api';
 
 afterEach(() => {
   setClerkTokenProvider(undefined);
@@ -70,6 +71,25 @@ test('saturated health windows are split into adjacent half-open ranges', async 
   expect(fetch).toHaveBeenCalledTimes(3);
 });
 
+test('observation history yields each complete slice before fetching the next slice', async () => {
+  const response = (observations: unknown[]) => new Response(JSON.stringify({ observations }), { status: 200 });
+  const fetch = vi.fn()
+    .mockResolvedValueOnce(response(Array(1000).fill({ source_record_key: 'capped' })))
+    .mockResolvedValueOnce(response([{ source_record_key: 'left' }]))
+    .mockResolvedValueOnce(response([{ source_record_key: 'right' }]));
+  vi.stubGlobal('fetch', fetch);
+
+  const history = iterateObservationHistory('aw-window', new Date(0), new Date(4));
+  const first = await history.next();
+  expect(first.value?.map((row: Observation) => row.source_record_key)).toEqual(['left']);
+  expect(fetch).toHaveBeenCalledTimes(2);
+
+  const second = await history.next();
+  expect(second.value?.map((row: Observation) => row.source_record_key)).toEqual(['right']);
+  expect(fetch).toHaveBeenCalledTimes(3);
+  expect((await history.next()).done).toBe(true);
+});
+
 test('an unsplittable saturated health window fails instead of returning partial totals',async()=>{
   const {loadHealthHistory}=await import('./api');
   vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({observations:Array(1000).fill({})}),{status:200})));
@@ -85,4 +105,29 @@ test('collection health stays bounded, same-origin and cancellable', async () =>
   expect(await collectionHealth(controller.signal)).toEqual(result);
   expect(fetch).toHaveBeenCalledWith('/v1/collection/health?limit=100&samples=24',
     expect.objectContaining({ credentials: 'same-origin', signal: controller.signal }));
+});
+
+test('current alignment stays owner-scoped and carries an explicit evaluation time', async () => {
+  const alignment = { alignment_state: 'unknown', reason_code: 'missing_evidence', evidence: [] };
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ alignment }), { status: 200 }));
+  vi.stubGlobal('fetch', fetch);
+
+  await getCurrentAlignment(new Date('2026-09-23T10:15:00Z'));
+
+  expect(fetch).toHaveBeenCalledWith(
+    '/v1/alignment/current?at=2026-09-23T10%3A15%3A00.000Z',
+    expect.objectContaining({ credentials: 'same-origin' })
+  );
+});
+
+test('execution summary stays owner-scoped and requests only the selected bounded window', async () => {
+  const summary = { possible_unplanned_switch_count: 1, possible_unplanned_switches: [], metric_sources: [], metric_sources_truncated: false };
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ summary }), { status: 200 }));
+  vi.stubGlobal('fetch', fetch);
+
+  expect(await getExecutionSummary(new Date('2026-09-23T00:00:00Z'), new Date('2026-09-23T21:00:00Z'))).toEqual(summary);
+  expect(fetch).toHaveBeenCalledWith(
+    '/v1/execution/summary?from=2026-09-23T00%3A00%3A00.000Z&to=2026-09-23T21%3A00%3A00.000Z',
+    expect.objectContaining({ credentials: 'same-origin' })
+  );
 });

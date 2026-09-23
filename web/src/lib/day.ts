@@ -23,15 +23,26 @@ export function mergeSegments(rows:DaySegment[]):DaySegment[] {
 // Partition foreground/input overlaps before adding durations. Conflicts are
 // displayed, not arbitrarily assigned to an app or input state.
 export function partitionSegments(rows:DaySegment[]):DaySegment[] {
- const points=[...new Set(rows.flatMap(r=>[r.start,r.end]))].sort((a,b)=>a-b);
+ const events=new Map<number,{starts:Array<[number,DaySegment]>;ends:number[]}>();
+ const eventAt=(time:number)=>{let event=events.get(time);if(!event){event={starts:[],ends:[]};events.set(time,event);}return event;};
+ rows.forEach((row,index)=>{
+  if(row.end<=row.start)return;
+  eventAt(row.start).starts.push([index,row]);
+  eventAt(row.end).ends.push(index);
+ });
+ const points=[...events.keys()].sort((a,b)=>a-b);
  const out:DaySegment[]=[];
+ const active=new Map<number,DaySegment>();
  for(let i=0;i<points.length-1;i++) {
   const start=points[i],end=points[i+1];
-  const active=rows.filter(r=>r.start<end && r.end>start);
-  if(!active.length)continue;
-  const labels=[...new Set(active.map(r=>r.label))];
+  const event=events.get(start)!;
+  for(const index of event.ends)active.delete(index);
+  for(const [index,row] of event.starts)active.set(index,row);
+  if(!active.size)continue;
+  const overlapping=[...active.entries()].sort(([a],[b])=>a-b).map(([,row])=>row);
+  const labels=[...new Set(overlapping.map(r=>r.label))];
   const conflicting=labels.length>1;
-  out.push({start,end,label:conflicting?'Conflicting records':labels[0],kind:conflicting?'conflict':active[0].kind,detail:conflicting?`Overlapping source values: ${labels.join(', ')}. Duration is not assigned to an app or input state.`:active[0].detail,evidence:active.flatMap(r=>r.evidence)});
+  out.push({start,end,label:conflicting?'Conflicting records':labels[0],kind:conflicting?'conflict':overlapping[0].kind,detail:conflicting?`Overlapping source values: ${labels.join(', ')}. Duration is not assigned to an app or input state.`:overlapping[0].detail,evidence:overlapping.flatMap(r=>r.evidence)});
  }
  return mergeSegments(out);
 }

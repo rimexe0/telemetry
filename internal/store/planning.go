@@ -324,6 +324,30 @@ func (p *Postgres) LatestPlan(ctx context.Context, planDate time.Time) (*Plan, e
 	return &version, tx.Commit(ctx)
 }
 
+// PlanBlocksByIDs reads the exact retained plan blocks referenced by execution
+// sessions, even after a newer plan version has been saved for the same date.
+func (p *Postgres) PlanBlocksByIDs(ctx context.Context, blockIDs []int64) ([]PlanBlock, error) {
+	blocks := make([]PlanBlock, 0, len(blockIDs))
+	if len(blockIDs) == 0 {
+		return blocks, nil
+	}
+	rows, err := p.pool.Query(ctx, `
+		SELECT id, start_time, duration_minutes
+		FROM plan_blocks WHERE id = ANY($1) ORDER BY id`, blockIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var block PlanBlock
+		if err := rows.Scan(&block.ID, &block.StartTime, &block.DurationMinutes); err != nil {
+			return nil, err
+		}
+		blocks = append(blocks, block)
+	}
+	return blocks, rows.Err()
+}
+
 func (p *Postgres) ListPlanVersions(ctx context.Context, planDate time.Time) ([]PlanVersionSummary, error) {
 	rows, err := p.pool.Query(ctx, `
 		SELECT v.id, v.plan_date::text, v.created_at, v.note, COUNT(pb.id)::int

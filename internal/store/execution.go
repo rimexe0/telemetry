@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -17,14 +18,20 @@ const (
 	executionStateCompleted       = "completed"
 	executionStateAbandoned       = "abandoned"
 
-	executionEventStarted         = "started"
-	executionEventPaused          = "paused"
-	executionEventWaitingExternal = "waiting_external"
-	executionEventInterrupted     = "interrupted"
-	executionEventResumed         = "resumed"
-	executionEventSwitchedOut     = "switched_out"
-	executionEventCompleted       = "completed"
-	executionEventAbandoned       = "abandoned"
+	executionEventStarted                 = "started"
+	executionEventPaused                  = "paused"
+	executionEventWaitingExternal         = "waiting_external"
+	executionEventInterrupted             = "interrupted"
+	executionEventResumed                 = "resumed"
+	executionEventSwitchedOut             = "switched_out"
+	executionEventCompleted               = "completed"
+	executionEventAbandoned               = "abandoned"
+	executionEventStuckUnknownNextAction  = "stuck_unknown_next_action"
+	executionEventStuckEmotionalOverwhelm = "stuck_emotional_overwhelm"
+	executionEventOverwhelmed             = "overwhelmed"
+	executionEventOfflineRecoveryStarted  = "offline_recovery_started"
+	executionEventOfflineRecoveryEnded    = "offline_recovery_ended"
+	executionEventOwnerExplanation        = "owner_explanation"
 )
 
 var (
@@ -33,14 +40,20 @@ var (
 )
 
 var executionEventTypes = map[string]struct{}{
-	executionEventStarted:         {},
-	executionEventPaused:          {},
-	executionEventWaitingExternal: {},
-	executionEventInterrupted:     {},
-	executionEventResumed:         {},
-	executionEventSwitchedOut:     {},
-	executionEventCompleted:       {},
-	executionEventAbandoned:       {},
+	executionEventStarted:                 {},
+	executionEventPaused:                  {},
+	executionEventWaitingExternal:         {},
+	executionEventInterrupted:             {},
+	executionEventResumed:                 {},
+	executionEventSwitchedOut:             {},
+	executionEventCompleted:               {},
+	executionEventAbandoned:               {},
+	executionEventStuckUnknownNextAction:  {},
+	executionEventStuckEmotionalOverwhelm: {},
+	executionEventOverwhelmed:             {},
+	executionEventOfflineRecoveryStarted:  {},
+	executionEventOfflineRecoveryEnded:    {},
+	executionEventOwnerExplanation:        {},
 }
 
 var executionStates = map[string]struct{}{
@@ -63,10 +76,11 @@ type ExecutionSessionInput struct {
 }
 
 type ExecutionEventInput struct {
-	EventType    string     `json:"event_type"`
-	OccurredAt   *time.Time `json:"occurred_at,omitempty"`
-	Note         string     `json:"note,omitempty"`
-	ResumeMarker *string    `json:"resume_marker,omitempty"`
+	EventType    string          `json:"event_type"`
+	OccurredAt   *time.Time      `json:"occurred_at,omitempty"`
+	Note         string          `json:"note,omitempty"`
+	ResumeMarker *string         `json:"resume_marker,omitempty"`
+	Metadata     json.RawMessage `json:"metadata,omitempty"`
 }
 
 type ExecutionSession struct {
@@ -84,12 +98,30 @@ type ExecutionSession struct {
 }
 
 type ExecutionEvent struct {
-	ID         int64     `json:"id"`
-	SessionID  int64     `json:"session_id"`
-	EventType  string    `json:"event_type"`
-	OccurredAt time.Time `json:"occurred_at"`
-	Note       string    `json:"note,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID         int64           `json:"id"`
+	SessionID  int64           `json:"session_id"`
+	EventType  string          `json:"event_type"`
+	OccurredAt time.Time       `json:"occurred_at"`
+	Note       string          `json:"note,omitempty"`
+	Metadata   json.RawMessage `json:"metadata,omitempty"`
+	Provenance json.RawMessage `json:"provenance,omitempty"`
+	CreatedAt  time.Time       `json:"created_at"`
+}
+
+var defaultExecutionProvenance = json.RawMessage(`{"recorded_by":"owner","source":"execution_api"}`)
+
+func executionMetadata(raw json.RawMessage) (json.RawMessage, error) {
+	if len(raw) == 0 {
+		return json.RawMessage(`{}`), nil
+	}
+	if len(raw) > maxPlanningDetails || !json.Valid(raw) {
+		return nil, fmt.Errorf("%w: metadata must be a JSON object no larger than %d bytes", ErrInvalidExecutionInput, maxPlanningDetails)
+	}
+	trimmed := strings.TrimSpace(string(raw))
+	if !strings.HasPrefix(trimmed, "{") || !strings.HasSuffix(trimmed, "}") {
+		return nil, fmt.Errorf("%w: metadata must be a JSON object", ErrInvalidExecutionInput)
+	}
+	return json.RawMessage(trimmed), nil
 }
 
 func (p *Postgres) StartExecutionSession(ctx context.Context, input ExecutionSessionInput) (ExecutionSession, error) {
@@ -149,8 +181,8 @@ func (p *Postgres) StartExecutionSession(ctx context.Context, input ExecutionSes
 		return ExecutionSession{}, err
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO execution_events (session_id, event_type, occurred_at)
-		VALUES ($1, $2, $3)`, sessionID, executionEventStarted, startedAt); err != nil {
+		INSERT INTO execution_events (session_id, event_type, occurred_at, metadata, provenance)
+		VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)`, sessionID, executionEventStarted, startedAt, `{}`, string(defaultExecutionProvenance)); err != nil {
 		return ExecutionSession{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -170,7 +202,11 @@ func (p *Postgres) TransitionExecutionSession(ctx context.Context, sessionID int
 	}
 	eventType := strings.TrimSpace(input.EventType)
 	if _, ok := executionEventTypes[eventType]; !ok || eventType == executionEventStarted {
-		return ExecutionSession{}, fmt.Errorf("%w: event_type must be one of paused, waiting_external, interrupted, resumed, switched_out, completed, abandoned", ErrInvalidExecutionTransition)
+		return ExecutionSession{}, fmt.Errorf("%w: event_type is not recognized", ErrInvalidExecutionTransition)
+	}
+	metadata, err := executionMetadata(input.Metadata)
+	if err != nil {
+		return ExecutionSession{}, err
 	}
 	note := strings.TrimSpace(input.Note)
 	if len([]rune(note)) > maxPlanningTextRunes {
@@ -197,9 +233,11 @@ func (p *Postgres) TransitionExecutionSession(ctx context.Context, sessionID int
 
 	var currentState string
 	var startedAt time.Time
+	var lastRecoveryEventType string
 	err = tx.QueryRow(ctx, `
-		SELECT state, started_at
-		FROM execution_sessions WHERE id = $1 FOR UPDATE`, sessionID).Scan(&currentState, &startedAt)
+		SELECT state, started_at,
+			COALESCE((SELECT event_type FROM execution_events WHERE session_id = execution_sessions.id AND event_type IN ($2, $3) ORDER BY id DESC LIMIT 1), '')
+		FROM execution_sessions WHERE id = $1 FOR UPDATE`, sessionID, executionEventOfflineRecoveryStarted, executionEventOfflineRecoveryEnded).Scan(&currentState, &startedAt, &lastRecoveryEventType)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ExecutionSession{}, ErrNotFound
 	}
@@ -210,7 +248,7 @@ func (p *Postgres) TransitionExecutionSession(ctx context.Context, sessionID int
 		return ExecutionSession{}, fmt.Errorf("%w: occurred_at cannot be before started_at", ErrInvalidExecutionInput)
 	}
 
-	nextState, terminal, err := nextExecutionState(currentState, eventType)
+	nextState, terminal, err := nextExecutionStateWithHistory(currentState, lastRecoveryEventType, eventType)
 	if err != nil {
 		return ExecutionSession{}, err
 	}
@@ -224,8 +262,8 @@ func (p *Postgres) TransitionExecutionSession(ctx context.Context, sessionID int
 		return ExecutionSession{}, err
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO execution_events (session_id, event_type, occurred_at, note)
-		VALUES ($1, $2, $3, $4)`, sessionID, eventType, occurredAt, note); err != nil {
+		INSERT INTO execution_events (session_id, event_type, occurred_at, note, metadata, provenance)
+		VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)`, sessionID, eventType, occurredAt, note, string(metadata), string(defaultExecutionProvenance)); err != nil {
 		return ExecutionSession{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -314,7 +352,7 @@ func (p *Postgres) ListExecutionSessions(ctx context.Context, limit int) ([]Exec
 
 func (p *Postgres) executionEvents(ctx context.Context, sessionID int64) ([]ExecutionEvent, error) {
 	rows, err := p.pool.Query(ctx, `
-		SELECT id, session_id, event_type, occurred_at, note, created_at
+		SELECT id, session_id, event_type, occurred_at, note, metadata, provenance, created_at
 		FROM execution_events
 		WHERE session_id = $1
 		ORDER BY id`, sessionID)
@@ -325,9 +363,12 @@ func (p *Postgres) executionEvents(ctx context.Context, sessionID int64) ([]Exec
 	events := make([]ExecutionEvent, 0)
 	for rows.Next() {
 		var event ExecutionEvent
-		if err := rows.Scan(&event.ID, &event.SessionID, &event.EventType, &event.OccurredAt, &event.Note, &event.CreatedAt); err != nil {
+		var metadata, provenance []byte
+		if err := rows.Scan(&event.ID, &event.SessionID, &event.EventType, &event.OccurredAt, &event.Note, &metadata, &provenance, &event.CreatedAt); err != nil {
 			return nil, err
 		}
+		event.Metadata = json.RawMessage(metadata)
+		event.Provenance = json.RawMessage(provenance)
 		events = append(events, event)
 	}
 	return events, rows.Err()
@@ -343,6 +384,10 @@ func scanExecutionSession(row pgx.Row) (ExecutionSession, error) {
 }
 
 func nextExecutionState(currentState, eventType string) (string, bool, error) {
+	return nextExecutionStateWithHistory(currentState, "", eventType)
+}
+
+func nextExecutionStateWithHistory(currentState, lastEventType, eventType string) (string, bool, error) {
 	if _, ok := executionStates[currentState]; !ok {
 		return "", false, fmt.Errorf("%w: unknown current state %s", ErrInvalidExecutionTransition, currentState)
 	}
@@ -365,6 +410,16 @@ func nextExecutionState(currentState, eventType string) (string, bool, error) {
 			return "", false, fmt.Errorf("%w: resumed cannot transition from %s", ErrInvalidExecutionTransition, currentState)
 		}
 		return executionStateActive, false, nil
+	case executionEventStuckUnknownNextAction, executionEventStuckEmotionalOverwhelm,
+		executionEventOverwhelmed, executionEventOwnerExplanation:
+		return currentState, false, nil
+	case executionEventOfflineRecoveryStarted:
+		return executionStateInterrupted, false, nil
+	case executionEventOfflineRecoveryEnded:
+		if currentState != executionStateInterrupted || lastEventType != executionEventOfflineRecoveryStarted {
+			return "", false, fmt.Errorf("%w: offline recovery must end after it starts", ErrInvalidExecutionTransition)
+		}
+		return executionStateInterrupted, false, nil
 	case executionEventCompleted:
 		return executionStateCompleted, true, nil
 	case executionEventAbandoned:

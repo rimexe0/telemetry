@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Activity, Plan, PlanBlock, PlanInput, PlanVersionSummary, PlanningSettings } from './api';
+  import type { Activity, AlignmentView, Plan, PlanBlock, PlanInput, PlanVersionSummary, PlanningSettings } from './api';
   import type { PlanAssessment } from './planActual';
   import { activityStates, activityStateLabel, activityStatuses, clockLabel, fixedOverlaps, planTotals, sortBlocks, stateLabel, statusLabel, toBlockLocalTime } from './plan';
 
@@ -15,6 +15,8 @@
   export let assessments: Record<number, PlanAssessment> = {};
   export let planEvidenceLoading = false;
   export let planEvidenceError = '';
+  export let currentAlignment: AlignmentView | undefined;
+  export let currentAlignmentError = '';
 
   export let onrefresh: () => void = () => {};
   export let onsave: (input: PlanInput) => Promise<void> = async () => {};
@@ -223,6 +225,7 @@
   {#if saveError}<p class="error" role="alert">{saveError}</p>{/if}
   {#if stateError}<p class="error" role="alert">{stateError}</p>{/if}
   {#if planEvidenceError}<p class="error" role="alert">Evidence: {planEvidenceError}</p>{/if}
+  {#if currentAlignmentError}<p class="error" role="alert">Execution alignment: {currentAlignmentError}</p>{/if}
 
   {#if !editing && plan}
     <p class="summary">
@@ -231,6 +234,14 @@
       {totals.doneMinutes}m done, {totals.plannedMinutes}m remaining
       {#if totals.otherMinutes}, {totals.otherMinutes}m set aside{/if}
     </p>
+    {#if currentAlignment}
+      <section class="current-alignment state-{currentAlignment.alignment_state}" aria-label="Current execution alignment">
+        <div class="assessment-head"><strong>Current execution: {currentAlignment.alignment_state.replace('_', ' ')}</strong><span>{currentAlignment.execution_state ?? 'No active session'}</span></div>
+        <p>{currentAlignment.reason}</p>
+        {#if currentAlignment.activity_title}<p class="muted">Task: {currentAlignment.activity_title}{#if currentAlignment.next_action} · Next: {currentAlignment.next_action}{/if}</p>{/if}
+        <p class="muted">Evidence: {currentAlignment.source_freshness}. {currentAlignment.freshness_note}</p>
+      </section>
+    {/if}
     <ol class="blocks">
       {#each sorted as block (block.id)}
         <li class="block state-{block.state}">
@@ -254,7 +265,7 @@
               {#if assessment.evidence.length}
                 <details class="evidence-details"><summary>Observed evidence ({assessment.evidence.length})</summary><ul>
                   {#each assessment.evidence.slice(0, 8) as item (item.source_instance_key + item.source_record_key)}
-                    <li><span>{item.summary}</span><small>{item.origin === 'observed_agent_activity' ? 'agent activity' : 'device activity'} · {item.relationship.replace('_', ' ')} · {clockLabel(item.occurred_at)}</small></li>
+                    <li><span>{item.summary}</span><small>{item.origin === 'observed_agent_activity' ? 'agent activity' : 'device activity'} · {item.relationship.replace('_', ' ')}{#if item.related_activity_title} · matches “{item.related_activity_title}”{/if} · {clockLabel(item.occurred_at)}</small></li>
                   {/each}
                 </ul></details>
               {/if}
@@ -433,6 +444,9 @@
   .assessment { border: 1px solid var(--line); margin-top: 7px; padding: 7px 8px; }
   .assessment.status-consistent { border-left: 3px solid var(--fg); }
   .assessment.status-possible_drift { border-left: 3px solid var(--muted); }
+  .current-alignment { border: 1px solid var(--line); border-left: 3px solid var(--muted); margin: 8px 0; padding: 7px 8px; }
+  .current-alignment.state-aligned { border-left-color: var(--fg); }
+  .current-alignment p { font-size: .8rem; margin: 3px 0; }
   .assessment p { font-size: .8rem; margin: 3px 0; }
   .assessment-head { align-items: baseline; display: flex; gap: 8px; justify-content: space-between; }
   .assessment-head span { color: var(--muted); font-size: .72rem; }

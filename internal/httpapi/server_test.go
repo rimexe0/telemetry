@@ -266,6 +266,7 @@ type fakeRepository struct {
 	activityInput  store.Activity
 	activityErr    error
 	plan           *store.Plan
+	planBlocks     []store.PlanBlock
 	planInput      store.PlanInput
 	planDate       time.Time
 	planErr        error
@@ -327,6 +328,19 @@ func (f *fakeRepository) UpdateActivity(_ context.Context, activity store.Activi
 func (f *fakeRepository) LatestPlan(_ context.Context, planDate time.Time) (*store.Plan, error) {
 	f.planDate = planDate
 	return f.plan, nil
+}
+func (f *fakeRepository) PlanBlocksByIDs(_ context.Context, ids []int64) ([]store.PlanBlock, error) {
+	wanted := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		wanted[id] = struct{}{}
+	}
+	blocks := make([]store.PlanBlock, 0, len(f.planBlocks))
+	for _, block := range f.planBlocks {
+		if _, ok := wanted[block.ID]; ok {
+			blocks = append(blocks, block)
+		}
+	}
+	return blocks, nil
 }
 func (f *fakeRepository) ListPlanVersions(_ context.Context, planDate time.Time) ([]store.PlanVersionSummary, error) {
 	f.planDate = planDate

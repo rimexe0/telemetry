@@ -1,7 +1,7 @@
 import type { Activity, Observation, PlanBlock, SourceSummary } from './api';
 
 export type PlanAssessmentStatus = 'consistent' | 'possible_drift' | 'unknown';
-export type EvidenceRelationship = 'matched' | 'unmatched' | 'context_only';
+export type EvidenceRelationship = 'matched' | 'unmatched' | 'ambiguous' | 'context_only';
 
 export type PlanEvidence = {
   source_instance_key: string;
@@ -14,6 +14,8 @@ export type PlanEvidence = {
   summary: string;
   relationship: EvidenceRelationship;
   origin: 'observed_device_activity' | 'observed_agent_activity';
+  related_activity_id?: number;
+  related_activity_title?: string;
 };
 
 export type PlanAssessment = {
@@ -77,6 +79,16 @@ function isHumanActivity(observation: Observation): boolean {
   return !observation.source_instance_key.includes('aw-watcher-codex');
 }
 
+function relatedActivityForEvidence(text: string, activities: Activity[], currentActivityId: number | undefined): Activity | undefined {
+  const evidenceTerms = new Set(text.split(/\s+/).filter(Boolean));
+  const matches = activities.filter(candidate => {
+    if (candidate.id === currentActivityId || ['done', 'completed', 'abandoned'].includes(candidate.status)) return false;
+    const titleTerms = termsFrom(candidate.title);
+    return titleTerms.length > 0 && titleTerms.every(term => evidenceTerms.has(term));
+  });
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
 function overlaps(block: PlanBlock, observation: Observation): boolean {
   const start = Date.parse(block.start_time);
   const end = start + block.duration_minutes * 60_000;
@@ -106,6 +118,7 @@ export function assessPlanBlock(
   activity: Activity | undefined,
   observations: Observation[],
   sources: SourceSummary[],
+  activities: Activity[] = [],
   now = Date.now()
 ): PlanAssessment {
   const freshness = sourceFreshness(sources, now);
@@ -120,9 +133,12 @@ export function assessPlanBlock(
   const evidence = relevant.slice(0, 24).map(observation => {
     const content = payloadText(observation);
     const matched = terms.length > 0 && terms.some(term => content.text.includes(term));
+    const relatedActivity = isHumanActivity(observation) && !matched
+      ? relatedActivityForEvidence(content.text, activities, activity?.id ?? block.activity_id)
+      : undefined;
     const relationship: EvidenceRelationship = !isHumanActivity(observation)
       ? 'context_only'
-      : matched ? 'matched' : 'unmatched';
+      : matched ? 'matched' : relatedActivity ? 'unmatched' : 'ambiguous';
     return {
       source_instance_key: observation.source_instance_key,
       source_kind: observation.source_kind,
@@ -133,7 +149,8 @@ export function assessPlanBlock(
       collected_at: observation.collected_at,
       summary: content.summary,
       relationship,
-      origin: evidenceOrigin(observation)
+      origin: evidenceOrigin(observation),
+      ...(relatedActivity ? { related_activity_id: relatedActivity.id, related_activity_title: relatedActivity.title } : {})
     } satisfies PlanEvidence;
   });
 
@@ -148,8 +165,9 @@ export function assessPlanBlock(
     };
   }
 
-  const humanEvidence = evidence.filter(item => item.relationship !== 'context_only');
+  const humanEvidence = evidence.filter(item => item.origin === 'observed_device_activity');
   const matched = humanEvidence.filter(item => item.relationship === 'matched');
+  const unrelated = humanEvidence.filter(item => item.relationship === 'unmatched');
   if (matched.length) {
     return {
       status: 'consistent',
@@ -160,13 +178,23 @@ export function assessPlanBlock(
       evidence
     };
   }
-  if (humanEvidence.length) {
+  if (unrelated.length) {
     return {
       status: 'possible_drift',
       source_freshness: freshness.state,
       freshness_note: freshness.note,
-      reason: 'Observed device activity did not match the plan terms during this block.',
-      inference: 'This may be intentional switching, useful interleaving, waiting, or drift. Ask what changed.',
+      reason: 'Observed device activity matches another configured activity.',
+      inference: 'This may be intentional switching, useful interleaving, waiting, or possible drift. Ask what changed.',
+      evidence
+    };
+  }
+  if (humanEvidence.length) {
+    return {
+      status: 'unknown',
+      source_freshness: freshness.state,
+      freshness_note: freshness.note,
+      reason: 'Observed device activity is not linked to this plan or another configured activity.',
+      inference: 'No drift claim is made from unmatched app or window text alone.',
       evidence
     };
   }

@@ -77,6 +77,7 @@ type Repository interface {
 	ListActivities(context.Context, ActivityFilter) ([]Activity, error)
 	UpdateActivity(context.Context, Activity) (Activity, error)
 	LatestPlan(context.Context, time.Time) (*Plan, error)
+	PlanBlocksByIDs(context.Context, []int64) ([]PlanBlock, error)
 	ListPlanVersions(context.Context, time.Time) ([]PlanVersionSummary, error)
 	SavePlan(context.Context, time.Time, PlanInput) (Plan, error)
 	SetPlanBlockState(context.Context, time.Time, int64, string, string, string, string) (PlanBlock, error)

@@ -68,13 +68,13 @@ func TestExecutionStartEventAndCurrentFlow(t *testing.T) {
 	}
 
 	marker := "Resume at the first paragraph"
-	event := httptest.NewRequest(http.MethodPost, "/v1/execution/sessions/7/events", strings.NewReader(`{"event_type":"switched_out","occurred_at":"2026-09-22T10:20:00Z","note":"Switching deliberately","resume_marker":"Resume at the first paragraph"}`))
+	event := httptest.NewRequest(http.MethodPost, "/v1/execution/sessions/7/events", strings.NewReader(`{"event_type":"switched_out","occurred_at":"2026-09-22T10:20:00Z","note":"Switching deliberately","resume_marker":"Resume at the first paragraph","metadata":{"reason_category":"intentional_switch"}}`))
 	eventResponse := httptest.NewRecorder()
 	server.ServeHTTP(eventResponse, event)
 	if eventResponse.Code != http.StatusOK {
 		t.Fatalf("event status = %d: %s", eventResponse.Code, eventResponse.Body.String())
 	}
-	if repository.executionEventSession != 7 || repository.executionEventInput.EventType != "switched_out" || repository.executionEventInput.ResumeMarker == nil || *repository.executionEventInput.ResumeMarker != marker {
+	if repository.executionEventSession != 7 || repository.executionEventInput.EventType != "switched_out" || repository.executionEventInput.ResumeMarker == nil || *repository.executionEventInput.ResumeMarker != marker || !strings.Contains(string(repository.executionEventInput.Metadata), `"reason_category":"intentional_switch"`) {
 		t.Fatalf("event input = %+v", repository.executionEventInput)
 	}
 

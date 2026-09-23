@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"testing"
@@ -48,6 +49,17 @@ func TestPostgresExecutionSessionsRetainLifecycleAndMarkers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("save plan: %v", err)
 	}
+	if _, err := database.SavePlan(ctx, startAt.Truncate(24*time.Hour), PlanInput{Blocks: []PlanBlockSpec{{
+		ActivityID:      &activity.ID,
+		StartTime:       startAt.Add(15 * time.Minute),
+		DurationMinutes: 90,
+	}}}); err != nil {
+		t.Fatalf("save revised plan: %v", err)
+	}
+	retainedBlocks, err := database.PlanBlocksByIDs(ctx, []int64{dayPlan.Blocks[0].ID})
+	if err != nil || len(retainedBlocks) != 1 || retainedBlocks[0].DurationMinutes != 45 || !retainedBlocks[0].StartTime.Equal(startAt) {
+		t.Fatalf("retained execution plan block = %+v, %v", retainedBlocks, err)
+	}
 
 	if _, err := database.StartExecutionSession(ctx, ExecutionSessionInput{ActivityID: 99999, StartedAt: &startAt}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown activity error = %v", err)
@@ -63,14 +75,18 @@ func TestPostgresExecutionSessionsRetainLifecycleAndMarkers(t *testing.T) {
 	if started.NextActionSnapshot != "Open the outline file" || started.ResumeMarker == nil || *started.ResumeMarker != "Start at the introduction" {
 		t.Fatalf("start snapshot = %+v", started)
 	}
-	if len(started.Events) != 1 || started.Events[0].EventType != executionEventStarted {
+	if len(started.Events) != 1 || started.Events[0].EventType != executionEventStarted || len(started.Events[0].Provenance) == 0 {
 		t.Fatalf("start events = %+v", started.Events)
 	}
 
 	waitingAt := startAt.Add(10 * time.Minute)
-	waiting, err := database.TransitionExecutionSession(ctx, started.ID, ExecutionEventInput{EventType: executionEventWaitingExternal, OccurredAt: &waitingAt, Note: "Waiting for the build"})
+	waiting, err := database.TransitionExecutionSession(ctx, started.ID, ExecutionEventInput{EventType: executionEventWaitingExternal, OccurredAt: &waitingAt, Note: "Waiting for the build", Metadata: json.RawMessage(`{"reason_category":"agent_wait"}`)})
 	if err != nil || waiting.State != executionStateWaitingExternal || waiting.EndedAt != nil {
 		t.Fatalf("waiting state = %+v, %v", waiting, err)
+	}
+	var waitingMetadata map[string]string
+	if len(waiting.Events) != 2 || json.Unmarshal(waiting.Events[1].Metadata, &waitingMetadata) != nil || waitingMetadata["reason_category"] != "agent_wait" || len(waiting.Events[1].Provenance) == 0 {
+		t.Fatalf("waiting event context = %+v", waiting.Events)
 	}
 	current, err := database.CurrentExecutionSession(ctx)
 	if err != nil || current == nil || current.ID != started.ID || current.State != executionStateWaitingExternal {
@@ -106,6 +122,34 @@ func TestPostgresExecutionSessionsRetainLifecycleAndMarkers(t *testing.T) {
 	if _, err := database.TransitionExecutionSession(ctx, started.ID, ExecutionEventInput{EventType: executionEventResumed, OccurredAt: &returnedAt}); err != nil {
 		t.Fatalf("resume after switch: %v", err)
 	}
+	stuckUnknownAt := startAt.Add(36 * time.Minute)
+	if _, err := database.TransitionExecutionSession(ctx, started.ID, ExecutionEventInput{EventType: executionEventStuckUnknownNextAction, OccurredAt: &stuckUnknownAt, Note: "I do not know the next action"}); err != nil {
+		t.Fatalf("stuck unknown event: %v", err)
+	}
+	stuckOverwhelmAt := startAt.Add(37 * time.Minute)
+	if _, err := database.TransitionExecutionSession(ctx, started.ID, ExecutionEventInput{EventType: executionEventStuckEmotionalOverwhelm, OccurredAt: &stuckOverwhelmAt, Note: "I know what to do but feel overwhelmed"}); err != nil {
+		t.Fatalf("stuck overwhelm event: %v", err)
+	}
+	overwhelmedAt := startAt.Add(38 * time.Minute)
+	if _, err := database.TransitionExecutionSession(ctx, started.ID, ExecutionEventInput{EventType: executionEventOverwhelmed, OccurredAt: &overwhelmedAt}); err != nil {
+		t.Fatalf("overwhelmed event: %v", err)
+	}
+	recoveryStartAt := startAt.Add(39 * time.Minute)
+	if _, err := database.TransitionExecutionSession(ctx, started.ID, ExecutionEventInput{EventType: executionEventOfflineRecoveryStarted, OccurredAt: &recoveryStartAt, Metadata: json.RawMessage(`{"recovery_method":"offline_walk"}`)}); err != nil {
+		t.Fatalf("recovery start event: %v", err)
+	}
+	ownerExplanationAt := startAt.Add(39*time.Minute + 30*time.Second)
+	if _, err := database.TransitionExecutionSession(ctx, started.ID, ExecutionEventInput{EventType: executionEventOwnerExplanation, OccurredAt: &ownerExplanationAt, Note: "I am taking a short offline break"}); err != nil {
+		t.Fatalf("owner explanation during recovery: %v", err)
+	}
+	recoveryEndAt := startAt.Add(40 * time.Minute)
+	if _, err := database.TransitionExecutionSession(ctx, started.ID, ExecutionEventInput{EventType: executionEventOfflineRecoveryEnded, OccurredAt: &recoveryEndAt}); err != nil {
+		t.Fatalf("recovery end event: %v", err)
+	}
+	recoveryReturnAt := startAt.Add(41 * time.Minute)
+	if _, err := database.TransitionExecutionSession(ctx, started.ID, ExecutionEventInput{EventType: executionEventResumed, OccurredAt: &recoveryReturnAt}); err != nil {
+		t.Fatalf("resume after recovery: %v", err)
+	}
 	completedAt := startAt.Add(45 * time.Minute)
 	completed, err := database.TransitionExecutionSession(ctx, started.ID, ExecutionEventInput{EventType: executionEventCompleted, OccurredAt: &completedAt})
 	if err != nil || completed.State != executionStateCompleted || completed.EndedAt == nil {
@@ -114,12 +158,16 @@ func TestPostgresExecutionSessionsRetainLifecycleAndMarkers(t *testing.T) {
 	if completed.ResumeMarker == nil || *completed.ResumeMarker != marker {
 		t.Fatalf("completed resume marker = %+v", completed.ResumeMarker)
 	}
-	if len(completed.Events) != 7 {
+	if len(completed.Events) != 14 {
 		t.Fatalf("append-only event history = %d: %+v", len(completed.Events), completed.Events)
 	}
 	readBack, err := database.GetExecutionSession(ctx, started.ID)
-	if err != nil || readBack.ResumeMarker == nil || *readBack.ResumeMarker != marker || len(readBack.Events) != 7 {
+	if err != nil || readBack.ResumeMarker == nil || *readBack.ResumeMarker != marker || len(readBack.Events) != 14 || readBack.Events[10].EventType != executionEventOwnerExplanation {
 		t.Fatalf("read-back session = %+v, %v", readBack, err)
+	}
+	var recoveryMetadata map[string]string
+	if json.Unmarshal(readBack.Events[9].Metadata, &recoveryMetadata) != nil || recoveryMetadata["recovery_method"] != "offline_walk" {
+		t.Fatalf("read-back recovery metadata = %s", readBack.Events[9].Metadata)
 	}
 	if _, err := database.TransitionExecutionSession(ctx, started.ID, ExecutionEventInput{EventType: executionEventResumed, OccurredAt: &completedAt}); !errors.Is(err, ErrInvalidExecutionTransition) {
 		t.Fatalf("completed resume error = %v", err)

@@ -36,6 +36,20 @@ test('overlap partition leaves silent time empty',()=>{
  expect(partitionSegments([row(0,10),row(20,30)])).toHaveLength(2);
 });
 
+test('partition work grows near-linearly for long, non-overlapping histories',()=>{
+ const measure=(count:number)=>{
+  const rows=Array.from({length:count},(_,i):DaySegment=>({start:i*10,end:i*10+5,label:'A',kind:'foreground',detail:'',evidence:[]}));
+  const start=performance.now();
+  const result=partitionSegments(rows);
+  return {milliseconds:performance.now()-start,segments:result.length};
+ };
+ measure(200); // Warm up the same path before comparing sizes.
+ const small=measure(500),large=measure(6000);
+ expect(small.segments).toBe(500);
+ expect(large.segments).toBe(6000);
+ expect(large.milliseconds/Math.max(small.milliseconds,0.1)).toBeLessThan(24);
+});
+
 test('phone intervals require matching package and activity pause; unmatched resume stays a point',()=>{
  const phone=(time:string,event:string,activity:string)=>{const o=aw('phone',at(time),at(time),{});o.source_kind='android_usage';o.original_payload={event_type:event,package_name:'org.mozilla.firefox',class_name:activity};return o;};
  const d=deriveDay([phone('10:00','activity_resumed','A'),phone('10:03','activity_paused','B'),phone('10:05','activity_paused','A'),phone('11:00','activity_resumed','A')],[],'2026-09-07');

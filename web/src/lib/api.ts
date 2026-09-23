@@ -158,23 +158,31 @@ export async function listObservations(input: {
 }
 
 // The current API has a cap, but no cursor. Split saturated windows without
-// advancing past them; never silently describe a capped result as complete.
-export async function loadObservationHistory(sourceInstanceKey: string, from: Date, to: Date, signal?: AbortSignal): Promise<Observation[]> {
+// advancing past them; yield each complete slice while later slices load.
+export async function* iterateObservationHistory(sourceInstanceKey: string, from: Date, to: Date, signal?: AbortSignal): AsyncGenerator<Observation[]> {
   let requests = 0;
   let count = 0;
-  async function read(lo: number, hi: number): Promise<Observation[]> {
+  async function* read(lo: number, hi: number): AsyncGenerator<Observation[]> {
     if (++requests > 128) throw new Error('Observation history exceeds the query budget. No partial totals are shown.');
     const rows = await listObservations({sourceInstanceKey, from: new Date(lo), to: new Date(hi), signal});
     if (rows.length >= 1000) {
       if (hi - lo <= 1) throw new Error('Too many records share a timestamp. A paginated API is needed; no partial totals are shown.');
       const mid = Math.floor((lo + hi) / 2);
-      return [...await read(lo, mid), ...await read(mid, hi)];
+      yield* read(lo, mid);
+      yield* read(mid, hi);
+      return;
     }
     count += rows.length;
     if (count > 25_000) throw new Error('Observation history exceeds the browser record budget. No partial totals are shown.');
-    return rows;
+    if (rows.length) yield rows;
   }
-  return read(from.getTime(), to.getTime());
+  yield* read(from.getTime(), to.getTime());
+}
+
+export async function loadObservationHistory(sourceInstanceKey: string, from: Date, to: Date, signal?: AbortSignal): Promise<Observation[]> {
+  const rows: Observation[] = [];
+  for await (const slice of iterateObservationHistory(sourceInstanceKey, from, to, signal)) rows.push(...slice);
+  return rows;
 }
 
 export const loadHealthHistory = loadObservationHistory;
@@ -305,5 +313,151 @@ export async function updatePlanningSettings(dailyPlanGateEnabled: boolean): Pro
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ daily_plan_gate_enabled: dailyPlanGateEnabled })
+  });
+}
+
+export type AlignmentEvidence = {
+  source_instance_key: string;
+  source_kind: string;
+  source_record_key: string;
+  related_activity_id?: number;
+  related_activity_title?: string;
+  kind: string;
+  occurred_at: string;
+  ended_at?: string;
+  collected_at: string;
+  summary: string;
+  relationship: 'matched' | 'unmatched' | 'ambiguous' | 'context_only';
+  origin: 'observed_device_activity' | 'observed_agent_activity';
+};
+
+export type AlignmentView = {
+  evaluated_at: string;
+  plan_date: string;
+  plan_version_id?: number;
+  plan_block_id?: number;
+  activity_id?: number;
+  activity_title?: string;
+  next_action?: string;
+  resume_marker?: string;
+  plan_block_state?: PlanBlock['state'];
+  execution_session_id?: number;
+  execution_state?: 'active' | 'waiting_external' | 'interrupted' | 'completed' | 'abandoned';
+  alignment_state: 'aligned' | 'possible_drift' | 'unknown';
+  reason_code: string;
+  reason: string;
+  source_freshness: 'fresh' | 'stale' | 'missing';
+  coverage: 'available' | 'missing' | 'bounded';
+  freshness_note: string;
+  evidence: AlignmentEvidence[];
+};
+
+export type ExecutionEvent = {
+  id: number;
+  session_id: number;
+  event_type: string;
+  occurred_at: string;
+  note?: string;
+  metadata?: Record<string, unknown>;
+  provenance?: Record<string, unknown>;
+  created_at: string;
+};
+
+export type ExecutionSession = {
+  id: number;
+  activity_id: number;
+  plan_block_id?: number;
+  started_at: string;
+  ended_at?: string;
+  state: 'active' | 'waiting_external' | 'interrupted' | 'completed' | 'abandoned';
+  next_action_snapshot: string;
+  resume_marker?: string;
+  created_at: string;
+  updated_at: string;
+  events?: ExecutionEvent[];
+};
+
+export type ExecutionEventInput = {
+  event_type: string;
+  occurred_at?: string;
+  note?: string;
+  resume_marker?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type ExecutionMetricSource = {
+  metric: string;
+  session_id: number;
+  plan_block_id?: number;
+  event_ids: number[];
+  value: number;
+  unit: 'count' | 'seconds';
+};
+
+export type ExecutionSummary = {
+  from: string;
+  to: string;
+  coverage: 'complete' | 'bounded';
+  sessions: number;
+  completed: number;
+  abandoned: number;
+  terminal_session_count: number;
+  abandonment_rate: number | null;
+  initiation_latencies_seconds: number[];
+  interruption_count: number;
+  intentional_switch_count: number;
+  waiting_external_count: number;
+  return_opportunity_count: number;
+  return_count: number;
+  return_rate: number | null;
+  return_latencies_seconds: number[];
+  stuck_unknown_next_action_count: number;
+  stuck_emotional_overwhelm_count: number;
+  overwhelmed_count: number;
+  recovery_count: number;
+  recovery_durations_seconds: number[];
+  recovery_same_task_return_count: number;
+  recovery_same_task_return_rate: number | null;
+  planned_seconds: number;
+  session_elapsed_seconds: number;
+  session_elapsed_count: number;
+  session_elapsed_with_nonactive_events_count: number;
+  duration_estimation_errors: Array<{
+    session_id: number;
+    plan_block_id?: number;
+    planned_seconds: number;
+    session_elapsed_seconds: number;
+    error_seconds: number;
+    has_nonactive_events: boolean;
+  }>;
+  possible_unplanned_switch_count: number;
+  possible_unplanned_switches: AlignmentView[];
+  metric_sources: ExecutionMetricSource[];
+  metric_sources_truncated: boolean;
+};
+
+export async function getCurrentAlignment(at?: Date): Promise<AlignmentView> {
+  const path = at ? `/v1/alignment/current?at=${encodeURIComponent(at.toISOString())}` : '/v1/alignment/current';
+  const result = await request<{ alignment: AlignmentView }>(path);
+  return result.alignment;
+}
+
+export async function getAlignmentHistory(from: Date, to: Date, limit = 50): Promise<AlignmentView[]> {
+  const query = new URLSearchParams({ from: from.toISOString(), to: to.toISOString(), limit: String(limit) });
+  const result = await request<{ alignments: AlignmentView[] | null }>(`/v1/alignment/history?${query}`);
+  return result.alignments ?? [];
+}
+
+export async function getExecutionSummary(from: Date, to: Date): Promise<ExecutionSummary> {
+  const query = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() });
+  const result = await request<{ summary: ExecutionSummary }>(`/v1/execution/summary?${query}`);
+  return result.summary;
+}
+
+export async function recordExecutionEvent(sessionId: number, input: ExecutionEventInput): Promise<ExecutionSession> {
+  return request<ExecutionSession>(`/v1/execution/sessions/${encodeURIComponent(sessionId)}/events`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input)
   });
 }

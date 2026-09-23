@@ -15,6 +15,7 @@
     createActivity,
     endPanelSession,
     getAuthConfig,
+    getCurrentAlignment,
     getPlan,
     getPlanningSettings,
     listActivities,
@@ -24,6 +25,7 @@
     listSources,
     loadHealthHistory,
     loadObservationHistory,
+    iterateObservationHistory,
     pairingDetails,
     revokeDevice,
     panelSession,
@@ -35,6 +37,7 @@
     updateActivity,
     type Activity,
     type ActivityInput,
+    type AlignmentView,
     type AuthConfig,
     type CollectionHealth,
     type Device,
@@ -60,6 +63,7 @@
   let dayError = '';
   let dayStatus = '';
   let dayRequest: AbortController | undefined;
+  let activeDayLoad: { day: string; sourceKeys: string[]; promise: Promise<Observation[]> } | undefined;
   let healthObservations: Observation[] = [];
   let healthError = '';
   let healthStatus = '';
@@ -80,7 +84,9 @@
   let planObservations: Observation[] = [];
   let planEvidenceLoading = false;
   let planEvidenceError = '';
-  $: planAssessments = Object.fromEntries((plan?.blocks ?? []).map(block => [block.id, assessPlanBlock(block, block.activity_id ? activities.find(activity => activity.id === block.activity_id) : undefined, planObservations, sources)])) as Record<number, PlanAssessment>;
+  let currentAlignment: AlignmentView | undefined;
+  let currentAlignmentError = '';
+  $: planAssessments = Object.fromEntries((plan?.blocks ?? []).map(block => [block.id, assessPlanBlock(block, block.activity_id ? activities.find(activity => activity.id === block.activity_id) : undefined, planObservations, sources, activities)])) as Record<number, PlanAssessment>;
   let collectionStatus: CollectionHealth | undefined;
   let collectionError = '';
   let collectionRequest: AbortController | undefined;
@@ -88,6 +94,9 @@
   let authenticated = false;
   let checkingSession = true;
   let loading = false;
+  let loadingView: 'day' | 'plan' | 'health' | 'collection' | 'devices' | undefined;
+  let refreshQueued = false;
+  let refreshQueuedForceDay = false;
   let error = '';
   let token = '';
   let authConfig: AuthConfig | undefined;
@@ -110,6 +119,45 @@
   let selectedObservation: Observation | undefined;
   let updatedAt: Date | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
+  const historyCacheMaxAge = 5 * 60_000;
+  let historyCache: Array<{ day: string; sourceKeys: string[]; from: number; to: number; rows: Observation[]; savedAt: number }> = [];
+
+  function cachedHistory(day: string, sourceKeys: string[], from: number, to: number): Observation[] | undefined {
+    const now = Date.now();
+    const required = new Set(sourceKeys);
+    const cache = historyCache.find(entry => entry.day === day && now - entry.savedAt < historyCacheMaxAge &&
+      entry.from <= from && entry.to > from && sourceKeys.every(key => entry.sourceKeys.includes(key)));
+    return cache?.rows.filter(row => {
+      const occurred = Date.parse(row.occurred_at);
+      return required.has(row.source_instance_key) && occurred >= from && occurred < to;
+    });
+  }
+
+  function saveHistory(day: string, sourceKeys: string[], from: number, to: number, rows: Observation[]): void {
+    historyCache = historyCache.filter(entry => !(entry.day === day && entry.from === from && entry.to === to &&
+      entry.sourceKeys.length === sourceKeys.length && sourceKeys.every(key => entry.sourceKeys.includes(key))));
+    historyCache.push({ day, sourceKeys: [...sourceKeys], from, to, rows, savedAt: Date.now() });
+    if (historyCache.length > 2) historyCache.shift();
+  }
+
+  async function loadDayHistory(
+    available: SourceSummary[],
+    from: Date,
+    to: Date,
+    signal: AbortSignal,
+    onProgress: (rows: Observation[]) => void
+  ): Promise<Observation[]> {
+    const rows: Observation[] = [];
+    for (const source of available) {
+      for await (const slice of iterateObservationHistory(source.source_instance_key, from, to, signal)) {
+        if (signal.aborted) throw new DOMException('The request was aborted.', 'AbortError');
+        rows.push(...slice);
+        if (rows.length > 25_000) throw new Error('Day view exceeds the browser record budget. The displayed timeline is partial.');
+        onProgress(rows);
+      }
+    }
+    return rows;
+  }
 
   function rangeStart(value: Range) {
     const hours = value === '24h' ? 24 : 24 * 7;
@@ -228,6 +276,18 @@
       activities = rows;
       planVersions = versions;
       planningSettings = settings;
+      currentAlignmentError = '';
+      if (selectedDay === dayKey(Date.now())) {
+        try {
+          currentAlignment = await getCurrentAlignment(new Date());
+        } catch (cause) {
+          currentAlignment = undefined;
+          currentAlignmentError = cause instanceof Error ? cause.message : 'Unable to load current execution alignment.';
+          if (cause instanceof APIError && cause.status === 401) authenticated = false;
+        }
+      } else {
+        currentAlignment = undefined;
+      }
     } catch (cause) {
       planError = cause instanceof Error ? cause.message : 'Unable to load the plan.';
       if (cause instanceof APIError && cause.status === 401) authenticated = false;
@@ -235,7 +295,7 @@
       planLoading = false;
       activitiesLoading = false;
     }
-    await refreshPlanEvidence();
+    void refreshPlanEvidence();
   }
 
   async function handleSavePlan(input: PlanInput): Promise<void> {
@@ -265,6 +325,7 @@
   async function refreshPlanEvidence(): Promise<void> {
     planEvidenceLoading = true;
     planEvidenceError = '';
+    const requestedDay = selectedDay;
     try {
       if (!plan) {
         planObservations = [];
@@ -272,18 +333,42 @@
       }
       const available = sources.filter(source => source.source_kind === 'activitywatch' || source.source_kind === 'android_usage');
       if (available.length > 16) throw new Error('Plan evidence supports up to 16 activity sources. Source selection is needed for larger installations.');
-      const fromMs = dayStart(selectedDay);
+      const fromMs = dayStart(requestedDay);
       const toMs = Math.min(fromMs + 86_400_000, Date.now());
       if (!Number.isFinite(fromMs) || toMs <= fromMs) {
         planObservations = [];
         return;
+      }
+      const sourceKeys = available.map(source => source.source_instance_key);
+      const cached = cachedHistory(requestedDay, sourceKeys, fromMs, toMs);
+      if (cached) {
+        if (authenticated && selectedDay === requestedDay) planObservations = cached;
+        return;
+      }
+      const active = activeDayLoad;
+      if (active?.day === requestedDay && sourceKeys.every(key => active.sourceKeys.includes(key))) {
+        try {
+          const history = await active.promise;
+          if (authenticated && selectedDay === requestedDay) {
+            planObservations = history.filter(row => {
+              const occurred = Date.parse(row.occurred_at);
+              return sourceKeys.includes(row.source_instance_key) && occurred >= fromMs && occurred < toMs;
+            });
+          }
+          return;
+        } catch (cause) {
+          if (!(cause instanceof DOMException && cause.name === 'AbortError')) throw cause;
+        }
       }
       const rows: Observation[] = [];
       for (const source of available) {
         rows.push(...await loadObservationHistory(source.source_instance_key, new Date(fromMs), new Date(toMs)));
         if (rows.length > 25_000) throw new Error('Plan evidence exceeds the browser record budget. No partial alignment is shown.');
       }
-      if (authenticated) planObservations = rows;
+      if (authenticated && selectedDay === requestedDay) {
+        planObservations = rows;
+        saveHistory(requestedDay, sourceKeys, fromMs, toMs, rows);
+      }
     } catch (cause) {
       planEvidenceError = cause instanceof Error ? cause.message : 'Unable to load plan evidence.';
     } finally {
@@ -368,13 +453,24 @@
     }
   }
 
-  async function refresh() {
-    if (!authenticated || loading) return;
-    loading = true;
+  async function refresh(forceDay = false) {
+    if (!authenticated) return;
+    if (loading) {
+      if (view !== loadingView) {
+        refreshQueued = true;
+        refreshQueuedForceDay ||= forceDay;
+      }
+      return;
+    }
+    const requestedView = view;
+    if (requestedView !== 'day') {
+      loading = true;
+      loadingView = requestedView;
+    }
     error = '';
     try {
       const now = new Date();
-      if (view === 'collection') {
+      if (requestedView === 'collection') {
         const [rows] = await Promise.all([listObservations({
           sourceInstanceKey: selectedSource || undefined,
           from: rangeStart(range),
@@ -388,18 +484,27 @@
         }
       } else {
         sources = await listSources();
-        if (view === 'health') await refreshHealth();
-        else if (view === 'devices') await refreshDevices();
-        else if (view === 'plan') await refreshPlan();
-        else await refreshDay();
+        if (requestedView === 'health') await refreshHealth();
+        else if (requestedView === 'devices') await refreshDevices();
+        else if (requestedView === 'plan') await refreshPlan();
+        else await refreshDay(forceDay);
       }
-      if (selectedObservation) selectedObservation = (view === 'health' ? healthObservations : view === 'day' ? dayObservations : [...observations, ...(collectionStatus?.devices.flatMap(d => d.resource_history) ?? [])]).find(event => event.source_record_key === selectedObservation?.source_record_key && event.source_instance_key === selectedObservation?.source_instance_key);
-      updatedAt = now;
+      if (selectedObservation) selectedObservation = (requestedView === 'health' ? healthObservations : requestedView === 'day' ? dayObservations : [...observations, ...(collectionStatus?.devices.flatMap(d => d.resource_history) ?? [])]).find(event => event.source_record_key === selectedObservation?.source_record_key && event.source_instance_key === selectedObservation?.source_instance_key);
+      updatedAt = new Date();
     } catch (cause) {
       error = cause instanceof APIError ? cause.message : 'Unable to load the current telemetry view.';
       if (cause instanceof APIError && cause.status === 401) authenticated = false;
     } finally {
-      loading = false;
+      if (requestedView !== 'day') {
+        loading = false;
+        loadingView = undefined;
+      }
+      if (refreshQueued) {
+        const nextForceDay = refreshQueuedForceDay;
+        refreshQueued = false;
+        refreshQueuedForceDay = false;
+        void refresh(nextForceDay);
+      }
     }
   }
 
@@ -424,31 +529,48 @@
     }
   }
 
-  async function refreshDay() {
+  async function refreshDay(force = false) {
     dayRequest?.abort();
     const request = new AbortController(); dayRequest = request;
+    let historyPromise: Promise<Observation[]> | undefined;
     dayLoading = true; dayError = ''; dayStatus = '';
     try {
-      const lo = dayStart(selectedDay);
+      const requestedDay = selectedDay;
+      const lo = dayStart(requestedDay);
       if (!Number.isFinite(lo)) throw new Error('Choose a valid date.');
       const from = new Date(lo - 86_400_000);
       const to = new Date(Math.min(lo + 86_400_000, Date.now()));
       if (to.getTime() <= lo) throw new Error('Choose today or an earlier day.');
-      const rows: Observation[] = [];
       const available = sources.filter(s => ['activitywatch', 'health_connect', 'android_usage'].includes(s.source_kind));
       if (available.length > 16) throw new Error('This view supports up to 16 sources. Source selection is needed for larger installations.');
-      for (const source of available) {
-        rows.push(...await loadObservationHistory(source.source_instance_key, from, to, request.signal));
-        if (rows.length > 25_000) throw new Error('Day view exceeds the browser record budget. No partial timeline is shown.');
+      const sourceKeys = available.map(source => source.source_instance_key);
+      const cached = force ? undefined : cachedHistory(requestedDay, sourceKeys, from.getTime(), to.getTime());
+      if (cached) {
+        if (request.signal.aborted || !authenticated || selectedDay !== requestedDay) return;
+        dayObservations = cached;
+        dayStatus = `Showing ${cached.length.toLocaleString()} recently cached records for ${requestedDay}.`;
+        return;
       }
-      if (request.signal.aborted || !authenticated) return;
+      historyPromise = loadDayHistory(available, from, to, request.signal, rows => {
+        if (request.signal.aborted || !authenticated || selectedDay !== requestedDay) return;
+        dayObservations = [...rows];
+        dayStatus = `Loading ${rows.length.toLocaleString()} records for ${requestedDay}; the timeline is partial until loading finishes.`;
+      });
+      activeDayLoad = { day: requestedDay, sourceKeys, promise: historyPromise };
+      const rows = await historyPromise;
+      if (request.signal.aborted || !authenticated || selectedDay !== requestedDay) return;
       dayObservations = rows;
-      dayStatus = `Day ${selectedDay}. Read at ${date(new Date().toISOString())}. UTC+03:00. Gaps mean unknown activity.`;
+      saveHistory(requestedDay, sourceKeys, from.getTime(), to.getTime(), rows);
+      dayStatus = `Loaded ${rows.length.toLocaleString()} records for ${requestedDay} at ${date(new Date().toISOString())}. UTC+03:00. Gaps mean unknown activity.`;
     } catch (cause) {
       if (request.signal.aborted) return;
-      dayError = cause instanceof Error ? cause.message : 'Unable to load the day.';
+      const detail = cause instanceof Error ? cause.message.replace(/ No partial totals are shown\.$/, '') : 'Unable to load the day.';
+      dayError = `The timeline may be partial. ${detail}`;
       if (cause instanceof APIError && cause.status === 401) authenticated = false;
-    } finally { if (dayRequest === request) dayLoading = false; }
+    } finally {
+      if (historyPromise && activeDayLoad?.promise === historyPromise) activeDayLoad = undefined;
+      if (dayRequest === request) dayLoading = false;
+    }
   }
 
   async function refreshHealth() {
@@ -560,7 +682,10 @@
         clerkAccessBlocked = true;
         clerkError = `Access is not enabled for ${clerkUserId}.`;
       }
-      if (authenticated) await refresh();
+      if (authenticated) {
+        checkingSession = false;
+        void refresh();
+      }
     } catch (cause) {
       if (cause instanceof APIError && cause.status === 403 && clerkUserId) {
         clerkAccessBlocked = true;
@@ -573,7 +698,7 @@
     }
     timer = setInterval(() => {
       if (document.visibilityState !== 'visible' || snapshotMode) return;
-      if (view === 'collection' || (updatedAt && Date.now() - updatedAt.getTime() >= 300_000)) void refresh();
+      if (view === 'collection' || (!dayLoading && updatedAt && Date.now() - updatedAt.getTime() >= 300_000)) void refresh();
     }, 30_000);
   });
 
@@ -637,11 +762,11 @@
     </section>
   {:else}
     <nav class="view-tabs" aria-label="Panel views">
-      <button class:active={view === 'day'} aria-pressed={view === 'day'} disabled={loading} on:click={() => { view = 'day'; void refresh(); }}>Day</button>
-      <button class:active={view === 'plan'} aria-pressed={view === 'plan'} disabled={loading} on:click={() => { view = 'plan'; void refresh(); }}>Plan</button>
-      <button class:active={view === 'health'} aria-pressed={view === 'health'} disabled={loading} on:click={() => { view = 'health'; void refresh(); }}>Health</button>
-      <button class:active={view === 'collection'} aria-pressed={view === 'collection'} disabled={loading} on:click={() => { view = 'collection'; void refresh(); }}>Sources</button>
-      <button class:active={view === 'devices'} aria-pressed={view === 'devices'} disabled={loading} on:click={() => { view = 'devices'; void refresh(); }}>Devices</button>
+      <button class:active={view === 'day'} aria-pressed={view === 'day'} on:click={() => { view = 'day'; void refresh(); }}>Day</button>
+      <button class:active={view === 'plan'} aria-pressed={view === 'plan'} on:click={() => { view = 'plan'; void refresh(); }}>Plan</button>
+      <button class:active={view === 'health'} aria-pressed={view === 'health'} on:click={() => { view = 'health'; void refresh(); }}>Health</button>
+      <button class:active={view === 'collection'} aria-pressed={view === 'collection'} on:click={() => { view = 'collection'; void refresh(); }}>Sources</button>
+      <button class:active={view === 'devices'} aria-pressed={view === 'devices'} on:click={() => { view = 'devices'; void refresh(); }}>Devices</button>
     </nav>
     {#if pairingId}
       <section class="pairing" aria-labelledby="pairing-heading">
@@ -657,20 +782,21 @@
     {/if}
     {#if view === 'day'}
       {#if error}<p class="error" role="alert">{error}</p>{/if}
-      <DayTimeline observations={dayObservations} {sources} bind:date={selectedDay} loading={dayLoading || loading} error={dayError || error} status={dayStatus} ondatechange={refresh} oninspect={(o) => selectedObservation = o} />
+      <DayTimeline observations={dayObservations} {sources} bind:date={selectedDay} loading={dayLoading} error={dayError || error} status={dayStatus} ondatechange={refresh} onrefresh={() => refresh(true)} oninspect={(o) => selectedObservation = o} />
     {:else if view === 'health'}
       <div class="health-toolbar">
         {#if healthSources.length > 1}
           <label>Device <select bind:value={healthSource} on:change={refreshHealth}>{#each healthSources as source}<option value={source.source_instance_key}>{source.device_id}</option>{/each}</select></label>
         {/if}
         <span>UTC+03:00</span>
-        <button class="quiet-button" disabled={loading || healthLoading} on:click={refresh}>Refresh health</button>
+        <button class="quiet-button" disabled={loading || healthLoading} on:click={() => refresh()}>Refresh health</button>
       </div>
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       <HealthHistory observations={healthObservations} loading={healthLoading} error={healthError} oninspect={(o) => selectedObservation = o} />
     {:else if view === 'plan'}
       <PlanView day={selectedDay} {activities} {plan} activitiesError={activitiesError} planError={planError}
         {planVersions} {planningSettings} assessments={planAssessments} {planEvidenceLoading} {planEvidenceError}
+        {currentAlignment} currentAlignmentError={currentAlignmentError}
         onrefresh={refreshPlan} onsave={handleSavePlan} onsetstate={handleBlockState}
         oncreateactivity={handleCreateActivity} onupdateactivity={handleUpdateActivity} onupdatesettings={handleUpdatePlanningSettings} />
     {:else if view === 'devices'}

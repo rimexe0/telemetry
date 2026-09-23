@@ -153,6 +153,9 @@ func (fakeRepository) UpdateActivity(context.Context, store.Activity) (store.Act
 func (fakeRepository) LatestPlan(context.Context, time.Time) (*store.Plan, error) {
 	return nil, nil
 }
+func (fakeRepository) PlanBlocksByIDs(context.Context, []int64) ([]store.PlanBlock, error) {
+	return nil, nil
+}
 func (fakeRepository) SavePlan(context.Context, time.Time, store.PlanInput) (store.Plan, error) {
 	return store.Plan{}, store.ErrNotFound
 }

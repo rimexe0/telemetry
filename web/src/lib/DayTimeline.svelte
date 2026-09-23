@@ -14,6 +14,7 @@
   export let status = '';
   export let oninspect: (observation: Observation) => void = () => undefined;
   export let ondatechange: () => void = () => undefined;
+  export let onrefresh: () => void = () => ondatechange();
 
   type DaySegment = { start: number; end: number; label: string; detail: string; evidence: Observation[]; kind: string };
   type DayLane = { name: string; note: string; segments: DaySegment[] };
@@ -297,7 +298,7 @@
 
 <section class="day-view" aria-label="Day" data-status={status ? 'ready' : undefined}>
   <div class="day-header">
-    <DayPicker value={date} onchange={changeDate} disabled={loading} />
+    <DayPicker value={date} onchange={changeDate} />
     <div class="day-controls" aria-label="Timeline controls">
       <button class:chosen={density==='compact'} aria-pressed={density==='compact'} on:click={()=>density='compact'}>Compact</button>
       <button class:chosen={density==='records'} aria-pressed={density==='records'} on:click={()=>density='records'}>Records</button>
@@ -306,7 +307,7 @@
       <button type="button" class="icon-button" aria-label="Zoom in" on:click={() => setZoomWindow(zoomHours / 1.5)}>+</button>
       <button type="button" class="icon-button" aria-label="Pan earlier" on:click={() => pan(-1)}>←</button>
       <button type="button" class="icon-button" aria-label="Pan later" on:click={() => pan(1)}>→</button>
-      <button type="button" class="refresh-day" disabled={loading} on:click={ondatechange}>↻</button>
+      <button type="button" class="refresh-day" aria-label="Refresh timeline" disabled={loading} on:click={onrefresh}>↻</button>
     </div>
   </div>
 
@@ -321,6 +322,7 @@
     <div><span>Phone</span><strong>{phoneCount.toLocaleString()} events</strong></div>
     <div><span>Browser</span><strong>{duration(browserTotal)}</strong></div>
   </div>
+  {#if status}<p class="day-status" role="status" aria-live="polite">{status}</p>{/if}
   {#if loading && observations.length === 0}
     <div class="inline-state" role="status">Loading</div>
   {:else if error && observations.length === 0}
@@ -436,6 +438,7 @@
  button.chosen {background:var(--fg);color:var(--bg);} button:disabled {opacity:.4;cursor:default;}
  .lane-controls {padding-bottom:4px;} .lane-controls .muted {opacity:.4;}
  .search {width:170px;} .inline-state {font-size:12px;color:var(--muted);}
+ .day-status {margin:0;color:var(--muted);font-size:11px;}
  .day-stats {display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:1px;border:1px solid var(--line);background:var(--line);}
  .day-stats div {display:grid;gap:3px;padding:7px 9px;background:var(--panel);min-width:0;}
  .day-stats span {font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;}

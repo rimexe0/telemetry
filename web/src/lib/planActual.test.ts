@@ -55,7 +55,7 @@ const observation = (overrides: Partial<Observation>): Observation => ({
 
 describe('plan-versus-actual assessment', () => {
   it('marks matching device context as consistent without claiming completion', () => {
-    const result = assessPlanBlock(block, activity, [observation({})], [source()], now);
+    const result = assessPlanBlock(block, activity, [observation({})], [source()], [], now);
 
     expect(result.status).toBe('consistent');
     expect(result.inference).toContain('does not prove');
@@ -63,21 +63,44 @@ describe('plan-versus-actual assessment', () => {
     expect(result.evidence[0].origin).toBe('observed_device_activity');
   });
 
-  it('exposes unmatched activity as possible drift while preserving the alternative explanation', () => {
+  it('keeps unconfigured unmatched window evidence unknown', () => {
     const result = assessPlanBlock(block, activity, [observation({
       original_payload: { data: { app: 'YouTube', title: 'Music' } }
-    })], [source()], now);
+    })], [source()], [], now);
+
+    expect(result.status).toBe('unknown');
+    expect(result.reason).toContain('not linked');
+    expect(result.evidence[0].relationship).toBe('ambiguous');
+  });
+
+  it('only marks evidence matching another configured activity as possible drift', () => {
+    const otherActivity: Activity = { ...activity, id: 2, title: 'Payroll export' };
+    const result = assessPlanBlock(block, activity, [observation({
+      original_payload: { data: { app: 'Excel', title: 'Payroll export' } }
+    })], [source()], [activity, otherActivity], now);
 
     expect(result.status).toBe('possible_drift');
-    expect(result.reason).toContain('did not match');
-    expect(result.inference).toContain('intentional switching');
     expect(result.evidence[0].relationship).toBe('unmatched');
+    expect(result.evidence[0].related_activity_id).toBe(otherActivity.id);
+    expect(result.evidence[0].related_activity_title).toBe(otherActivity.title);
+  });
+
+  it('keeps evidence ambiguous when multiple configured activities have the same title', () => {
+    const result = assessPlanBlock(block, activity, [observation({
+      original_payload: { data: { app: 'Excel', title: 'Payroll export' } }
+    })], [source()], [
+      { ...activity, id: 2, title: 'Payroll export' },
+      { ...activity, id: 3, title: 'Payroll export', status: 'waiting' }
+    ], now);
+
+    expect(result.status).toBe('unknown');
+    expect(result.evidence[0].relationship).toBe('ambiguous');
   });
 
   it('returns unknown for stale sources instead of inventing drift', () => {
     const result = assessPlanBlock(block, activity, [observation({
       original_payload: { data: { app: 'YouTube', title: 'Music' } }
-    })], [source('2026-09-20T08:00:00Z')], now);
+    })], [source('2026-09-20T08:00:00Z')], [], now);
 
     expect(result.status).toBe('unknown');
     expect(result.source_freshness).toBe('stale');
@@ -85,7 +108,7 @@ describe('plan-versus-actual assessment', () => {
   });
 
   it('returns unknown for a fresh source with no overlapping records', () => {
-    const result = assessPlanBlock(block, activity, [], [source()], now);
+    const result = assessPlanBlock(block, activity, [], [source()], [], now);
 
     expect(result.status).toBe('unknown');
     expect(result.reason).toContain('No activity record');
@@ -96,7 +119,7 @@ describe('plan-versus-actual assessment', () => {
     const result = assessPlanBlock(block, activity, [observation({
       source_instance_key: 'activitywatch:mac:aw-watcher-codex',
       original_payload: { data: { project_path: '/Users/ri/code/personal/Telemetry', chat_title: 'Telemetry implementation' } }
-    })], [source()], now);
+    })], [source()], [], now);
 
     expect(result.status).toBe('unknown');
     expect(result.evidence[0].origin).toBe('observed_agent_activity');
