@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from 'vitest';
-import { APIError, getCurrentAlignment, getExecutionSummary, iterateObservationHistory, listObservations, setClerkTokenProvider, startPanelSession } from './api';
+import { APIError, getCurrentAlignment, getCurrentAttendedExecutionSession, getCurrentPrimaryExecutionSession, getExecutionSummary, iterateObservationHistory, listExecutionInterleaves, listObservations, returnToPrimary, setClerkTokenProvider, startExecutionSession, startPanelSession } from './api';
 import type { Observation } from './api';
 
 afterEach(() => {
@@ -130,4 +130,41 @@ test('execution summary stays owner-scoped and requests only the selected bounde
     '/v1/execution/summary?from=2026-09-23T00%3A00%3A00.000Z&to=2026-09-23T21%3A00%3A00.000Z',
     expect.objectContaining({ credentials: 'same-origin' })
   );
+});
+
+test('primary and attended execution reads remain distinct and interleaves bounded', async () => {
+  const primary = { id: 7, role: 'primary', state: 'waiting_external' };
+  const attended = { id: 8, role: 'waiting_interleave', primary_session_id: 7, state: 'active' };
+  const fetch = vi.fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify({ session: primary }), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ session: attended }), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ sessions: [attended] }), { status: 200 }));
+  vi.stubGlobal('fetch', fetch);
+
+  expect(await getCurrentPrimaryExecutionSession()).toEqual(primary);
+  expect(await getCurrentAttendedExecutionSession()).toEqual(attended);
+  expect(await listExecutionInterleaves(7, 9)).toEqual([attended]);
+  expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+    '/v1/execution/primary',
+    '/v1/execution/attended',
+    '/v1/execution/sessions/7/interleaves?limit=9'
+  ]);
+  for (const [, options] of fetch.mock.calls) expect(options.credentials).toBe('same-origin');
+});
+
+test('execution start and return send explicit interleave linkage and both resume markers', async () => {
+  const started = { id: 8, role: 'waiting_interleave', primary_session_id: 7, state: 'active' };
+  const returned = { primary_session: { id: 7 }, interleave_session: { id: 8 } };
+  const fetch = vi.fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify(started), { status: 201 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(returned), { status: 200 }));
+  vi.stubGlobal('fetch', fetch);
+
+  await startExecutionSession({ activity_id: 4, role: 'waiting_interleave', primary_session_id: 7 });
+  await returnToPrimary(8, { primary_resume_marker: 'Continue the outline', interleave_resume_marker: 'Resume at page four' });
+
+  expect(fetch.mock.calls[0][0]).toBe('/v1/execution/sessions');
+  expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ activity_id: 4, role: 'waiting_interleave', primary_session_id: 7 });
+  expect(fetch.mock.calls[1][0]).toBe('/v1/execution/sessions/8/return-to-primary');
+  expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ primary_resume_marker: 'Continue the outline', interleave_resume_marker: 'Resume at page four' });
 });

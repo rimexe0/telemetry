@@ -14,10 +14,14 @@ func TestExecutionEndpointsRequireOwnerAuthorization(t *testing.T) {
 	server := testServer(t, &fakeRepository{})
 	requests := []*http.Request{
 		httptest.NewRequest(http.MethodGet, "/v1/execution/current", nil),
+		httptest.NewRequest(http.MethodGet, "/v1/execution/primary", nil),
+		httptest.NewRequest(http.MethodGet, "/v1/execution/attended", nil),
 		httptest.NewRequest(http.MethodGet, "/v1/execution/sessions", nil),
 		httptest.NewRequest(http.MethodPost, "/v1/execution/sessions", strings.NewReader(`{"activity_id":1}`)),
 		httptest.NewRequest(http.MethodGet, "/v1/execution/sessions/1", nil),
+		httptest.NewRequest(http.MethodGet, "/v1/execution/sessions/1/interleaves", nil),
 		httptest.NewRequest(http.MethodPost, "/v1/execution/sessions/1/events", strings.NewReader(`{"event_type":"completed"}`)),
+		httptest.NewRequest(http.MethodPost, "/v1/execution/sessions/1/return-to-primary", nil),
 	}
 	for _, request := range requests {
 		response := httptest.NewRecorder()
@@ -88,6 +92,72 @@ func TestExecutionStartEventAndCurrentFlow(t *testing.T) {
 	server.ServeHTTP(readResponse, httptest.NewRequest(http.MethodGet, "/v1/execution/sessions/7", nil))
 	if readResponse.Code != http.StatusOK || !strings.Contains(readResponse.Body.String(), `"event_type":"started"`) {
 		t.Fatalf("read response = %d: %s", readResponse.Code, readResponse.Body.String())
+	}
+}
+
+func TestExecutionPrimaryAttendedAndInterleaveReturnRoutes(t *testing.T) {
+	primaryID := int64(7)
+	primary := &store.ExecutionSession{ID: primaryID, ActivityID: 3, Role: store.ExecutionRolePrimary, State: "waiting_external"}
+	interleave := store.ExecutionSession{ID: 8, ActivityID: 4, Role: store.ExecutionRoleWaitingInterleave, PrimarySessionID: &primaryID, State: "active"}
+	repository := &fakeRepository{
+		executionPrimary:     primary,
+		executionAttended:    &interleave,
+		executionInterleaves: []store.ExecutionSession{interleave},
+		executionReturn: store.ExecutionReturn{
+			PrimarySession:    store.ExecutionSession{ID: primaryID, Role: store.ExecutionRolePrimary, State: "active"},
+			InterleaveSession: store.ExecutionSession{ID: interleave.ID, Role: store.ExecutionRoleWaitingInterleave, PrimarySessionID: &primaryID, State: "interrupted"},
+		},
+	}
+	server := ownerTestServer(t, repository)
+
+	primaryResponse := httptest.NewRecorder()
+	server.ServeHTTP(primaryResponse, httptest.NewRequest(http.MethodGet, "/v1/execution/primary", nil))
+	if primaryResponse.Code != http.StatusOK || !strings.Contains(primaryResponse.Body.String(), `"role":"primary"`) || !strings.Contains(primaryResponse.Body.String(), `"state":"waiting_external"`) {
+		t.Fatalf("primary response = %d: %s", primaryResponse.Code, primaryResponse.Body.String())
+	}
+
+	attendedResponse := httptest.NewRecorder()
+	server.ServeHTTP(attendedResponse, httptest.NewRequest(http.MethodGet, "/v1/execution/attended", nil))
+	if attendedResponse.Code != http.StatusOK || !strings.Contains(attendedResponse.Body.String(), `"role":"waiting_interleave"`) || !strings.Contains(attendedResponse.Body.String(), `"primary_session_id":7`) {
+		t.Fatalf("attended response = %d: %s", attendedResponse.Code, attendedResponse.Body.String())
+	}
+
+	interleavesResponse := httptest.NewRecorder()
+	server.ServeHTTP(interleavesResponse, httptest.NewRequest(http.MethodGet, "/v1/execution/sessions/7/interleaves?limit=3", nil))
+	if interleavesResponse.Code != http.StatusOK || repository.executionInterleaveLimit != 3 || !strings.Contains(interleavesResponse.Body.String(), `"id":8`) {
+		t.Fatalf("interleaves response = %d, limit=%d: %s", interleavesResponse.Code, repository.executionInterleaveLimit, interleavesResponse.Body.String())
+	}
+	tooManyInterleaves := httptest.NewRecorder()
+	server.ServeHTTP(tooManyInterleaves, httptest.NewRequest(http.MethodGet, "/v1/execution/sessions/7/interleaves?limit=101", nil))
+	if tooManyInterleaves.Code != http.StatusBadRequest {
+		t.Fatalf("unbounded interleave limit status = %d, want 400", tooManyInterleaves.Code)
+	}
+
+	returnRequest := httptest.NewRequest(http.MethodPost, "/v1/execution/sessions/8/return-to-primary", strings.NewReader(`{"primary_resume_marker":"Continue the outline","interleave_resume_marker":"Resume at page four"}`))
+	returnResponse := httptest.NewRecorder()
+	server.ServeHTTP(returnResponse, returnRequest)
+	if returnResponse.Code != http.StatusOK || !strings.Contains(returnResponse.Body.String(), `"primary_session"`) || !strings.Contains(returnResponse.Body.String(), `"interleave_session"`) {
+		t.Fatalf("return response = %d: %s", returnResponse.Code, returnResponse.Body.String())
+	}
+	if repository.executionReturnInput.PrimaryResumeMarker == nil || *repository.executionReturnInput.PrimaryResumeMarker != "Continue the outline" || repository.executionReturnInput.InterleaveResumeMarker == nil || *repository.executionReturnInput.InterleaveResumeMarker != "Resume at page four" {
+		t.Fatalf("return input = %+v", repository.executionReturnInput)
+	}
+
+	startRequest := httptest.NewRequest(http.MethodPost, "/v1/execution/sessions", strings.NewReader(`{"activity_id":4,"role":"waiting_interleave","primary_session_id":7}`))
+	startResponse := httptest.NewRecorder()
+	server.ServeHTTP(startResponse, startRequest)
+	if startResponse.Code != http.StatusCreated || repository.executionStartInput.Role != store.ExecutionRoleWaitingInterleave || repository.executionStartInput.PrimarySessionID == nil || *repository.executionStartInput.PrimarySessionID != primaryID {
+		t.Fatalf("interleave start = %d input %+v: %s", startResponse.Code, repository.executionStartInput, startResponse.Body.String())
+	}
+}
+
+func TestExecutionConflictUsesHTTP409(t *testing.T) {
+	repository := &fakeRepository{executionErr: store.ErrExecutionConflict}
+	server := ownerTestServer(t, repository)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/execution/sessions", strings.NewReader(`{"activity_id":4}`)))
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"execution_conflict"`) {
+		t.Fatalf("conflict response = %d: %s", response.Code, response.Body.String())
 	}
 }
 

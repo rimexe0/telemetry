@@ -104,6 +104,143 @@ func TestEvaluateAlignmentKeepsIntentionalSwitchDistinct(t *testing.T) {
 	}
 }
 
+func TestEvaluateAlignmentIgnoresFutureExecutionEvents(t *testing.T) {
+	start := time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)
+	block := alignmentTestBlock()
+	block.StartTime = start
+	primary := &ExecutionSession{
+		ID:          7,
+		ActivityID:  1,
+		PlanBlockID: &block.ID,
+		Role:        ExecutionRolePrimary,
+		State:       executionStateActive,
+		Events: []ExecutionEvent{
+			{EventType: executionEventStarted, OccurredAt: start},
+			{EventType: executionEventSwitchedOut, OccurredAt: start.Add(20 * time.Minute)},
+		},
+	}
+	result := EvaluateAlignment(AlignmentContext{
+		Now:            start.Add(10 * time.Minute),
+		At:             start.Add(10 * time.Minute),
+		Block:          &block,
+		Activity:       &Activity{ID: 1, Title: "Write the outline"},
+		PrimarySession: primary,
+	})
+	if result.ReasonCode != AlignmentReasonExecutionMatchesPlan {
+		t.Fatalf("future switch changed current alignment reason = %q", result.ReasonCode)
+	}
+}
+
+func TestEvaluateAlignmentDistinguishesApprovedAndUnapprovedWaitingInterleaves(t *testing.T) {
+	now := time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)
+	block := alignmentTestBlock()
+	primaryID := int64(7)
+	otherActivity := Activity{ID: 2, Title: "Payroll export", Status: "active"}
+	primary := &ExecutionSession{
+		ID:          primaryID,
+		ActivityID:  1,
+		PlanBlockID: &block.ID,
+		Role:        ExecutionRolePrimary,
+		State:       executionStateWaitingExternal,
+		Events:      []ExecutionEvent{{EventType: executionEventStarted}, {EventType: executionEventWaitingExternal}},
+	}
+	activeInterleave := ExecutionSession{
+		ID:               8,
+		ActivityID:       otherActivity.ID,
+		Role:             ExecutionRoleWaitingInterleave,
+		PrimarySessionID: &primaryID,
+		State:            executionStateActive,
+	}
+	input := AlignmentContext{
+		Now:             now,
+		At:              now,
+		Block:           &block,
+		Activity:        &Activity{ID: 1, Title: "Write the outline"},
+		Activities:      []Activity{otherActivity},
+		PrimarySession:  primary,
+		AttendedSession: &activeInterleave,
+		Interleaves:     []ExecutionSession{activeInterleave},
+		Sources:         []SourceSummary{{SourceKind: "activitywatch", LastCollectedAt: timePtr(now.Add(-time.Minute))}},
+		Observations:    []ObservationView{alignmentObservation(`{"data":{"app":"Excel","title":"Payroll export"}}`)},
+	}
+	approved := EvaluateAlignment(input)
+	if approved.AlignmentState != AlignmentAligned || approved.ReasonCode != AlignmentReasonUsefulInterleave || approved.ExecutionSessionID == nil || *approved.ExecutionSessionID != primaryID || approved.AttendedSessionID == nil || *approved.AttendedSessionID != activeInterleave.ID {
+		t.Fatalf("approved interleave alignment = %+v", approved)
+	}
+
+	input.Interleaves = nil
+	input.AttendedSession = nil
+	unapproved := EvaluateAlignment(input)
+	if unapproved.AlignmentState != AlignmentPossibleDrift || unapproved.ReasonCode != AlignmentReasonActivityMismatch {
+		t.Fatalf("unapproved activity while waiting = (%q, %q), want possible drift", unapproved.AlignmentState, unapproved.ReasonCode)
+	}
+}
+
+func TestEvaluateAlignmentMarksReadyPrimaryAsPendingReturn(t *testing.T) {
+	start := time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)
+	now := start.Add(20 * time.Minute)
+	block := alignmentTestBlock()
+	block.StartTime = start
+	primaryID := int64(7)
+	primary := &ExecutionSession{
+		ID:          primaryID,
+		ActivityID:  1,
+		PlanBlockID: &block.ID,
+		Role:        ExecutionRolePrimary,
+		State:       executionStateWaitingExternal,
+		Events: []ExecutionEvent{
+			{EventType: executionEventStarted, OccurredAt: start},
+			{EventType: executionEventWaitingExternal, OccurredAt: start.Add(5 * time.Minute)},
+			{EventType: "external_ready", OccurredAt: start.Add(15 * time.Minute)},
+		},
+	}
+	interleave := ExecutionSession{
+		ID:               8,
+		ActivityID:       2,
+		Role:             ExecutionRoleWaitingInterleave,
+		PrimarySessionID: &primaryID,
+		State:            executionStateActive,
+	}
+	input := AlignmentContext{
+		Now:             now,
+		At:              start.Add(10 * time.Minute),
+		Block:           &block,
+		Activity:        &Activity{ID: 1, Title: "Write the outline"},
+		PrimarySession:  primary,
+		AttendedSession: &interleave,
+		Interleaves:     []ExecutionSession{interleave},
+	}
+	beforeReady := EvaluateAlignment(input)
+	if beforeReady.ReasonCode != AlignmentReasonUsefulInterleave {
+		t.Fatalf("future readiness changed earlier alignment = %+v", beforeReady)
+	}
+	input.Now = now
+	input.At = now
+	result := EvaluateAlignment(input)
+	if result.AlignmentState != AlignmentAligned || result.ReasonCode != "return_pending" || result.ExecutionSessionID == nil || *result.ExecutionSessionID != primary.ID || result.AttendedSessionID == nil || *result.AttendedSessionID != interleave.ID {
+		t.Fatalf("ready primary alignment = %+v", result)
+	}
+}
+
+func TestEvaluateAlignmentKeepsInvalidHistoricalExecutionOrderUnknown(t *testing.T) {
+	now := time.Date(2026, 9, 24, 10, 16, 0, 0, time.UTC)
+	block := alignmentTestBlock()
+	primary := &ExecutionSession{ID: 7, ActivityID: 1, PlanBlockID: &block.ID, Role: ExecutionRolePrimary, State: "unknown"}
+	result := EvaluateAlignment(AlignmentContext{
+		Now:            now,
+		At:             now,
+		Block:          &block,
+		Activity:       &Activity{ID: 1, Title: "Write the outline"},
+		Activities:     []Activity{{ID: 2, Title: "Payroll export", Status: "active"}},
+		PrimarySession: primary,
+		Sources:        []SourceSummary{{SourceKind: "activitywatch", LastCollectedAt: timePtr(now.Add(-time.Minute))}},
+		Observations:   []ObservationView{alignmentObservation(`{"data":{"app":"Excel","title":"Payroll export"}}`)},
+	})
+	if result.AlignmentState != AlignmentUnknown || result.ReasonCode != AlignmentReasonAmbiguousEvidence {
+		t.Fatalf("alignment with invalid execution time order = (%q, %q)", result.AlignmentState, result.ReasonCode)
+	}
+}
+
 func TestEvaluateAlignmentDoesNotCallUnconfiguredWindowEvidenceDrift(t *testing.T) {
 	now := time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)
 	block := alignmentTestBlock()
@@ -332,6 +469,30 @@ func TestExecutionSummaryTracesSwitchAndReturnMetricsToRetainedEvents(t *testing
 	}
 	if !hasMetricSource(result.MetricSources, "interruption_count", 7, 10, 102, 1) || !hasMetricSource(result.MetricSources, "intentional_switch_count", 7, 10, 103, 1) || !hasMetricSource(result.MetricSources, "return_latency_seconds", 7, 10, 102, 600) {
 		t.Fatalf("metric sources = %+v", result.MetricSources)
+	}
+}
+
+func TestExecutionSummaryMeasuresReturnFromExternalReadyWhenAvailable(t *testing.T) {
+	start := time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)
+	readyAt := start.Add(15 * time.Minute)
+	returnedAt := start.Add(17 * time.Minute)
+	blockID := int64(10)
+	summary := DeriveExecutionSummary(start, returnedAt, []ExecutionMetricInput{{
+		Session: ExecutionSession{
+			ID:          7,
+			PlanBlockID: &blockID,
+			State:       executionStateActive,
+			StartedAt:   start,
+			Events: []ExecutionEvent{
+				{ID: 101, SessionID: 7, EventType: executionEventStarted, OccurredAt: start},
+				{ID: 102, SessionID: 7, EventType: executionEventWaitingExternal, OccurredAt: start.Add(5 * time.Minute)},
+				{ID: 103, SessionID: 7, EventType: "external_ready", OccurredAt: readyAt},
+				{ID: 104, SessionID: 7, EventType: executionEventResumed, OccurredAt: returnedAt},
+			},
+		},
+	}})
+	if len(summary.ReturnLatenciesSeconds) != 1 || summary.ReturnLatenciesSeconds[0] != int64((returnedAt.Sub(readyAt)).Seconds()) {
+		t.Fatalf("return latency from external readiness = %+v, want %d seconds", summary.ReturnLatenciesSeconds, int64(returnedAt.Sub(readyAt).Seconds()))
 	}
 }
 

@@ -49,6 +49,59 @@ func TestCurrentAlignmentUsesLinkedExecutionSession(t *testing.T) {
 	}
 }
 
+func TestCurrentAlignmentReportsApprovedWaitingInterleaveSeparately(t *testing.T) {
+	activityID := int64(1)
+	otherActivityID := int64(2)
+	blockID := int64(10)
+	primaryID := int64(7)
+	blockStart := time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)
+	primary := &store.ExecutionSession{
+		ID:          primaryID,
+		ActivityID:  activityID,
+		PlanBlockID: &blockID,
+		Role:        store.ExecutionRolePrimary,
+		StartedAt:   blockStart,
+		State:       "waiting_external",
+		Events:      []store.ExecutionEvent{{EventType: "started", OccurredAt: blockStart}, {EventType: "waiting_external", OccurredAt: blockStart.Add(5 * time.Minute)}},
+	}
+	interleave := store.ExecutionSession{
+		ID:               8,
+		ActivityID:       otherActivityID,
+		Role:             store.ExecutionRoleWaitingInterleave,
+		PrimarySessionID: &primaryID,
+		StartedAt:        blockStart.Add(10 * time.Minute),
+		State:            "active",
+	}
+	repository := &fakeRepository{
+		activities:           []store.Activity{{ID: activityID, Title: "Write the outline"}, {ID: otherActivityID, Title: "Payroll export"}},
+		plan:                 &store.Plan{PlanDate: "2026-09-23", VersionID: 4, Blocks: []store.PlanBlock{{ID: blockID, ActivityID: &activityID, Title: "Write the outline", StartTime: blockStart, DurationMinutes: 60, State: "planned"}}},
+		executionPrimary:     primary,
+		executionInterleaves: []store.ExecutionSession{interleave},
+		sources:              []store.SourceSummary{{SourceInstanceKey: "activitywatch:mac:window", SourceKind: "activitywatch", LastCollectedAt: timePtrHTTP(time.Now().UTC())}},
+		observations: []store.ObservationView{{
+			SourceInstanceKey: "activitywatch:mac:window",
+			SourceKind:        "activitywatch",
+			SourceRecordKey:   "payroll-window",
+			OccurredAt:        blockStart.Add(12 * time.Minute),
+			CollectedAt:       time.Now().UTC(),
+			OriginalPayload:   []byte(`{"data":{"app":"Excel","title":"Payroll export"}}`),
+		}},
+	}
+	server := ownerTestServer(t, repository)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/alignment/current?at=2026-09-23T10:15:00Z", nil))
+	body := response.Body.String()
+	if response.Code != http.StatusOK || !strings.Contains(body, `"alignment_state":"aligned"`) || !strings.Contains(body, `"reason_code":"useful_interleave"`) || !strings.Contains(body, `"execution_session_id":7`) || !strings.Contains(body, `"attended_execution_session_id":8`) {
+		t.Fatalf("interleave alignment = %d: %s", response.Code, body)
+	}
+	primary.Events = append(primary.Events, store.ExecutionEvent{EventType: "external_ready", OccurredAt: blockStart.Add(14 * time.Minute)})
+	pendingResponse := httptest.NewRecorder()
+	server.ServeHTTP(pendingResponse, httptest.NewRequest(http.MethodGet, "/v1/alignment/current?at=2026-09-23T10:15:00Z", nil))
+	if pendingResponse.Code != http.StatusOK || !strings.Contains(pendingResponse.Body.String(), `"reason_code":"return_pending"`) || !strings.Contains(pendingResponse.Body.String(), `"execution_session_id":7`) || !strings.Contains(pendingResponse.Body.String(), `"attended_execution_session_id":8`) {
+		t.Fatalf("ready interleave alignment = %d: %s", pendingResponse.Code, pendingResponse.Body.String())
+	}
+}
+
 func TestCurrentAlignmentReportsStaleEvidenceAsUnknown(t *testing.T) {
 	blockID := int64(10)
 	activityID := int64(1)

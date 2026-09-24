@@ -16,6 +16,7 @@ const (
 	maxAlignmentObservations = 1000
 	maxAlignmentHistoryDays  = 31
 	maxAlignmentResults      = 200
+	maxAlignmentInterleaves  = 100
 )
 
 var istanbulPlanLocation = time.FixedZone("Europe/Istanbul", 3*60*60)
@@ -131,21 +132,24 @@ func (s *Server) loadAlignmentAt(ctx context.Context, at time.Time) (store.Align
 	if err != nil {
 		return store.AlignmentView{}, err
 	}
-	session, err := s.executionSessionAt(ctx, at)
+	primarySession, attendedSession, interleaves, err := s.executionAlignmentAt(ctx, at)
 	if err != nil {
 		return store.AlignmentView{}, err
 	}
 	view := store.EvaluateAlignment(store.AlignmentContext{
-		At:            at,
-		Now:           time.Now().UTC(),
-		PlanDate:      planDate.Format("2006-01-02"),
-		PlanVersionID: plan.VersionID,
-		Block:         block,
-		Activity:      activityForBlock(activities, block),
-		Activities:    activities,
-		Session:       session,
-		Sources:       sources,
-		Observations:  observations,
+		At:              at,
+		Now:             time.Now().UTC(),
+		PlanDate:        planDate.Format("2006-01-02"),
+		PlanVersionID:   plan.VersionID,
+		Block:           block,
+		Activity:        activityForBlock(activities, block),
+		Activities:      activities,
+		Session:         primarySession,
+		PrimarySession:  primarySession,
+		AttendedSession: attendedSession,
+		Interleaves:     interleaves,
+		Sources:         sources,
+		Observations:    observations,
 	})
 	return alignmentCoverageResult(view, coverageLimited || activitiesLimited), nil
 }
@@ -185,17 +189,33 @@ func (s *Server) loadAlignmentHistory(ctx context.Context, from, to time.Time, l
 			if !block.StartTime.Before(to) || !end.After(from) {
 				continue
 			}
+			evaluatedAt := maxTime(block.StartTime, from)
+			primarySession, _ := executionSessionSnapshotAt(sessionForBlock(sessions, block), evaluatedAt)
+			interleaves := executionInterleavesForBlock(sessions, primarySession, evaluatedAt)
+			attendedSession := primarySession
+			for index := range interleaves {
+				if interleaves[index].State == "active" {
+					attendedSession = &interleaves[index]
+					break
+				}
+			}
+			if attendedSession == primarySession && primarySession != nil && primarySession.State != "active" {
+				attendedSession = nil
+			}
 			view := store.EvaluateAlignment(store.AlignmentContext{
-				At:            maxTime(block.StartTime, from),
-				Now:           time.Now().UTC(),
-				PlanDate:      day.Format("2006-01-02"),
-				PlanVersionID: plan.VersionID,
-				Block:         &block,
-				Activity:      activityForBlock(activities, &block),
-				Activities:    activities,
-				Session:       sessionForBlock(sessions, block),
-				Sources:       sources,
-				Observations:  observations,
+				At:              evaluatedAt,
+				Now:             time.Now().UTC(),
+				PlanDate:        day.Format("2006-01-02"),
+				PlanVersionID:   plan.VersionID,
+				Block:           &block,
+				Activity:        activityForBlock(activities, &block),
+				Activities:      activities,
+				Session:         primarySession,
+				PrimarySession:  primarySession,
+				AttendedSession: attendedSession,
+				Interleaves:     interleaves,
+				Sources:         sources,
+				Observations:    observations,
 			})
 			views = append(views, alignmentCoverageResult(view, coverageLimited || sessionsLimited || activitiesLimited))
 			if len(views) == limit {
@@ -233,6 +253,13 @@ func (s *Server) alignmentObservations(ctx context.Context, from, to time.Time, 
 }
 
 func (s *Server) executionSessionAt(ctx context.Context, at time.Time) (*store.ExecutionSession, error) {
+	primary, err := s.repository.CurrentPrimaryExecutionSession(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if sessionContainsTime(primary, at) {
+		return primary, nil
+	}
 	current, err := s.repository.CurrentExecutionSession(ctx)
 	if err != nil {
 		return nil, err
@@ -251,6 +278,65 @@ func (s *Server) executionSessionAt(ctx context.Context, at time.Time) (*store.E
 		return s.repository.GetExecutionSession(ctx, candidate.ID)
 	}
 	return nil, nil
+}
+
+func (s *Server) executionAlignmentAt(ctx context.Context, at time.Time) (*store.ExecutionSession, *store.ExecutionSession, []store.ExecutionSession, error) {
+	current, err := s.executionSessionAt(ctx, at)
+	if err != nil || current == nil {
+		return nil, nil, nil, err
+	}
+	primary := current
+	if current.Role == store.ExecutionRoleWaitingInterleave {
+		if current.PrimarySessionID == nil {
+			return nil, nil, nil, store.ErrInvalidExecutionInput
+		}
+		primary, err = s.repository.GetExecutionSession(ctx, *current.PrimarySessionID)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	primary, _ = executionSessionSnapshotAt(primary, at)
+	if primary == nil {
+		return nil, nil, nil, nil
+	}
+	if primary.Role != "" && primary.Role != store.ExecutionRolePrimary {
+		return nil, nil, nil, store.ErrInvalidExecutionInput
+	}
+	interleaves, err := s.repository.ListExecutionInterleaves(ctx, primary.ID, maxAlignmentInterleaves)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	seen := make(map[int64]struct{}, len(interleaves))
+	related := make([]store.ExecutionSession, 0, len(interleaves))
+	for _, interleave := range interleaves {
+		if !sessionContainsTime(&interleave, at) {
+			continue
+		}
+		snapshot, ok := executionSessionSnapshotAt(&interleave, at)
+		if !ok {
+			continue
+		}
+		seen[snapshot.ID] = struct{}{}
+		related = append(related, *snapshot)
+	}
+	if current.Role == store.ExecutionRoleWaitingInterleave && sessionContainsTime(current, at) {
+		if _, ok := seen[current.ID]; !ok {
+			if snapshot, exists := executionSessionSnapshotAt(current, at); exists {
+				related = append(related, *snapshot)
+			}
+		}
+	}
+	var attended *store.ExecutionSession
+	for index := range related {
+		if related[index].State == "active" && related[index].EndedAt == nil {
+			attended = &related[index]
+			break
+		}
+	}
+	if attended == nil && primary.State == "active" && sessionContainsTime(primary, at) {
+		attended = primary
+	}
+	return primary, attended, related, nil
 }
 
 func (s *Server) executionSessionsInWindow(ctx context.Context, from, to time.Time) ([]store.ExecutionSession, bool, error) {
@@ -396,6 +482,9 @@ func sessionForBlock(sessions []store.ExecutionSession, block store.PlanBlock) *
 	selectedPriority := 0
 	for index := range sessions {
 		session := &sessions[index]
+		if session.Role == store.ExecutionRoleWaitingInterleave {
+			continue
+		}
 		if !sessionOverlapsBlock(*session, block) {
 			continue
 		}
@@ -409,6 +498,39 @@ func sessionForBlock(sessions []store.ExecutionSession, block store.PlanBlock) *
 		}
 	}
 	return selected
+}
+
+func executionInterleavesForBlock(sessions []store.ExecutionSession, primary *store.ExecutionSession, at time.Time) []store.ExecutionSession {
+	if primary == nil {
+		return nil
+	}
+	interleaves := make([]store.ExecutionSession, 0)
+	for _, session := range sessions {
+		if session.Role != store.ExecutionRoleWaitingInterleave || session.PrimarySessionID == nil ||
+			*session.PrimarySessionID != primary.ID || !sessionContainsTime(&session, at) {
+			continue
+		}
+		if snapshot, ok := executionSessionSnapshotAt(&session, at); ok {
+			interleaves = append(interleaves, *snapshot)
+		}
+	}
+	return interleaves
+}
+
+func executionSessionSnapshotAt(session *store.ExecutionSession, at time.Time) (*store.ExecutionSession, bool) {
+	if session == nil {
+		return nil, false
+	}
+	state, ok := store.ExecutionSessionStateAt(*session, at)
+	if !ok {
+		return nil, false
+	}
+	snapshot := *session
+	snapshot.State = state
+	if state != "completed" && state != "abandoned" {
+		snapshot.EndedAt = nil
+	}
+	return &snapshot, true
 }
 
 func sessionContainsTime(session *store.ExecutionSession, at time.Time) bool {

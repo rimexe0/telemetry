@@ -144,6 +144,12 @@ func DeriveExecutionSummary(from, to time.Time, inputs []ExecutionMetricInput) E
 					pendingReturnEvent = &event
 					addExecutionMetricSource(&summary, "return_opportunity_count", session, 1, "count", event)
 				}
+			case executionEventExternalReady:
+				if pendingReturnAt != nil {
+					readyAt := event.OccurredAt
+					pendingReturnAt = &readyAt
+					pendingReturnEvent = &event
+				}
 			case executionEventSwitchedOut:
 				summary.IntentionalSwitchCount++
 				addExecutionMetricSource(&summary, "intentional_switch_count", session, 1, "count", event)

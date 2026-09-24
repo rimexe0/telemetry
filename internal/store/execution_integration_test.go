@@ -195,3 +195,266 @@ func TestPostgresExecutionSessionsRetainLifecycleAndMarkers(t *testing.T) {
 		t.Fatalf("recent sessions = %+v, %v", sessions, err)
 	}
 }
+
+func TestPostgresPrimaryWaitingInterleaveAndReturnAreBounded(t *testing.T) {
+	databaseURL := os.Getenv("TELEMETRY_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TELEMETRY_TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	database, err := OpenPostgres(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(database.Close)
+	if err := database.ApplyMigrations(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := clearIntegrationData(ctx, database); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := clearIntegrationData(ctx, database); err != nil {
+			t.Error(err)
+		}
+	})
+
+	primaryActivity, err := database.CreateActivity(ctx, Activity{Title: "Paid-work task", NextAction: "Send the draft", ResumeMarker: "Return to the draft"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	interleaveActivity, err := database.CreateActivity(ctx, Activity{Title: "Small secondary task", NextAction: "Archive one receipt", ResumeMarker: "Resume at receipt two"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	startAt := time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)
+	primary, err := database.StartExecutionSession(ctx, ExecutionSessionInput{ActivityID: primaryActivity.ID, StartedAt: &startAt})
+	if err != nil || primary.Role != ExecutionRolePrimary || primary.PrimarySessionID != nil {
+		t.Fatalf("start primary = %+v, %v", primary, err)
+	}
+	if _, err := database.TransitionExecutionSession(ctx, primary.ID, ExecutionEventInput{EventType: executionEventExternalReady, OccurredAt: &startAt}); !errors.Is(err, ErrInvalidExecutionTransition) {
+		t.Fatalf("external_ready before waiting error = %v", err)
+	}
+	if _, err := database.StartExecutionSession(ctx, ExecutionSessionInput{ActivityID: primaryActivity.ID, StartedAt: &startAt}); !errors.Is(err, ErrExecutionConflict) {
+		t.Fatalf("second open primary error = %v", err)
+	}
+	if _, err := database.StartExecutionSession(ctx, ExecutionSessionInput{ActivityID: interleaveActivity.ID, Role: ExecutionRoleWaitingInterleave, PrimarySessionID: &primary.ID, StartedAt: &startAt}); !errors.Is(err, ErrExecutionConflict) {
+		t.Fatalf("interleave under active primary error = %v", err)
+	}
+	waitingAt := startAt.Add(5 * time.Minute)
+	primary, err = database.TransitionExecutionSession(ctx, primary.ID, ExecutionEventInput{EventType: executionEventWaitingExternal, OccurredAt: &waitingAt, ResumeMarker: stringPointer("Resume primary at the draft")})
+	if err != nil || primary.State != executionStateWaitingExternal {
+		t.Fatalf("primary waiting = %+v, %v", primary, err)
+	}
+	interleaveStart := waitingAt.Add(time.Minute)
+	tooEarly := waitingAt.Add(-time.Second)
+	if _, err := database.StartExecutionSession(ctx, ExecutionSessionInput{ActivityID: interleaveActivity.ID, Role: ExecutionRoleWaitingInterleave, PrimarySessionID: &primary.ID, StartedAt: &tooEarly}); !errors.Is(err, ErrInvalidExecutionInput) {
+		t.Fatalf("interleave before waiting error = %v", err)
+	}
+	type interleaveStartResult struct {
+		session ExecutionSession
+		err     error
+	}
+	startResults := make(chan interleaveStartResult, 2)
+	for range 2 {
+		go func() {
+			session, err := database.StartExecutionSession(ctx, ExecutionSessionInput{
+				ActivityID:       interleaveActivity.ID,
+				Role:             ExecutionRoleWaitingInterleave,
+				PrimarySessionID: &primary.ID,
+				StartedAt:        &interleaveStart,
+			})
+			startResults <- interleaveStartResult{session: session, err: err}
+		}()
+	}
+	var interleave ExecutionSession
+	startSuccesses, startConflicts := 0, 0
+	for range 2 {
+		result := <-startResults
+		if result.err == nil {
+			startSuccesses++
+			interleave = result.session
+		} else if errors.Is(result.err, ErrExecutionConflict) {
+			startConflicts++
+		} else {
+			t.Fatalf("concurrent interleave start error = %v", result.err)
+		}
+	}
+	if interleave.Role != ExecutionRoleWaitingInterleave || interleave.PrimarySessionID == nil || *interleave.PrimarySessionID != primary.ID || interleave.ResumeMarker == nil || *interleave.ResumeMarker != interleaveActivity.ResumeMarker {
+		t.Fatalf("start interleave = %+v", interleave)
+	}
+	if startSuccesses != 1 || startConflicts != 1 {
+		t.Fatalf("concurrent interleave starts = %d succeeded, %d conflicted", startSuccesses, startConflicts)
+	}
+	if _, err := database.StartExecutionSession(ctx, ExecutionSessionInput{ActivityID: interleaveActivity.ID, Role: ExecutionRoleWaitingInterleave, PrimarySessionID: &primary.ID, StartedAt: &interleaveStart}); !errors.Is(err, ErrExecutionConflict) {
+		t.Fatalf("second actionable interleave error = %v", err)
+	}
+	if _, err := database.StartExecutionSession(ctx, ExecutionSessionInput{ActivityID: interleaveActivity.ID, Role: ExecutionRoleWaitingInterleave, PrimarySessionID: &interleave.ID, StartedAt: &interleaveStart}); !errors.Is(err, ErrExecutionConflict) {
+		t.Fatalf("interleave nested under an interleave error = %v", err)
+	}
+
+	currentPrimary, err := database.CurrentPrimaryExecutionSession(ctx)
+	if err != nil || currentPrimary == nil || currentPrimary.ID != primary.ID || currentPrimary.State != executionStateWaitingExternal {
+		t.Fatalf("current primary = %+v, %v", currentPrimary, err)
+	}
+	attended, err := database.CurrentAttendedExecutionSession(ctx)
+	if err != nil || attended == nil || attended.ID != interleave.ID || attended.Role != ExecutionRoleWaitingInterleave {
+		t.Fatalf("current attended = %+v, %v", attended, err)
+	}
+	if _, err := database.TransitionExecutionSession(ctx, primary.ID, ExecutionEventInput{EventType: executionEventResumed, OccurredAt: &interleaveStart}); !errors.Is(err, ErrExecutionConflict) {
+		t.Fatalf("resume primary while interleave is active error = %v", err)
+	}
+	if _, err := database.TransitionExecutionSession(ctx, primary.ID, ExecutionEventInput{EventType: executionEventCompleted, OccurredAt: &interleaveStart}); !errors.Is(err, ErrExecutionConflict) {
+		t.Fatalf("complete primary while interleave is active error = %v", err)
+	}
+	readyAt := interleaveStart.Add(10 * time.Minute)
+	type readyResult struct {
+		session ExecutionSession
+		err     error
+	}
+	readyResults := make(chan readyResult, 2)
+	for range 2 {
+		go func() {
+			session, err := database.TransitionExecutionSession(ctx, primary.ID, ExecutionEventInput{
+				EventType:  executionEventExternalReady,
+				OccurredAt: &readyAt,
+				Note:       "External work is ready",
+			})
+			readyResults <- readyResult{session: session, err: err}
+		}()
+	}
+	var readyPrimary ExecutionSession
+	for range 2 {
+		result := <-readyResults
+		if result.err != nil {
+			t.Fatalf("record external readiness: %v", result.err)
+		}
+		readyPrimary = result.session
+	}
+	readyEvents := 0
+	for _, event := range readyPrimary.Events {
+		if event.EventType == executionEventExternalReady {
+			readyEvents++
+			if !event.OccurredAt.Equal(readyAt) || event.Note != "External work is ready" {
+				t.Fatalf("external readiness event = %+v", event)
+			}
+		}
+	}
+	if readyEvents != 1 || readyPrimary.State != executionStateWaitingExternal {
+		t.Fatalf("concurrent ready signals appended %d events or changed primary state: %+v", readyEvents, readyPrimary)
+	}
+
+	returnedAt := interleaveStart.Add(20 * time.Minute)
+	returnInput := ReturnToPrimaryInput{
+		OccurredAt:             &returnedAt,
+		PrimaryResumeMarker:    stringPointer("Continue after the agent reply"),
+		InterleaveResumeMarker: stringPointer("Resume at receipt two"),
+	}
+	tooEarly = interleaveStart.Add(-time.Second)
+	if _, err := database.ReturnToPrimary(ctx, interleave.ID, ReturnToPrimaryInput{OccurredAt: &tooEarly}); !errors.Is(err, ErrInvalidExecutionInput) {
+		t.Fatalf("return before interleave start error = %v", err)
+	}
+	type returnResult struct {
+		value ExecutionReturn
+		err   error
+	}
+	returnResults := make(chan returnResult, 2)
+	for range 2 {
+		go func() {
+			value, err := database.ReturnToPrimary(ctx, interleave.ID, returnInput)
+			returnResults <- returnResult{value: value, err: err}
+		}()
+	}
+	var returned ExecutionReturn
+	for range 2 {
+		result := <-returnResults
+		if result.err != nil {
+			t.Fatalf("concurrent return to primary error = %v", result.err)
+		}
+		returned = result.value
+	}
+	if returned.PrimarySession.State != executionStateActive || returned.PrimarySession.ResumeMarker == nil || *returned.PrimarySession.ResumeMarker != "Continue after the agent reply" || returned.InterleaveSession.State != executionStateInterrupted || returned.InterleaveSession.ResumeMarker == nil || *returned.InterleaveSession.ResumeMarker != "Resume at receipt two" {
+		t.Fatalf("return to primary = %+v", returned)
+	}
+	if len(returned.PrimarySession.Events) != 4 || len(returned.InterleaveSession.Events) != 2 || returned.PrimarySession.Events[2].EventType != executionEventExternalReady || returned.PrimarySession.Events[3].EventType != executionEventResumed || returned.InterleaveSession.Events[1].EventType != executionEventSwitchedOut {
+		t.Fatalf("return history was not appended once: primary=%+v interleave=%+v", returned.PrimarySession.Events, returned.InterleaveSession.Events)
+	}
+	var primaryLink, interleaveLink map[string]json.RawMessage
+	var linkedInterleaveID, linkedPrimaryID int64
+	if json.Unmarshal(returned.PrimarySession.Events[3].Metadata, &primaryLink) != nil || json.Unmarshal(primaryLink["interleave_session_id"], &linkedInterleaveID) != nil || linkedInterleaveID != interleave.ID || json.Unmarshal(returned.InterleaveSession.Events[1].Metadata, &interleaveLink) != nil || json.Unmarshal(interleaveLink["primary_session_id"], &linkedPrimaryID) != nil || linkedPrimaryID != primary.ID {
+		t.Fatalf("return event links = primary %s, interleave %s", returned.PrimarySession.Events[3].Metadata, returned.InterleaveSession.Events[1].Metadata)
+	}
+
+	metric := DeriveExecutionSummary(startAt, returnedAt, []ExecutionMetricInput{{Session: returned.PrimarySession}})
+	if metric.ReturnCount != 1 || metric.ReturnOpportunityCount != 1 || len(metric.ReturnLatenciesSeconds) != 1 || metric.ReturnLatenciesSeconds[0] != int64((returnedAt.Sub(readyAt)).Seconds()) {
+		t.Fatalf("primary return timing = %+v", metric)
+	}
+	interleaves, err := database.ListExecutionInterleaves(ctx, primary.ID, 10)
+	if err != nil || len(interleaves) != 1 || interleaves[0].ID != interleave.ID || interleaves[0].State != executionStateInterrupted {
+		t.Fatalf("retained interleave list = %+v, %v", interleaves, err)
+	}
+
+	secondWaitAt := returnedAt.Add(time.Minute)
+	if _, err := database.TransitionExecutionSession(ctx, primary.ID, ExecutionEventInput{EventType: executionEventWaitingExternal, OccurredAt: &secondWaitAt}); err != nil {
+		t.Fatalf("second primary wait: %v", err)
+	}
+	secondStart := secondWaitAt.Add(time.Minute)
+	secondInterleave, err := database.StartExecutionSession(ctx, ExecutionSessionInput{
+		ActivityID:       interleaveActivity.ID,
+		Role:             ExecutionRoleWaitingInterleave,
+		PrimarySessionID: &primary.ID,
+		StartedAt:        &secondStart,
+	})
+	if err != nil {
+		t.Fatalf("start next interleave after pausing the first: %v", err)
+	}
+	secondCompletedAt := secondStart.Add(5 * time.Minute)
+	secondInterleave, err = database.TransitionExecutionSession(ctx, secondInterleave.ID, ExecutionEventInput{EventType: executionEventCompleted, OccurredAt: &secondCompletedAt})
+	if err != nil || secondInterleave.State != executionStateCompleted {
+		t.Fatalf("complete second interleave = %+v, %v", secondInterleave, err)
+	}
+	interleaveHistory, err := database.ListExecutionInterleaves(ctx, primary.ID, 10)
+	if err != nil || len(interleaveHistory) != 2 {
+		t.Fatalf("interleave history = %+v, %v", interleaveHistory, err)
+	}
+	completedInterleaveRetained := false
+	for _, item := range interleaveHistory {
+		if item.ID == secondInterleave.ID && item.State == executionStateCompleted && item.EndedAt != nil && len(item.Events) == 2 {
+			completedInterleaveRetained = true
+		}
+	}
+	if !completedInterleaveRetained {
+		t.Fatalf("completed interleave missing from retained history: %+v", interleaveHistory)
+	}
+	stillWaiting, err := database.CurrentPrimaryExecutionSession(ctx)
+	if err != nil || stillWaiting == nil || stillWaiting.ID != primary.ID || stillWaiting.State != executionStateWaitingExternal || stillWaiting.EndedAt != nil {
+		t.Fatalf("completed interleave changed primary = %+v, %v", stillWaiting, err)
+	}
+	primaryResumedAt := secondCompletedAt.Add(time.Minute)
+	if _, err := database.TransitionExecutionSession(ctx, primary.ID, ExecutionEventInput{EventType: executionEventResumed, OccurredAt: &primaryResumedAt}); err != nil {
+		t.Fatalf("resume primary after completed interleave: %v", err)
+	}
+	primaryCompletedAt := primaryResumedAt.Add(time.Minute)
+	if _, err := database.TransitionExecutionSession(ctx, primary.ID, ExecutionEventInput{EventType: executionEventCompleted, OccurredAt: &primaryCompletedAt}); err != nil {
+		t.Fatalf("complete primary after returning: %v", err)
+	}
+	terminalPrimary, err := database.GetExecutionSession(ctx, primary.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeReplayEvents := len(terminalPrimary.Events)
+	replayedReturn, err := database.ReturnToPrimary(ctx, interleave.ID, returnInput)
+	if err != nil || len(replayedReturn.PrimarySession.Events) != beforeReplayEvents || replayedReturn.PrimarySession.State != executionStateCompleted {
+		t.Fatalf("late duplicate return changed terminal primary history: %+v, %v", replayedReturn, err)
+	}
+	interleaveAbandonedAt := primaryCompletedAt.Add(time.Minute)
+	abandonedInterleave, err := database.TransitionExecutionSession(ctx, interleave.ID, ExecutionEventInput{EventType: executionEventAbandoned, OccurredAt: &interleaveAbandonedAt})
+	if err != nil || abandonedInterleave.State != executionStateAbandoned {
+		t.Fatalf("terminate interrupted interleave after primary completion = %+v, %v", abandonedInterleave, err)
+	}
+	if _, err := database.StartExecutionSession(ctx, ExecutionSessionInput{ActivityID: interleaveActivity.ID, Role: ExecutionRoleWaitingInterleave, PrimarySessionID: &primary.ID, StartedAt: &returnedAt}); !errors.Is(err, ErrExecutionConflict) {
+		t.Fatalf("interleave under terminal primary error = %v", err)
+	}
+}
+
+func stringPointer(value string) *string { return &value }

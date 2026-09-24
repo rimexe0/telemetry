@@ -279,14 +279,20 @@ type fakeRepository struct {
 	settings       store.PlanningSettings
 	settingsInput  bool
 
-	executionSession      *store.ExecutionSession
-	executionCurrent      *store.ExecutionSession
-	executionSessions     []store.ExecutionSession
-	executionStartInput   store.ExecutionSessionInput
-	executionEventInput   store.ExecutionEventInput
-	executionEventSession int64
-	executionLimit        int
-	executionErr          error
+	executionSession         *store.ExecutionSession
+	executionCurrent         *store.ExecutionSession
+	executionPrimary         *store.ExecutionSession
+	executionAttended        *store.ExecutionSession
+	executionSessions        []store.ExecutionSession
+	executionInterleaves     []store.ExecutionSession
+	executionReturn          store.ExecutionReturn
+	executionStartInput      store.ExecutionSessionInput
+	executionEventInput      store.ExecutionEventInput
+	executionReturnInput     store.ReturnToPrimaryInput
+	executionEventSession    int64
+	executionLimit           int
+	executionInterleaveLimit int
+	executionErr             error
 }
 
 func (f *fakeRepository) Ingest(_ context.Context, batch model.Batch) (store.Receipt, error) {
@@ -386,7 +392,7 @@ func (f *fakeRepository) StartExecutionSession(_ context.Context, input store.Ex
 	if f.executionSession != nil {
 		return *f.executionSession, nil
 	}
-	return store.ExecutionSession{ID: 1, ActivityID: input.ActivityID, PlanBlockID: input.PlanBlockID, State: "active", Events: []store.ExecutionEvent{{ID: 1, SessionID: 1, EventType: "started"}}}, nil
+	return store.ExecutionSession{ID: 1, ActivityID: input.ActivityID, PlanBlockID: input.PlanBlockID, Role: input.Role, PrimarySessionID: input.PrimarySessionID, State: "active", Events: []store.ExecutionEvent{{ID: 1, SessionID: 1, EventType: "started"}}}, nil
 }
 func (f *fakeRepository) TransitionExecutionSession(_ context.Context, sessionID int64, input store.ExecutionEventInput) (store.ExecutionSession, error) {
 	if f.executionErr != nil {
@@ -405,6 +411,18 @@ func (f *fakeRepository) CurrentExecutionSession(context.Context) (*store.Execut
 	}
 	return f.executionCurrent, nil
 }
+func (f *fakeRepository) CurrentPrimaryExecutionSession(context.Context) (*store.ExecutionSession, error) {
+	if f.executionErr != nil {
+		return nil, f.executionErr
+	}
+	return f.executionPrimary, nil
+}
+func (f *fakeRepository) CurrentAttendedExecutionSession(context.Context) (*store.ExecutionSession, error) {
+	if f.executionErr != nil {
+		return nil, f.executionErr
+	}
+	return f.executionAttended, nil
+}
 func (f *fakeRepository) GetExecutionSession(_ context.Context, sessionID int64) (*store.ExecutionSession, error) {
 	if f.executionErr != nil {
 		return nil, f.executionErr
@@ -420,6 +438,20 @@ func (f *fakeRepository) ListExecutionSessions(_ context.Context, limit int) ([]
 	}
 	f.executionLimit = limit
 	return f.executionSessions, nil
+}
+func (f *fakeRepository) ListExecutionInterleaves(_ context.Context, _ int64, limit int) ([]store.ExecutionSession, error) {
+	if f.executionErr != nil {
+		return nil, f.executionErr
+	}
+	f.executionInterleaveLimit = limit
+	return f.executionInterleaves, nil
+}
+func (f *fakeRepository) ReturnToPrimary(_ context.Context, _ int64, input store.ReturnToPrimaryInput) (store.ExecutionReturn, error) {
+	if f.executionErr != nil {
+		return store.ExecutionReturn{}, f.executionErr
+	}
+	f.executionReturnInput = input
+	return f.executionReturn, nil
 }
 func (f *fakeRepository) Ping(context.Context) error { return nil }
 

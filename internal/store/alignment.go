@@ -14,6 +14,8 @@ const (
 
 	AlignmentReasonExecutionMatchesPlan = "execution_matches_plan"
 	AlignmentReasonWaitingExternal      = "waiting_external"
+	AlignmentReasonUsefulInterleave     = "useful_interleave"
+	AlignmentReasonReturnPending        = "return_pending"
 	AlignmentReasonIntentionalSwitch    = "intentional_switch"
 	AlignmentReasonRecovery             = "recovery"
 	AlignmentReasonActivityMismatch     = "activity_mismatch"
@@ -52,6 +54,8 @@ type AlignmentView struct {
 	PlanBlockState     string              `json:"plan_block_state,omitempty"`
 	ExecutionSessionID *int64              `json:"execution_session_id,omitempty"`
 	ExecutionState     string              `json:"execution_state,omitempty"`
+	AttendedSessionID  *int64              `json:"attended_execution_session_id,omitempty"`
+	AttendedState      string              `json:"attended_execution_state,omitempty"`
 	AlignmentState     string              `json:"alignment_state"`
 	ReasonCode         string              `json:"reason_code"`
 	Reason             string              `json:"reason"`
@@ -62,17 +66,20 @@ type AlignmentView struct {
 }
 
 type AlignmentContext struct {
-	EvaluatedAt   time.Time
-	At            time.Time
-	Now           time.Time
-	PlanDate      string
-	PlanVersionID int64
-	Block         *PlanBlock
-	Activity      *Activity
-	Activities    []Activity
-	Session       *ExecutionSession
-	Sources       []SourceSummary
-	Observations  []ObservationView
+	EvaluatedAt     time.Time
+	At              time.Time
+	Now             time.Time
+	PlanDate        string
+	PlanVersionID   int64
+	Block           *PlanBlock
+	Activity        *Activity
+	Activities      []Activity
+	Session         *ExecutionSession
+	PrimarySession  *ExecutionSession
+	AttendedSession *ExecutionSession
+	Interleaves     []ExecutionSession
+	Sources         []SourceSummary
+	Observations    []ObservationView
 }
 
 func EvaluateAlignment(input AlignmentContext) AlignmentView {
@@ -112,9 +119,21 @@ func EvaluateAlignment(input AlignmentContext) AlignmentView {
 		result.NextAction = input.Activity.NextAction
 		result.ResumeMarker = input.Activity.ResumeMarker
 	}
-	if input.Session != nil {
-		result.ExecutionSessionID = int64Pointer(input.Session.ID)
-		result.ExecutionState = input.Session.State
+	primarySession := input.PrimarySession
+	if primarySession == nil && input.Session != nil && input.Session.Role != ExecutionRoleWaitingInterleave {
+		primarySession = input.Session
+	}
+	attendedSession := input.AttendedSession
+	if attendedSession == nil && primarySession != nil && primarySession.State == executionStateActive {
+		attendedSession = primarySession
+	}
+	if primarySession != nil {
+		result.ExecutionSessionID = int64Pointer(primarySession.ID)
+		result.ExecutionState = primarySession.State
+	}
+	if attendedSession != nil {
+		result.AttendedSessionID = int64Pointer(attendedSession.ID)
+		result.AttendedState = attendedSession.State
 	}
 
 	result.SourceFreshness = freshness.state
@@ -122,8 +141,30 @@ func EvaluateAlignment(input AlignmentContext) AlignmentView {
 	result.FreshnessNote = freshness.note
 	result.Evidence = alignmentEvidence(*input.Block, input.Activity, input.Activities, input.Observations)
 
-	if input.Session != nil {
-		lastEvent := lastMeaningfulExecutionEvent(input.Session.Events)
+	if primarySession != nil {
+		if primarySession.State == "unknown" {
+			result.ReasonCode = AlignmentReasonAmbiguousEvidence
+			result.Reason = "Execution event times do not support a reliable state for this interval."
+			return result
+		}
+		for _, interleave := range input.Interleaves {
+			if interleave.Role == ExecutionRoleWaitingInterleave && interleave.PrimarySessionID != nil &&
+				*interleave.PrimarySessionID == primarySession.ID && interleave.EndedAt == nil &&
+				interleave.State == executionStateActive && primarySession.State == executionStateWaitingExternal &&
+				primaryMatchesBlock(*primarySession, *input.Block) {
+				if executionReturnPending(primarySession.Events, evaluatedAt) {
+					result.AlignmentState = AlignmentAligned
+					result.ReasonCode = AlignmentReasonReturnPending
+					result.Reason = "The primary objective is ready to resume while the owner is still attending its linked interleave."
+					return result
+				}
+				result.AlignmentState = AlignmentAligned
+				result.ReasonCode = AlignmentReasonUsefulInterleave
+				result.Reason = "The primary objective is waiting for an external event while the owner attends its linked interleave."
+				return result
+			}
+		}
+		lastEvent := lastMeaningfulExecutionEventAt(primarySession.Events, evaluatedAt)
 		if lastEvent == executionEventSwitchedOut {
 			result.AlignmentState = AlignmentAligned
 			result.ReasonCode = AlignmentReasonIntentionalSwitch
@@ -136,14 +177,17 @@ func EvaluateAlignment(input AlignmentContext) AlignmentView {
 			result.Reason = "The owner recorded overwhelm or an offline recovery period. Recovery is not task abandonment."
 			return result
 		}
-		if input.Session.PlanBlockID != nil && *input.Session.PlanBlockID == input.Block.ID {
-			switch input.Session.State {
+		if primaryMatchesBlock(*primarySession, *input.Block) {
+			switch primarySession.State {
 			case executionStateActive:
 				result.AlignmentState = AlignmentAligned
 				result.ReasonCode = AlignmentReasonExecutionMatchesPlan
 				result.Reason = "The active execution session is linked to this planned block."
 				return result
 			case executionStateWaitingExternal:
+				if freshness.state == alignmentFreshnessFresh && hasEvidenceRelationship(result.Evidence, "unmatched") {
+					break
+				}
 				result.AlignmentState = AlignmentAligned
 				result.ReasonCode = AlignmentReasonWaitingExternal
 				result.Reason = "The owner is waiting for an external process while this task remains current."
@@ -234,6 +278,13 @@ func alignmentCoverageForFreshness(freshness string) string {
 	return "available"
 }
 
+func primaryMatchesBlock(session ExecutionSession, block PlanBlock) bool {
+	if session.PlanBlockID != nil {
+		return *session.PlanBlockID == block.ID
+	}
+	return block.ActivityID != nil && session.ActivityID == *block.ActivityID
+}
+
 func alignmentEvidence(block PlanBlock, activity *Activity, activities []Activity, observations []ObservationView) []AlignmentEvidence {
 	terms := alignmentTerms(strings.Join([]string{block.Title, activityTitle(activity), activityNextAction(activity), activityResumeMarker(activity), activityNotes(activity)}, " "))
 	currentActivityID := int64(0)
@@ -295,13 +346,37 @@ func alignmentRelatedActivity(text string, activities []Activity, currentID int6
 	return match, match.ID != 0
 }
 
-func lastMeaningfulExecutionEvent(events []ExecutionEvent) string {
+func lastMeaningfulExecutionEventAt(events []ExecutionEvent, at time.Time) string {
 	for index := len(events) - 1; index >= 0; index-- {
+		if events[index].OccurredAt.After(at) {
+			continue
+		}
 		if events[index].EventType != executionEventOwnerExplanation {
 			return events[index].EventType
 		}
 	}
 	return ""
+}
+
+func executionReturnPending(events []ExecutionEvent, at time.Time) bool {
+	waiting, ready := false, false
+	for _, event := range events {
+		if event.OccurredAt.After(at) {
+			continue
+		}
+		switch event.EventType {
+		case executionEventWaitingExternal:
+			waiting, ready = true, false
+		case executionEventExternalReady:
+			if waiting {
+				ready = true
+			}
+		case executionEventResumed, executionEventPaused, executionEventInterrupted,
+			executionEventSwitchedOut, executionEventCompleted, executionEventAbandoned:
+			waiting, ready = false, false
+		}
+	}
+	return waiting && ready
 }
 
 func alignmentOverlaps(block PlanBlock, observation ObservationView) bool {

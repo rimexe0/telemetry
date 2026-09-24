@@ -86,8 +86,12 @@ type Repository interface {
 	UpdatePlanningSettings(context.Context, bool) (PlanningSettings, error)
 	StartExecutionSession(context.Context, ExecutionSessionInput) (ExecutionSession, error)
 	TransitionExecutionSession(context.Context, int64, ExecutionEventInput) (ExecutionSession, error)
+	ReturnToPrimary(context.Context, int64, ReturnToPrimaryInput) (ExecutionReturn, error)
 	CurrentExecutionSession(context.Context) (*ExecutionSession, error)
+	CurrentPrimaryExecutionSession(context.Context) (*ExecutionSession, error)
+	CurrentAttendedExecutionSession(context.Context) (*ExecutionSession, error)
 	GetExecutionSession(context.Context, int64) (*ExecutionSession, error)
 	ListExecutionSessions(context.Context, int) ([]ExecutionSession, error)
+	ListExecutionInterleaves(context.Context, int64, int) ([]ExecutionSession, error)
 	Ping(context.Context) error
 }

@@ -37,6 +37,10 @@ func (s *Server) startExecutionSession(writer http.ResponseWriter, request *http
 		writeError(writer, http.StatusNotFound, "not_found", "activity or plan block does not exist")
 		return
 	}
+	if errors.Is(err, store.ErrExecutionConflict) {
+		writeError(writer, http.StatusConflict, "execution_conflict", err.Error())
+		return
+	}
 	if executionClientError(err) {
 		writeError(writer, http.StatusBadRequest, "invalid_execution", err.Error())
 		return
@@ -76,6 +80,32 @@ func (s *Server) currentExecutionSession(writer http.ResponseWriter, request *ht
 		return
 	}
 	session, err := s.repository.CurrentExecutionSession(request.Context())
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"session": session})
+}
+
+func (s *Server) currentPrimaryExecutionSession(writer http.ResponseWriter, request *http.Request) {
+	if !s.ownerAuthorized(request) {
+		writeError(writer, http.StatusUnauthorized, "unauthorized", "owner credentials are required")
+		return
+	}
+	session, err := s.repository.CurrentPrimaryExecutionSession(request.Context())
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"session": session})
+}
+
+func (s *Server) currentAttendedExecutionSession(writer http.ResponseWriter, request *http.Request) {
+	if !s.ownerAuthorized(request) {
+		writeError(writer, http.StatusUnauthorized, "unauthorized", "owner credentials are required")
+		return
+	}
+	session, err := s.repository.CurrentAttendedExecutionSession(request.Context())
 	if err != nil {
 		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
 		return
@@ -138,6 +168,10 @@ func (s *Server) executionSessionEvents(writer http.ResponseWriter, request *htt
 		writeError(writer, http.StatusNotFound, "not_found", "execution session does not exist")
 		return
 	}
+	if errors.Is(err, store.ErrExecutionConflict) {
+		writeError(writer, http.StatusConflict, "execution_conflict", err.Error())
+		return
+	}
 	if executionClientError(err) {
 		writeError(writer, http.StatusBadRequest, "invalid_transition", err.Error())
 		return
@@ -147,6 +181,76 @@ func (s *Server) executionSessionEvents(writer http.ResponseWriter, request *htt
 		return
 	}
 	writeJSON(writer, http.StatusOK, session)
+}
+
+func (s *Server) executionInterleaves(writer http.ResponseWriter, request *http.Request) {
+	if !s.ownerAuthorized(request) {
+		writeError(writer, http.StatusUnauthorized, "unauthorized", "owner credentials are required")
+		return
+	}
+	primarySessionID, err := executionSessionID(request)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_path", err.Error())
+		return
+	}
+	value, err := limit(request, 20)
+	if err != nil || value > 100 {
+		if err == nil {
+			err = errors.New("limit must be an integer from 1 through 100")
+		}
+		writeError(writer, http.StatusBadRequest, "invalid_query", err.Error())
+		return
+	}
+	sessions, err := s.repository.ListExecutionInterleaves(request.Context(), primarySessionID, value)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(writer, http.StatusNotFound, "not_found", "primary execution session does not exist")
+		return
+	}
+	if executionClientError(err) {
+		writeError(writer, http.StatusBadRequest, "invalid_query", err.Error())
+		return
+	}
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"sessions": sessions})
+}
+
+func (s *Server) returnToPrimaryExecution(writer http.ResponseWriter, request *http.Request) {
+	if !s.ownerAuthorized(request) {
+		writeError(writer, http.StatusUnauthorized, "unauthorized", "owner credentials are required")
+		return
+	}
+	interleaveSessionID, err := executionSessionID(request)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_path", err.Error())
+		return
+	}
+	request.Body = http.MaxBytesReader(writer, request.Body, s.config.MaxRequestSize)
+	var input store.ReturnToPrimaryInput
+	if err := decodeExecutionJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_json", "request body must contain one return-to-primary request")
+		return
+	}
+	result, err := s.repository.ReturnToPrimary(request.Context(), interleaveSessionID, input)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(writer, http.StatusNotFound, "not_found", "primary or interleave session does not exist")
+		return
+	}
+	if errors.Is(err, store.ErrExecutionConflict) {
+		writeError(writer, http.StatusConflict, "execution_conflict", err.Error())
+		return
+	}
+	if executionClientError(err) {
+		writeError(writer, http.StatusBadRequest, "invalid_transition", err.Error())
+		return
+	}
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
+	writeJSON(writer, http.StatusOK, result)
 }
 
 func executionSessionID(request *http.Request) (int64, error) {

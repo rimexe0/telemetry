@@ -180,13 +180,25 @@ func (fakeRepository) StartExecutionSession(context.Context, store.ExecutionSess
 func (fakeRepository) TransitionExecutionSession(context.Context, int64, store.ExecutionEventInput) (store.ExecutionSession, error) {
 	return store.ExecutionSession{}, store.ErrNotFound
 }
+func (fakeRepository) ReturnToPrimary(context.Context, int64, store.ReturnToPrimaryInput) (store.ExecutionReturn, error) {
+	return store.ExecutionReturn{}, store.ErrNotFound
+}
 func (fakeRepository) CurrentExecutionSession(context.Context) (*store.ExecutionSession, error) {
+	return nil, nil
+}
+func (fakeRepository) CurrentPrimaryExecutionSession(context.Context) (*store.ExecutionSession, error) {
+	return nil, nil
+}
+func (fakeRepository) CurrentAttendedExecutionSession(context.Context) (*store.ExecutionSession, error) {
 	return nil, nil
 }
 func (fakeRepository) GetExecutionSession(context.Context, int64) (*store.ExecutionSession, error) {
 	return nil, store.ErrNotFound
 }
 func (fakeRepository) ListExecutionSessions(context.Context, int) ([]store.ExecutionSession, error) {
+	return []store.ExecutionSession{}, nil
+}
+func (fakeRepository) ListExecutionInterleaves(context.Context, int64, int) ([]store.ExecutionSession, error) {
 	return []store.ExecutionSession{}, nil
 }
 func (fakeRepository) Ping(context.Context) error { return nil }

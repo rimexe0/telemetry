@@ -342,7 +342,9 @@ export type AlignmentView = {
   resume_marker?: string;
   plan_block_state?: PlanBlock['state'];
   execution_session_id?: number;
-  execution_state?: 'active' | 'waiting_external' | 'interrupted' | 'completed' | 'abandoned';
+  execution_state?: 'active' | 'waiting_external' | 'interrupted' | 'completed' | 'abandoned' | 'unknown';
+  attended_execution_session_id?: number;
+  attended_execution_state?: 'active' | 'waiting_external' | 'interrupted' | 'completed' | 'abandoned';
   alignment_state: 'aligned' | 'possible_drift' | 'unknown';
   reason_code: string;
   reason: string;
@@ -351,6 +353,9 @@ export type AlignmentView = {
   freshness_note: string;
   evidence: AlignmentEvidence[];
 };
+
+export type ExecutionRole = 'primary' | 'waiting_interleave';
+export type ExecutionSessionState = 'active' | 'waiting_external' | 'interrupted' | 'completed' | 'abandoned';
 
 export type ExecutionEvent = {
   id: number;
@@ -367,14 +372,24 @@ export type ExecutionSession = {
   id: number;
   activity_id: number;
   plan_block_id?: number;
+  role: ExecutionRole;
+  primary_session_id?: number;
   started_at: string;
   ended_at?: string;
-  state: 'active' | 'waiting_external' | 'interrupted' | 'completed' | 'abandoned';
+  state: ExecutionSessionState;
   next_action_snapshot: string;
   resume_marker?: string;
   created_at: string;
   updated_at: string;
   events?: ExecutionEvent[];
+};
+
+export type ExecutionSessionInput = {
+  activity_id: number;
+  plan_block_id?: number;
+  role?: ExecutionRole;
+  primary_session_id?: number;
+  started_at?: string;
 };
 
 export type ExecutionEventInput = {
@@ -383,6 +398,17 @@ export type ExecutionEventInput = {
   note?: string;
   resume_marker?: string;
   metadata?: Record<string, unknown>;
+};
+
+export type ReturnToPrimaryInput = {
+  occurred_at?: string;
+  primary_resume_marker?: string;
+  interleave_resume_marker?: string;
+};
+
+export type ExecutionReturn = {
+  primary_session: ExecutionSession;
+  interleave_session: ExecutionSession;
 };
 
 export type ExecutionMetricSource = {
@@ -452,6 +478,40 @@ export async function getExecutionSummary(from: Date, to: Date): Promise<Executi
   const query = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() });
   const result = await request<{ summary: ExecutionSummary }>(`/v1/execution/summary?${query}`);
   return result.summary;
+}
+
+export async function startExecutionSession(input: ExecutionSessionInput): Promise<ExecutionSession> {
+  return request<ExecutionSession>('/v1/execution/sessions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input)
+  });
+}
+
+export async function getCurrentPrimaryExecutionSession(): Promise<ExecutionSession | null> {
+  const result = await request<{ session: ExecutionSession | null }>('/v1/execution/primary');
+  return result.session;
+}
+
+export async function getCurrentAttendedExecutionSession(): Promise<ExecutionSession | null> {
+  const result = await request<{ session: ExecutionSession | null }>('/v1/execution/attended');
+  return result.session;
+}
+
+export async function listExecutionInterleaves(primarySessionId: number, limit = 20): Promise<ExecutionSession[]> {
+  const query = new URLSearchParams({ limit: String(limit) });
+  const result = await request<{ sessions: ExecutionSession[] | null }>(
+    `/v1/execution/sessions/${encodeURIComponent(primarySessionId)}/interleaves?${query}`
+  );
+  return result.sessions ?? [];
+}
+
+export async function returnToPrimary(sessionId: number, input: ReturnToPrimaryInput = {}): Promise<ExecutionReturn> {
+  return request<ExecutionReturn>(`/v1/execution/sessions/${encodeURIComponent(sessionId)}/return-to-primary`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input)
+  });
 }
 
 export async function recordExecutionEvent(sessionId: number, input: ExecutionEventInput): Promise<ExecutionSession> {
