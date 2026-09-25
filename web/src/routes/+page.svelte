@@ -6,6 +6,8 @@
   import EventDetail from '$lib/EventDetail.svelte';
   import CollectionStatus from '$lib/CollectionStatus.svelte';
   import PlanView from '$lib/PlanView.svelte';
+  import ExecutionNow from '$lib/ExecutionNow.svelte';
+  import { performNowAction, type NowAction, type NowSnapshot, type NowView } from '$lib/execution';
   import { dayKey, dayStart } from '$lib/health';
   import { clearClerk, loadClerk, type ClerkClient } from '$lib/clerk';
   import {
@@ -16,6 +18,8 @@
     endPanelSession,
     getAuthConfig,
     getCurrentAlignment,
+    getCurrentAttendedExecutionSession,
+    getCurrentPrimaryExecutionSession,
     getPlan,
     getPlanningSettings,
     listActivities,
@@ -27,11 +31,14 @@
     loadObservationHistory,
     iterateObservationHistory,
     pairingDetails,
+    recordExecutionEvent,
+    returnToPrimary,
     revokeDevice,
     panelSession,
     savePlan,
     setClerkTokenProvider,
     setPlanBlockState,
+    startExecutionSession,
     startPanelSession,
     updatePlanningSettings,
     updateActivity,
@@ -56,7 +63,7 @@
 
   const fixtureMode = import.meta.env.VITE_TELEMETRY_FIXTURE === '1';
   const snapshotMode = import.meta.env.VITE_TELEMETRY_SNAPSHOT === '1';
-  let view: 'day' | 'plan' | 'health' | 'collection' | 'devices' = 'day';
+  let view: 'now' | 'day' | 'plan' | 'health' | 'collection' | 'devices' = 'now';
   let selectedDay = dayKey(Date.now());
   let dayObservations: Observation[] = [];
   let dayLoading = false;
@@ -86,6 +93,9 @@
   let planEvidenceError = '';
   let currentAlignment: AlignmentView | undefined;
   let currentAlignmentError = '';
+  let nowSnapshot: NowSnapshot | undefined;
+  let nowLoading = false;
+  let nowError = '';
   $: planAssessments = Object.fromEntries((plan?.blocks ?? []).map(block => [block.id, assessPlanBlock(block, block.activity_id ? activities.find(activity => activity.id === block.activity_id) : undefined, planObservations, sources, activities)])) as Record<number, PlanAssessment>;
   let collectionStatus: CollectionHealth | undefined;
   let collectionError = '';
@@ -94,7 +104,7 @@
   let authenticated = false;
   let checkingSession = true;
   let loading = false;
-  let loadingView: 'day' | 'plan' | 'health' | 'collection' | 'devices' | undefined;
+  let loadingView: 'now' | 'day' | 'plan' | 'health' | 'collection' | 'devices' | undefined;
   let refreshQueued = false;
   let refreshQueuedForceDay = false;
   let error = '';
@@ -298,6 +308,42 @@
     void refreshPlanEvidence();
   }
 
+  // The NOW view always reads today's plan and the server's current execution;
+  // it does not depend on telemetry sources, so stale collection cannot hide it.
+  async function refreshNow(): Promise<void> {
+    if (!authenticated) return;
+    nowLoading = true;
+    nowError = '';
+    const today = dayKey(Date.now());
+    try {
+      const [dayPlan, rows, primary, attended, settings] = await Promise.all([
+        getPlan(today), listActivities(), getCurrentPrimaryExecutionSession(), getCurrentAttendedExecutionSession(), getPlanningSettings()
+      ]);
+      nowSnapshot = { day: today, plan: dayPlan, activities: rows, primary, attended, planGateEnabled: settings.daily_plan_gate_enabled };
+    } catch (cause) {
+      nowSnapshot = undefined;
+      nowError = cause instanceof Error ? cause.message : 'Unable to load the current task.';
+      if (cause instanceof APIError && cause.status === 401) authenticated = false;
+    } finally {
+      nowLoading = false;
+    }
+  }
+
+  async function handleNowAction(current: NowView, action: NowAction): Promise<void> {
+    if (!nowSnapshot) return;
+    try {
+      await performNowAction({ startExecutionSession, recordExecutionEvent, returnToPrimary, setPlanBlockState }, current, nowSnapshot.day, action);
+    } finally {
+      await refreshNow();
+    }
+  }
+
+  function openTodayPlan(): void {
+    selectedDay = dayKey(Date.now());
+    view = 'plan';
+    void refresh();
+  }
+
   async function handleSavePlan(input: PlanInput): Promise<void> {
     plan = await savePlan(selectedDay, input);
     planVersions = await listPlanVersions(selectedDay);
@@ -470,7 +516,9 @@
     error = '';
     try {
       const now = new Date();
-      if (requestedView === 'collection') {
+      if (requestedView === 'now') {
+        await refreshNow();
+      } else if (requestedView === 'collection') {
         const [rows] = await Promise.all([listObservations({
           sourceInstanceKey: selectedSource || undefined,
           from: rangeStart(range),
@@ -698,7 +746,7 @@
     }
     timer = setInterval(() => {
       if (document.visibilityState !== 'visible' || snapshotMode) return;
-      if (view === 'collection' || (!dayLoading && updatedAt && Date.now() - updatedAt.getTime() >= 300_000)) void refresh();
+      if (view === 'collection' || view === 'now' || (!dayLoading && updatedAt && Date.now() - updatedAt.getTime() >= 300_000)) void refresh();
     }, 30_000);
   });
 
@@ -762,6 +810,7 @@
     </section>
   {:else}
     <nav class="view-tabs" aria-label="Panel views">
+      <button class:active={view === 'now'} aria-pressed={view === 'now'} on:click={() => { view = 'now'; void refresh(); }}>Now</button>
       <button class:active={view === 'day'} aria-pressed={view === 'day'} on:click={() => { view = 'day'; void refresh(); }}>Day</button>
       <button class:active={view === 'plan'} aria-pressed={view === 'plan'} on:click={() => { view = 'plan'; void refresh(); }}>Plan</button>
       <button class:active={view === 'health'} aria-pressed={view === 'health'} on:click={() => { view = 'health'; void refresh(); }}>Health</button>
@@ -780,7 +829,9 @@
         {#if pairingError && pairing}<p class="error" role="alert">{pairingError}</p>{/if}
       </section>
     {/if}
-    {#if view === 'day'}
+    {#if view === 'now'}
+      <ExecutionNow snapshot={nowSnapshot} loading={nowLoading} error={nowError || error} onaction={handleNowAction} onopenplan={openTodayPlan} onrefresh={() => refresh()} />
+    {:else if view === 'day'}
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       <DayTimeline observations={dayObservations} {sources} bind:date={selectedDay} loading={dayLoading} error={dayError || error} status={dayStatus} ondatechange={refresh} onrefresh={() => refresh(true)} oninspect={(o) => selectedObservation = o} />
     {:else if view === 'health'}

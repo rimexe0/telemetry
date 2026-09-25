@@ -41,7 +41,65 @@ function snapshotAPI(): Plugin {
   };
 }
 
+// Invented in-memory plan and execution state so the NOW view can be clicked
+// through without a database. It follows the server's transition rules loosely
+// and is not evidence of server behaviour.
+function fixtureExecution() {
+  const day = new Date(Date.now() + 3 * 3_600_000).toISOString().slice(0, 10);
+  const hour = new Date(Date.now() + 3 * 3_600_000).getUTCHours();
+  const created = new Date().toISOString();
+  const activities = [
+    { id: 1, title: 'Fixture task', notes: '', next_action: 'Open the fixture file and write the first line', resume_marker: '', status: 'active', activity_state: 'growth', priority: 0, created_at: created, updated_at: created }
+  ];
+  const blocks = [
+    { id: 1, activity_id: 1, title: 'Fixture task', start_time: `${day}T${String(hour).padStart(2, '0')}:00:00+03:00`, duration_minutes: 60, fixed: false, state: 'planned', state_note: '', position: 0 }
+  ];
+  let session: Record<string, any> | null = null;
+  let eventId = 0;
+  const terminal = new Set(['completed', 'abandoned']);
+  const nextState: Record<string, string> = {
+    waiting_external: 'waiting_external', switched_out: 'interrupted', paused: 'interrupted', interrupted: 'interrupted',
+    offline_recovery_started: 'interrupted', offline_recovery_ended: 'interrupted', resumed: 'active', completed: 'completed', abandoned: 'abandoned'
+  };
+  return {
+    handle(method: string, path: string, body: any): [number, unknown] | undefined {
+      if (path === '/planning/settings') return [200, { daily_plan_gate_enabled: true, enforcement_active: false }];
+      if (path.startsWith('/activities')) return [200, { activities }];
+      if (path === `/plans/${day}` && method === 'GET') return [200, { plan: { plan_date: day, version_id: 1, created_at: created, note: 'fixture', blocks } }];
+      if (path.startsWith('/plans/') && path.endsWith('/versions')) return [200, { versions: [] }];
+      if (path.startsWith('/plans/') && method === 'GET') return [200, { plan: null }];
+      const blockMatch = path.match(/^\/plans\/[^/]+\/blocks\/(\d+)$/);
+      if (blockMatch && method === 'PATCH') {
+        const block = blocks.find(row => row.id === Number(blockMatch[1]));
+        if (!block) return [404, { error: { detail: 'not found' } }];
+        block.state = body.state;
+        return [200, block];
+      }
+      if (path === '/execution/primary' || path === '/execution/attended') return [200, { session: session && !session.ended_at ? session : null }];
+      if (path === '/execution/sessions' && method === 'POST') {
+        if (session && !session.ended_at) return [409, { error: { detail: 'a primary execution is already open' } }];
+        const at = new Date().toISOString();
+        session = { id: (session?.id ?? 0) + 1, activity_id: body.activity_id, plan_block_id: body.plan_block_id, role: 'primary', started_at: at, state: 'active', next_action_snapshot: activities[0].next_action, created_at: at, updated_at: at, events: [{ id: ++eventId, session_id: 0, event_type: 'started', occurred_at: at, created_at: at }] };
+        return [201, session];
+      }
+      const eventMatch = path.match(/^\/execution\/sessions\/(\d+)\/events$/);
+      if (eventMatch && method === 'POST') {
+        if (!session || session.id !== Number(eventMatch[1])) return [404, { error: { detail: 'execution session does not exist' } }];
+        if (terminal.has(session.state)) return [400, { error: { detail: `terminal session cannot receive ${body.event_type}` } }];
+        const at = new Date().toISOString();
+        session.events.push({ id: ++eventId, session_id: session.id, event_type: body.event_type, occurred_at: at, note: body.note, created_at: at });
+        session.state = nextState[body.event_type] ?? session.state;
+        if (body.resume_marker !== undefined) session.resume_marker = body.resume_marker;
+        if (terminal.has(session.state)) session.ended_at = at;
+        return [200, session];
+      }
+      return undefined;
+    }
+  };
+}
+
 function fixtureAPI(): Plugin {
+  const execution = fixtureExecution();
   return {
     name: 'telemetry-fixture-api',
     configureServer(server) {
@@ -67,6 +125,17 @@ function fixtureAPI(): Plugin {
         }
         if (request.url === '/panel/session' && request.method === 'DELETE') {
           send(200, { authenticated: false });
+          return;
+        }
+        const path = (request.url ?? '/').split('?')[0];
+        if (path.startsWith('/execution') || path.startsWith('/plans') || path.startsWith('/activities') || path === '/planning/settings') {
+          let raw = '';
+          request.on('data', chunk => raw += chunk);
+          request.on('end', () => {
+            const result = execution.handle(request.method ?? 'GET', path, raw ? JSON.parse(raw) : undefined);
+            if (result) send(result[0], result[1]);
+            else send(404, { error: { detail: 'not in fixture' } });
+          });
           return;
         }
         if (request.url?.startsWith('/sources')) {
