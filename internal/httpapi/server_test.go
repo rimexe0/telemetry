@@ -293,6 +293,11 @@ type fakeRepository struct {
 	executionLimit           int
 	executionInterleaveLimit int
 	executionErr             error
+
+	proposals          map[int64]*store.PlanChangeProposal
+	proposalRequest    store.PlanChangeRequest
+	proposalProvenance json.RawMessage
+	proposalSaves      int
 }
 
 func (f *fakeRepository) Ingest(_ context.Context, batch model.Batch) (store.Receipt, error) {
@@ -453,6 +458,84 @@ func (f *fakeRepository) ReturnToPrimary(_ context.Context, _ int64, input store
 	f.executionReturnInput = input
 	return f.executionReturn, nil
 }
+func (f *fakeRepository) CreatePlanChangeProposal(_ context.Context, planDate time.Time, request store.PlanChangeRequest) (store.PlanChangeProposal, error) {
+	f.proposalRequest = request
+	if f.plan == nil {
+		return store.PlanChangeProposal{}, store.ErrNotFound
+	}
+	origin, plan, changes, err := store.PreparePlanChange(*f.plan, request)
+	if err != nil {
+		return store.PlanChangeProposal{}, err
+	}
+	hash, _ := store.ProposalContentHash(f.plan.PlanDate, f.plan.VersionID, plan)
+	if f.proposals == nil {
+		f.proposals = map[int64]*store.PlanChangeProposal{}
+	}
+	proposal := &store.PlanChangeProposal{ID: int64(len(f.proposals) + 1), PlanDate: planDate.Format("2006-01-02"), BasePlanVersionID: f.plan.VersionID,
+		Origin: origin, Reason: request.Reason, ProposedPlan: plan, Changes: changes, Warnings: []store.ProposalWarning{}, ContentHash: hash, Status: store.ProposalPending}
+	f.proposals[proposal.ID] = proposal
+	return *proposal, nil
+}
+
+func (f *fakeRepository) GetPlanChangeProposal(_ context.Context, _ time.Time, id int64) (store.PlanChangeProposal, error) {
+	proposal, ok := f.proposals[id]
+	if !ok {
+		return store.PlanChangeProposal{}, store.ErrNotFound
+	}
+	return *proposal, nil
+}
+
+func (f *fakeRepository) ListPlanChangeProposals(context.Context, time.Time, int) ([]store.PlanChangeProposal, error) {
+	proposals := []store.PlanChangeProposal{}
+	for id := int64(len(f.proposals)); id > 0; id-- {
+		proposals = append(proposals, *f.proposals[id])
+	}
+	return proposals, nil
+}
+
+// The fake mirrors the store's documented decision rules; PostgreSQL
+// integration tests prove the real transaction.
+func (f *fakeRepository) AcceptPlanChangeProposal(_ context.Context, _ time.Time, id int64, decision store.ProposalDecision, provenance json.RawMessage) (store.PlanChangeProposal, error) {
+	proposal, ok := f.proposals[id]
+	if !ok {
+		return store.PlanChangeProposal{}, store.ErrNotFound
+	}
+	if decision.ContentHash != proposal.ContentHash {
+		return *proposal, store.ErrProposalConflict
+	}
+	switch proposal.Status {
+	case store.ProposalAccepted:
+		return *proposal, nil
+	case store.ProposalRejected:
+		return *proposal, store.ErrProposalConflict
+	case store.ProposalStale:
+		return *proposal, store.ErrProposalStale
+	}
+	if f.plan.VersionID != proposal.BasePlanVersionID {
+		proposal.Status = store.ProposalStale
+		return *proposal, store.ErrProposalStale
+	}
+	f.proposalSaves++
+	f.proposalProvenance = provenance
+	version := f.plan.VersionID + 1
+	f.plan = &store.Plan{PlanDate: f.plan.PlanDate, VersionID: version}
+	proposal.Status, proposal.ResultPlanVersionID = store.ProposalAccepted, &version
+	return *proposal, nil
+}
+
+func (f *fakeRepository) RejectPlanChangeProposal(_ context.Context, _ time.Time, id int64, _ store.ProposalDecision, provenance json.RawMessage) (store.PlanChangeProposal, error) {
+	proposal, ok := f.proposals[id]
+	if !ok {
+		return store.PlanChangeProposal{}, store.ErrNotFound
+	}
+	if proposal.Status == store.ProposalAccepted || proposal.Status == store.ProposalStale {
+		return *proposal, store.ErrProposalConflict
+	}
+	proposal.Status = store.ProposalRejected
+	f.proposalProvenance = provenance
+	return *proposal, nil
+}
+
 func (f *fakeRepository) Ping(context.Context) error { return nil }
 
 func TestBatchJSONFixtureRemainsValid(t *testing.T) {

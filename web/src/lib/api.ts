@@ -208,6 +208,7 @@ export type ActivityInput = Partial<Omit<Activity, 'id' | 'created_at' | 'update
 export type PlanBlock = {
   id: number;
   activity_id?: number;
+  source_block_id?: number;
   title: string;
   start_time: string;
   duration_minutes: number;
@@ -519,5 +520,79 @@ export async function recordExecutionEvent(sessionId: number, input: ExecutionEv
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input)
+  });
+}
+
+export type ProposedBlock = {
+  source_block_id?: number;
+  activity_id?: number;
+  title: string;
+  start_time: string;
+  duration_minutes: number;
+  fixed: boolean;
+  state: PlanBlock['state'];
+};
+
+export type PlanChange = {
+  kind: 'unchanged' | 'moved' | 'resized' | 'parked' | 'added' | 'fixed_conflict';
+  base_block_id?: number;
+  activity_id?: number;
+  title: string;
+  fixed: boolean;
+  state?: PlanBlock['state'];
+  old_start?: string;
+  old_duration_minutes?: number;
+  new_start?: string;
+  new_duration_minutes?: number;
+  detail?: string;
+  related_block_ids?: number[];
+};
+
+export type ProposalWarning = { code: string; base_block_id?: number; session_id?: number; detail: string };
+
+export type PlanChangeProposal = {
+  id: number;
+  plan_date: string;
+  base_plan_version_id: number;
+  origin: 'disruption_helper' | 'explicit';
+  reason: string;
+  proposed_plan: { note: string; blocks: ProposedBlock[] };
+  changes: PlanChange[];
+  warnings: ProposalWarning[];
+  content_hash: string;
+  status: 'pending' | 'accepted' | 'rejected' | 'stale';
+  created_at: string;
+  decided_at?: string;
+  decision_note?: string;
+  result_plan_version_id?: number;
+};
+
+export type DisruptionRequest = {
+  base_plan_version_id: number;
+  reason: string;
+  disruption: { start: string; end?: string; available_until: string };
+};
+
+const proposalPath = (planDate: string, suffix = '') => `/v1/plans/${encodeURIComponent(planDate)}/replan-proposals${suffix}`;
+
+export async function createReplanProposal(planDate: string, input: DisruptionRequest): Promise<PlanChangeProposal> {
+  return request<PlanChangeProposal>(proposalPath(planDate), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+}
+
+export async function listReplanProposals(planDate: string, limit = 10): Promise<PlanChangeProposal[]> {
+  const result = await request<{ proposals: PlanChangeProposal[] | null }>(proposalPath(planDate, `?limit=${limit}`));
+  return result.proposals ?? [];
+}
+
+// Acceptance echoes the reviewed content hash; the server rejects any other content.
+export async function acceptReplanProposal(planDate: string, proposal: Pick<PlanChangeProposal, 'id' | 'content_hash'>): Promise<PlanChangeProposal> {
+  return request<PlanChangeProposal>(proposalPath(planDate, `/${encodeURIComponent(proposal.id)}/accept`), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content_hash: proposal.content_hash })
+  });
+}
+
+export async function rejectReplanProposal(planDate: string, proposalId: number, note = ''): Promise<PlanChangeProposal> {
+  return request<PlanChangeProposal>(proposalPath(planDate, `/${encodeURIComponent(proposalId)}/reject`), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note })
   });
 }

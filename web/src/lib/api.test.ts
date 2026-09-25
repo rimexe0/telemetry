@@ -168,3 +168,23 @@ test('execution start and return send explicit interleave linkage and both resum
   expect(fetch.mock.calls[1][0]).toBe('/v1/execution/sessions/8/return-to-primary');
   expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ primary_resume_marker: 'Continue the outline', interleave_resume_marker: 'Resume at page four' });
 });
+
+test('replan acceptance sends only the reviewed content hash', async () => {
+  const { acceptReplanProposal } = await import('./api');
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 3, status: 'accepted' }), { status: 200 }));
+  vi.stubGlobal('fetch', fetch);
+
+  await acceptReplanProposal('2026-09-25', { id: 3, content_hash: 'abc' });
+
+  expect(fetch).toHaveBeenCalledWith(
+    '/v1/plans/2026-09-25/replan-proposals/3/accept',
+    expect.objectContaining({ method: 'POST', body: '{"content_hash":"abc"}', credentials: 'same-origin' })
+  );
+});
+
+test('stale replan acceptance surfaces the server conflict', async () => {
+  const { acceptReplanProposal } = await import('./api');
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { detail: 'plan changed after the proposal was prepared' } }), { status: 409 })));
+
+  await expect(acceptReplanProposal('2026-09-25', { id: 3, content_hash: 'abc' })).rejects.toEqual(new APIError(409, 'plan changed after the proposal was prepared'));
+});

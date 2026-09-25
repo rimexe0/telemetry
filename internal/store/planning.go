@@ -99,6 +99,7 @@ type ActivityFilter struct {
 type PlanBlock struct {
 	ID                    int64           `json:"id"`
 	ActivityID            *int64          `json:"activity_id,omitempty"`
+	SourceBlockID         *int64          `json:"source_block_id,omitempty"`
 	Title                 string          `json:"title"`
 	StartTime             time.Time       `json:"start_time"`
 	DurationMinutes       int             `json:"duration_minutes"`
@@ -382,17 +383,11 @@ func (p *Postgres) SavePlan(ctx context.Context, planDate time.Time, input PlanI
 	if len([]rune(input.Note)) > maxPlanningTextRunes {
 		return Plan{}, fmt.Errorf("note must be at most %d characters", maxPlanningTextRunes)
 	}
-	specs := make([]PlanBlockSpec, len(input.Blocks))
-	titles := make(map[int64]string, len(input.Blocks))
-	activityIDs := make([]int64, 0, len(input.Blocks))
-	for i, block := range input.Blocks {
-		spec := block
+	blocks := make([]ProposedBlock, len(input.Blocks))
+	for i, spec := range input.Blocks {
 		spec.Title = strings.TrimSpace(spec.Title)
 		if spec.ActivityID != nil && *spec.ActivityID <= 0 {
 			return Plan{}, errors.New("activity_id must reference an activity")
-		}
-		if spec.ActivityID != nil {
-			activityIDs = append(activityIDs, *spec.ActivityID)
 		}
 		if spec.Title == "" && spec.ActivityID == nil {
 			return Plan{}, fmt.Errorf("block %d needs a title or an activity", i+1)
@@ -406,38 +401,10 @@ func (p *Postgres) SavePlan(ctx context.Context, planDate time.Time, input PlanI
 		if spec.StartTime.IsZero() {
 			return Plan{}, fmt.Errorf("block %d start_time is required", i+1)
 		}
-		specs[i] = spec
+		blocks[i] = ProposedBlock{ActivityID: spec.ActivityID, Title: spec.Title, StartTime: spec.StartTime, DurationMinutes: spec.DurationMinutes, Fixed: spec.Fixed, State: "planned"}
 	}
-	if len(activityIDs) > 0 {
-		rows, err := p.pool.Query(ctx, `SELECT id, title FROM activities WHERE id = ANY($1)`, activityIDs)
-		if err != nil {
-			return Plan{}, err
-		}
-		for rows.Next() {
-			var id int64
-			var title string
-			if err := rows.Scan(&id, &title); err != nil {
-				rows.Close()
-				return Plan{}, err
-			}
-			titles[id] = title
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return Plan{}, err
-		}
-		for i, spec := range specs {
-			if spec.ActivityID == nil {
-				continue
-			}
-			title, ok := titles[*spec.ActivityID]
-			if !ok {
-				return Plan{}, fmt.Errorf("block %d references unknown activity %d", i+1, *spec.ActivityID)
-			}
-			if spec.Title == "" {
-				specs[i].Title = title
-			}
-		}
+	if err := p.resolveActivityTitles(ctx, blocks); err != nil {
+		return Plan{}, err
 	}
 
 	tx, err := p.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -445,41 +412,97 @@ func (p *Postgres) SavePlan(ctx context.Context, planDate time.Time, input PlanI
 		return Plan{}, err
 	}
 	defer tx.Rollback(ctx)
+	if err := lockPlanDate(ctx, tx, planDate); err != nil {
+		return Plan{}, err
+	}
+	plan, err := insertPlanVersion(ctx, tx, planDate, input.Note, blocks)
+	if err != nil {
+		return Plan{}, err
+	}
+	return plan, tx.Commit(ctx)
+}
+
+// resolveActivityTitles rejects unknown activities and fills empty block
+// titles from the linked activity.
+func (p *Postgres) resolveActivityTitles(ctx context.Context, blocks []ProposedBlock) error {
+	activityIDs := make([]int64, 0, len(blocks))
+	for _, block := range blocks {
+		if block.ActivityID != nil {
+			activityIDs = append(activityIDs, *block.ActivityID)
+		}
+	}
+	if len(activityIDs) == 0 {
+		return nil
+	}
+	titles := make(map[int64]string, len(activityIDs))
+	rows, err := p.pool.Query(ctx, `SELECT id, title FROM activities WHERE id = ANY($1)`, activityIDs)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var id int64
+		var title string
+		if err := rows.Scan(&id, &title); err != nil {
+			rows.Close()
+			return err
+		}
+		titles[id] = title
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for i, block := range blocks {
+		if block.ActivityID == nil {
+			continue
+		}
+		title, ok := titles[*block.ActivityID]
+		if !ok {
+			return fmt.Errorf("block %d references unknown activity %d", i+1, *block.ActivityID)
+		}
+		if block.Title == "" {
+			blocks[i].Title = title
+		}
+	}
+	return nil
+}
+
+// lockPlanDate serializes version appends for one date so a stale check and
+// the following insert cannot interleave with another save.
+func lockPlanDate(ctx context.Context, tx pgx.Tx, planDate time.Time) error {
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('telemetry.plan_date'), hashtext($1::text))`, planDate.Format("2006-01-02"))
+	return err
+}
+
+func insertPlanVersion(ctx context.Context, tx pgx.Tx, planDate time.Time, note string, specs []ProposedBlock) (Plan, error) {
 	var versionID int64
 	var createdAt time.Time
-	err = tx.QueryRow(ctx, `
+	err := tx.QueryRow(ctx, `
 		INSERT INTO plan_versions (plan_date, note) VALUES ($1, $2) RETURNING id, created_at`,
-		planDate, input.Note).Scan(&versionID, &createdAt)
+		planDate, note).Scan(&versionID, &createdAt)
 	if err != nil {
 		return Plan{}, err
 	}
 	blocks := make([]PlanBlock, 0, len(specs))
 	for i, spec := range specs {
-		var block PlanBlock
-		block.ActivityID = spec.ActivityID
-		block.Title = spec.Title
-		block.StartTime = spec.StartTime
-		block.DurationMinutes = spec.DurationMinutes
-		block.Fixed = spec.Fixed
-		block.State = "planned"
-		block.Position = i
+		block := PlanBlock{
+			ActivityID: spec.ActivityID, SourceBlockID: spec.SourceBlockID, Title: spec.Title, StartTime: spec.StartTime,
+			DurationMinutes: spec.DurationMinutes, Fixed: spec.Fixed, State: spec.State, Position: i,
+		}
 		err := tx.QueryRow(ctx, `
-			INSERT INTO plan_blocks (plan_version_id, activity_id, title, start_time, duration_minutes, fixed, state, state_note, position)
-			VALUES ($1, $2, $3, $4, $5, $6, 'planned', '', $7) RETURNING id`,
-			versionID, block.ActivityID, block.Title, block.StartTime, block.DurationMinutes, block.Fixed, block.Position).Scan(&block.ID)
+			INSERT INTO plan_blocks (plan_version_id, activity_id, source_block_id, title, start_time, duration_minutes, fixed, state, state_note, position)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '', $9) RETURNING id`,
+			versionID, block.ActivityID, block.SourceBlockID, block.Title, block.StartTime, block.DurationMinutes, block.Fixed, block.State, block.Position).Scan(&block.ID)
 		if err != nil {
 			return Plan{}, err
 		}
 		blocks = append(blocks, block)
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return Plan{}, err
-	}
 	return Plan{
 		PlanDate:  planDate.Format("2006-01-02"),
 		VersionID: versionID,
 		CreatedAt: createdAt,
-		Note:      input.Note,
+		Note:      note,
 		Blocks:    blocks,
 	}, nil
 }
@@ -564,7 +587,7 @@ func (p *Postgres) SetPlanBlockState(ctx context.Context, planDate time.Time, bl
 
 func (p *Postgres) planBlocks(ctx context.Context, tx pgx.Tx, versionID int64) ([]PlanBlock, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT pb.id, pb.activity_id, pb.title, pb.start_time, pb.duration_minutes, pb.fixed,
+		SELECT pb.id, pb.activity_id, pb.source_block_id, pb.title, pb.start_time, pb.duration_minutes, pb.fixed,
 			pb.state, pb.state_note, pb.position,
 			COALESCE(event.explanation_code, ''),
 			COALESCE(event.note, pb.state_note),
@@ -587,7 +610,7 @@ func (p *Postgres) planBlocks(ctx context.Context, tx pgx.Tx, versionID int64) (
 	for rows.Next() {
 		var block PlanBlock
 		var provenance []byte
-		if err := rows.Scan(&block.ID, &block.ActivityID, &block.Title, &block.StartTime,
+		if err := rows.Scan(&block.ID, &block.ActivityID, &block.SourceBlockID, &block.Title, &block.StartTime,
 			&block.DurationMinutes, &block.Fixed, &block.State, &block.StateNote, &block.Position,
 			&block.ExplanationCode, &block.ExplanationNote, &provenance, &block.LastChangedAt); err != nil {
 			return nil, err

@@ -87,6 +87,12 @@ describe('NOW view derivation', () => {
     }
   });
 
+  it('follows a replanned block back to the session through source_block_id', () => {
+    const replanned = plan([block({ id: 21, source_block_id: 11, start_time: '2026-09-25T11:00:00+03:00' })]);
+    const view = deriveNowView(snapshot({ plan: replanned, primary: session() }), now);
+    expect(view.kind === 'active' && view.task.block?.id).toBe(21);
+  });
+
   it('keeps live execution visible even without a plan', () => {
     expect(deriveNowView(snapshot({ plan: null, primary: session() }), now).kind).toBe('active');
   });

@@ -7,6 +7,7 @@
   import CollectionStatus from '$lib/CollectionStatus.svelte';
   import PlanView from '$lib/PlanView.svelte';
   import ExecutionNow from '$lib/ExecutionNow.svelte';
+  import ReplanReview from '$lib/ReplanReview.svelte';
   import { performNowAction, type NowAction, type NowSnapshot, type NowView } from '$lib/execution';
   import { dayKey, dayStart } from '$lib/health';
   import { clearClerk, loadClerk, type ClerkClient } from '$lib/clerk';
@@ -850,6 +851,7 @@
         {currentAlignment} currentAlignmentError={currentAlignmentError}
         onrefresh={refreshPlan} onsave={handleSavePlan} onsetstate={handleBlockState}
         oncreateactivity={handleCreateActivity} onupdateactivity={handleUpdateActivity} onupdatesettings={handleUpdatePlanningSettings} />
+      <ReplanReview day={selectedDay} {plan} onchanged={refreshPlan} />
     {:else if view === 'devices'}
       <section class="devices" aria-labelledby="devices-heading">
         <div class="section-title"><h2 id="devices-heading">Devices</h2><button class="quiet-button" on:click={refreshDevices} disabled={devicesLoading}>{devicesLoading ? 'Refreshing…' : 'Refresh'}</button></div>

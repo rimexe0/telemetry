@@ -55,6 +55,7 @@ function fixtureExecution() {
     { id: 1, activity_id: 1, title: 'Fixture task', start_time: `${day}T${String(hour).padStart(2, '0')}:00:00+03:00`, duration_minutes: 60, fixed: false, state: 'planned', state_note: '', position: 0 }
   ];
   let session: Record<string, any> | null = null;
+  const proposals: Record<string, any>[] = [];
   let eventId = 0;
   const terminal = new Set(['completed', 'abandoned']);
   const nextState: Record<string, string> = {
@@ -65,6 +66,24 @@ function fixtureExecution() {
     handle(method: string, path: string, body: any): [number, unknown] | undefined {
       if (path === '/planning/settings') return [200, { daily_plan_gate_enabled: true, enforcement_active: false }];
       if (path.startsWith('/activities')) return [200, { activities }];
+      if (path === `/plans/${day}/replan-proposals` && method === 'GET') return [200, { proposals: [...proposals].reverse() }];
+      if (path === `/plans/${day}/replan-proposals` && method === 'POST') {
+        // Canned diff for display only; the real diff is computed by the Go core.
+        const block = blocks[0];
+        const moved = new Date(Date.parse(body.disruption.end ?? body.disruption.start)).toISOString();
+        proposals.push({ id: proposals.length + 1, plan_date: day, base_plan_version_id: 1, origin: 'disruption_helper', reason: body.reason, content_hash: `fixture-${proposals.length + 1}`, status: 'pending', created_at: created,
+          proposed_plan: { note: body.reason, blocks: [] }, warnings: session && !session.ended_at && !session.resume_marker ? [{ code: 'missing_resume_marker', detail: `"${block.title}" is moved but its open execution session has no resume marker; add one before accepting to keep return context` }] : [],
+          changes: [{ kind: 'moved', base_block_id: block.id, title: block.title, fixed: false, old_start: block.start_time, old_duration_minutes: 60, new_start: moved, new_duration_minutes: 60 }] });
+        return [201, proposals[proposals.length - 1]];
+      }
+      const decision = path.match(/^\/plans\/[^/]+\/replan-proposals\/(\d+)\/(accept|reject)$/);
+      if (decision && method === 'POST') {
+        const proposal = proposals.find(row => row.id === Number(decision[1]));
+        if (!proposal) return [404, { error: { detail: 'not found' } }];
+        if (decision[2] === 'accept' && body.content_hash !== proposal.content_hash) return [409, { error: { detail: 'content_hash does not match this proposal' } }];
+        proposal.status = decision[2] === 'accept' ? 'accepted' : 'rejected';
+        return [200, proposal];
+      }
       if (path === `/plans/${day}` && method === 'GET') return [200, { plan: { plan_date: day, version_id: 1, created_at: created, note: 'fixture', blocks } }];
       if (path.startsWith('/plans/') && path.endsWith('/versions')) return [200, { versions: [] }];
       if (path.startsWith('/plans/') && method === 'GET') return [200, { plan: null }];

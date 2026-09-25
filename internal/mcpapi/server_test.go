@@ -202,3 +202,23 @@ func (fakeRepository) ListExecutionInterleaves(context.Context, int64, int) ([]s
 	return []store.ExecutionSession{}, nil
 }
 func (fakeRepository) Ping(context.Context) error { return nil }
+
+func (fakeRepository) CreatePlanChangeProposal(context.Context, time.Time, store.PlanChangeRequest) (store.PlanChangeProposal, error) {
+	return store.PlanChangeProposal{}, nil
+}
+
+func (fakeRepository) GetPlanChangeProposal(context.Context, time.Time, int64) (store.PlanChangeProposal, error) {
+	return store.PlanChangeProposal{}, store.ErrNotFound
+}
+
+func (fakeRepository) ListPlanChangeProposals(context.Context, time.Time, int) ([]store.PlanChangeProposal, error) {
+	return nil, nil
+}
+
+func (fakeRepository) AcceptPlanChangeProposal(context.Context, time.Time, int64, store.ProposalDecision, json.RawMessage) (store.PlanChangeProposal, error) {
+	return store.PlanChangeProposal{}, nil
+}
+
+func (fakeRepository) RejectPlanChangeProposal(context.Context, time.Time, int64, store.ProposalDecision, json.RawMessage) (store.PlanChangeProposal, error) {
+	return store.PlanChangeProposal{}, nil
+}

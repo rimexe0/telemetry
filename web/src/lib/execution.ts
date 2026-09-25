@@ -40,7 +40,11 @@ const latestEventOfType = (session: ExecutionSession, types: string[]) =>
 
 export function taskFor(session: ExecutionSession, snapshot: Pick<NowSnapshot, 'activities' | 'plan'>): NowTask {
   const activity = snapshot.activities.find(row => row.id === session.activity_id);
-  const block = session.plan_block_id ? snapshot.plan?.blocks.find(row => row.id === session.plan_block_id) : undefined;
+  // After an accepted replan the session still names the older block; the
+  // current version links back to it through source_block_id.
+  const block = session.plan_block_id
+    ? snapshot.plan?.blocks.find(row => row.id === session.plan_block_id) ?? snapshot.plan?.blocks.find(row => row.source_block_id === session.plan_block_id)
+    : undefined;
   return {
     // A missing activity is shown by id rather than guessed from the plan.
     title: activity?.title ?? block?.title ?? `Activity #${session.activity_id}`,
