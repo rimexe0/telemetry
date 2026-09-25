@@ -172,7 +172,7 @@ export async function performNowAction(api: ExecutionAPI, view: NowView, day: st
       }
       return;
     case 'done': {
-      const block = view.kind === 'active' ? view.task.block : undefined;
+      const block = 'task' in view ? view.task.block : undefined;
       await event('completed');
       if (block && openBlockStates.includes(block.state)) await api.setPlanBlockState(day, block.id, 'done');
       return;

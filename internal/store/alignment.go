@@ -297,7 +297,8 @@ func alignmentCoverageForFreshness(freshness string) string {
 
 func primaryMatchesBlock(session ExecutionSession, block PlanBlock) bool {
 	if session.PlanBlockID != nil {
-		return *session.PlanBlockID == block.ID
+		// An accepted replan continues the block under a new id (issue #3).
+		return *session.PlanBlockID == block.ID || (block.SourceBlockID != nil && *block.SourceBlockID == *session.PlanBlockID)
 	}
 	return block.ActivityID != nil && session.ActivityID == *block.ActivityID
 }

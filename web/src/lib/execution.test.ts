@@ -199,7 +199,14 @@ describe('NOW actions', () => {
     ]);
   });
 
-  it('records overwhelm before starting offline recovery', async () => {
+  it('marks the plan block done when finishing paused work', async () => {
+    const { client, calls } = api();
+    const primary = session({ state: 'interrupted', events: [event('started'), event('switched_out')] });
+    await performNowAction(client, deriveNowView(snapshot({ primary }), now), '2026-09-25', { type: 'done' });
+    expect(calls).toEqual([['event', 3, { event_type: 'completed' }], ['block', '2026-09-25', 11, 'done']]);
+  });
+
+    it('records overwhelm before starting offline recovery', async () => {
     const { client, calls } = api();
     await performNowAction(client, active(), '2026-09-25', { type: 'recovery_start', overwhelmed: true });
     expect(calls.map(call => (call[2] as { event_type: string }).event_type)).toEqual(['overwhelmed', 'offline_recovery_started']);

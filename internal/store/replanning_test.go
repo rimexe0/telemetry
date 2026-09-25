@@ -197,3 +197,14 @@ func TestResumeWarningsReportMissingMarkersOnly(t *testing.T) {
 		t.Fatalf("activity marker should satisfy: %+v", got)
 	}
 }
+
+func TestReplannedBlockStillMatchesItsExecutionSession(t *testing.T) {
+	original := int64(11)
+	session := ExecutionSession{ActivityID: 1, PlanBlockID: &original}
+	if !primaryMatchesBlock(session, PlanBlock{ID: 21, SourceBlockID: &original}) {
+		t.Fatal("continued block does not match the session")
+	}
+	if primaryMatchesBlock(session, PlanBlock{ID: 22}) {
+		t.Fatal("unrelated block matched")
+	}
+}
