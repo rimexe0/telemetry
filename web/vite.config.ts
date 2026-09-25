@@ -56,6 +56,7 @@ function fixtureExecution() {
   ];
   let session: Record<string, any> | null = null;
   const proposals: Record<string, any>[] = [];
+  const rules: Record<string, any>[] = [];
   let eventId = 0;
   const terminal = new Set(['completed', 'abandoned']);
   const nextState: Record<string, string> = {
@@ -64,6 +65,19 @@ function fixtureExecution() {
   };
   return {
     handle(method: string, path: string, body: any): [number, unknown] | undefined {
+      if (path === '/context-rules' && method === 'GET') return [200, { rules: rules.filter(rule => !rule.disabled_at) }];
+      if (path === '/context-rules' && method === 'POST') {
+        if (!['path_prefix', 'domain', 'url_prefix', 'workspace_id'].includes(body.signal)) return [400, { error: { detail: 'invalid signal' } }];
+        rules.push({ id: rules.length + 1, activity_id: body.activity_id, signal: body.signal, pattern: body.pattern, created_at: new Date().toISOString() });
+        return [201, rules[rules.length - 1]];
+      }
+      const disable = path.match(/^\/context-rules\/(\d+)\/disable$/);
+      if (disable && method === 'POST') {
+        const rule = rules.find(row => row.id === Number(disable[1]));
+        if (!rule) return [404, { error: { detail: 'not found' } }];
+        rule.disabled_at ??= new Date().toISOString();
+        return [200, rule];
+      }
       if (path === '/planning/settings') return [200, { daily_plan_gate_enabled: true, enforcement_active: false }];
       if (path.startsWith('/activities')) return [200, { activities }];
       if (path === `/plans/${day}/replan-proposals` && method === 'GET') return [200, { proposals: [...proposals].reverse() }];
@@ -147,7 +161,7 @@ function fixtureAPI(): Plugin {
           return;
         }
         const path = (request.url ?? '/').split('?')[0];
-        if (path.startsWith('/execution') || path.startsWith('/plans') || path.startsWith('/activities') || path === '/planning/settings') {
+        if (path.startsWith('/execution') || path.startsWith('/plans') || path.startsWith('/activities') || path.startsWith('/context-rules') || path === '/planning/settings') {
           let raw = '';
           request.on('data', chunk => raw += chunk);
           request.on('end', () => {

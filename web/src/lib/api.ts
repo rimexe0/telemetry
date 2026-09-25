@@ -328,9 +328,50 @@ export type AlignmentEvidence = {
   ended_at?: string;
   collected_at: string;
   summary: string;
-  relationship: 'matched' | 'unmatched' | 'ambiguous' | 'context_only';
+  relationship: 'matched' | 'unmatched' | 'ambiguous' | 'context_only' | 'interleave';
   origin: 'observed_device_activity' | 'observed_agent_activity';
+  basis?: 'context_rule' | 'agent_context' | 'terms';
+  context?: ActivityContext;
+  context_matches?: ContextMatch[];
 };
+
+export type ActivityContext = {
+  app?: string;
+  title?: string;
+  url?: string;
+  domain?: string;
+  paths?: string[];
+  branch?: string;
+  workspace_ids?: string[];
+  agent_session?: string;
+};
+
+export type ContextSignal = 'path_prefix' | 'domain' | 'url_prefix' | 'workspace_id';
+
+export type ContextMatch = { rule_id: number; activity_id: number; signal: ContextSignal; pattern: string; value: string };
+
+export type ActivityContextRule = {
+  id: number;
+  activity_id: number;
+  signal: ContextSignal;
+  pattern: string;
+  note?: string;
+  created_at: string;
+  disabled_at?: string;
+};
+
+export async function listContextRules(): Promise<ActivityContextRule[]> {
+  const result = await request<{ rules: ActivityContextRule[] | null }>('/v1/context-rules');
+  return result.rules ?? [];
+}
+
+export async function createContextRule(input: Pick<ActivityContextRule, 'activity_id' | 'signal' | 'pattern' | 'note'>): Promise<ActivityContextRule> {
+  return request<ActivityContextRule>('/v1/context-rules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+}
+
+export async function disableContextRule(id: number): Promise<ActivityContextRule> {
+  return request<ActivityContextRule>(`/v1/context-rules/${encodeURIComponent(id)}/disable`, { method: 'POST' });
+}
 
 export type AlignmentView = {
   evaluated_at: string;

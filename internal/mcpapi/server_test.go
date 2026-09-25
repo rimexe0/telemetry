@@ -222,3 +222,15 @@ func (fakeRepository) AcceptPlanChangeProposal(context.Context, time.Time, int64
 func (fakeRepository) RejectPlanChangeProposal(context.Context, time.Time, int64, store.ProposalDecision, json.RawMessage) (store.PlanChangeProposal, error) {
 	return store.PlanChangeProposal{}, nil
 }
+
+func (fakeRepository) CreateActivityContextRule(context.Context, store.ActivityContextRule) (store.ActivityContextRule, error) {
+	return store.ActivityContextRule{}, nil
+}
+
+func (fakeRepository) ListActivityContextRules(context.Context, bool) ([]store.ActivityContextRule, error) {
+	return nil, nil
+}
+
+func (fakeRepository) DisableActivityContextRule(context.Context, int64) (store.ActivityContextRule, error) {
+	return store.ActivityContextRule{}, store.ErrNotFound
+}

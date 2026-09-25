@@ -40,6 +40,12 @@ type AlignmentEvidence struct {
 	Summary           string     `json:"summary"`
 	Relationship      string     `json:"relationship"`
 	Origin            string     `json:"origin"`
+	// Basis says how the relationship was decided: context_rule (an explicit
+	// owner mapping), agent_context (an overlapping agent context corroborated
+	// a multi-purpose foreground app) or terms (text similarity).
+	Basis          string           `json:"basis,omitempty"`
+	Context        *ActivityContext `json:"context,omitempty"`
+	ContextMatches []ContextMatch   `json:"context_matches,omitempty"`
 }
 
 type AlignmentView struct {
@@ -80,6 +86,7 @@ type AlignmentContext struct {
 	Interleaves     []ExecutionSession
 	Sources         []SourceSummary
 	Observations    []ObservationView
+	ContextRules    []ActivityContextRule
 }
 
 func EvaluateAlignment(input AlignmentContext) AlignmentView {
@@ -139,7 +146,11 @@ func EvaluateAlignment(input AlignmentContext) AlignmentView {
 	result.SourceFreshness = freshness.state
 	result.Coverage = alignmentCoverageForFreshness(freshness.state)
 	result.FreshnessNote = freshness.note
-	result.Evidence = alignmentEvidence(*input.Block, input.Activity, input.Activities, input.Observations)
+	interleaveActivityID := int64(0)
+	if attendedSession != nil && attendedSession.Role == ExecutionRoleWaitingInterleave {
+		interleaveActivityID = attendedSession.ActivityID
+	}
+	result.Evidence = alignmentEvidence(*input.Block, input.Activity, input.Activities, input.Observations, input.ContextRules, interleaveActivityID)
 
 	if primarySession != nil {
 		if primarySession.State == "unknown" {
@@ -218,6 +229,12 @@ func EvaluateAlignment(input AlignmentContext) AlignmentView {
 		result.Reason = "Fresh device evidence matches another configured activity. This may be useful switching or possible drift."
 		return result
 	}
+	if hasEvidenceRelationship(result.Evidence, "interleave") {
+		result.AlignmentState = AlignmentAligned
+		result.ReasonCode = AlignmentReasonUsefulInterleave
+		result.Reason = "Fresh device evidence matches the waiting interleave the owner is attending."
+		return result
+	}
 	if hasEvidenceRelationship(result.Evidence, "ambiguous") || len(result.Evidence) > 0 {
 		result.ReasonCode = AlignmentReasonAmbiguousEvidence
 		result.Reason = "The available evidence is ambiguous or only describes agent activity; no drift claim is made."
@@ -285,7 +302,7 @@ func primaryMatchesBlock(session ExecutionSession, block PlanBlock) bool {
 	return block.ActivityID != nil && session.ActivityID == *block.ActivityID
 }
 
-func alignmentEvidence(block PlanBlock, activity *Activity, activities []Activity, observations []ObservationView) []AlignmentEvidence {
+func alignmentEvidence(block PlanBlock, activity *Activity, activities []Activity, observations []ObservationView, rules []ActivityContextRule, interleaveActivityID int64) []AlignmentEvidence {
 	terms := alignmentTerms(strings.Join([]string{block.Title, activityTitle(activity), activityNextAction(activity), activityResumeMarker(activity), activityNotes(activity)}, " "))
 	currentActivityID := int64(0)
 	if activity != nil {
@@ -293,34 +310,56 @@ func alignmentEvidence(block PlanBlock, activity *Activity, activities []Activit
 	} else if block.ActivityID != nil {
 		currentActivityID = *block.ActivityID
 	}
+	byID := make(map[int64]Activity, len(activities))
+	for _, item := range activities {
+		byID[item.ID] = item
+	}
 	result := make([]AlignmentEvidence, 0)
 	for _, observation := range observations {
 		if !alignmentOverlaps(block, observation) {
 			continue
 		}
 		text, summary, specific := alignmentPayloadText(observation)
-		relationship := "context_only"
-		origin := "observed_agent_activity"
-		var related *Activity
+		context := ExtractActivityContext(observation)
+		matches := MatchActivityContext(context, rules)
+		evidence := AlignmentEvidence{SourceInstanceKey: observation.SourceInstanceKey, SourceKind: observation.SourceKind, SourceRecordKey: observation.SourceRecordKey, Kind: observation.Kind, OccurredAt: observation.OccurredAt, EndedAt: observation.EndedAt, CollectedAt: observation.CollectedAt, Summary: summary, Relationship: "context_only", Origin: "observed_agent_activity"}
+		if !context.empty() {
+			evidence.Context = &context
+		}
+		if len(matches) > 0 {
+			evidence.ContextMatches = matches
+		}
 		if alignmentHumanActivity(observation) {
-			origin = "observed_device_activity"
-			if !specific {
-				relationship = "ambiguous"
-			} else if len(terms) > 0 && alignmentContainsTerm(text, terms) {
-				relationship = "matched"
-			} else {
-				if candidate, unique := alignmentRelatedActivity(text, activities, currentActivityID); unique {
-					related = &candidate
-					relationship = "unmatched"
+			evidence.Origin = "observed_device_activity"
+			switch {
+			case len(matches) > 0:
+				evidence.Basis = "context_rule"
+				classifyContextEvidence(&evidence, matchedActivities(matches), currentActivityID, interleaveActivityID, byID)
+			case agentContextApp(context.App):
+				// A multi-purpose agent app in the foreground says nothing by
+				// itself; only overlapping agent context that agrees on one
+				// activity can relate it to a project.
+				if agentMatches, ok := corroboratingAgentContext(observation, observations, rules); ok {
+					evidence.Basis = "agent_context"
+					evidence.ContextMatches = agentMatches
+					classifyContextEvidence(&evidence, matchedActivities(agentMatches), currentActivityID, interleaveActivityID, byID)
 				} else {
-					relationship = "ambiguous"
+					evidence.Relationship = "ambiguous"
+				}
+			case !specific:
+				evidence.Relationship = "ambiguous"
+			default:
+				evidence.Basis = "terms"
+				if len(terms) > 0 && alignmentContainsTerm(text, terms) {
+					evidence.Relationship = "matched"
+				} else if candidate, unique := alignmentRelatedActivity(text, activities, currentActivityID); unique {
+					evidence.Relationship = "unmatched"
+					evidence.RelatedActivityID = int64Pointer(candidate.ID)
+					evidence.RelatedActivity = candidate.Title
+				} else {
+					evidence.Relationship = "ambiguous"
 				}
 			}
-		}
-		evidence := AlignmentEvidence{SourceInstanceKey: observation.SourceInstanceKey, SourceKind: observation.SourceKind, SourceRecordKey: observation.SourceRecordKey, Kind: observation.Kind, OccurredAt: observation.OccurredAt, EndedAt: observation.EndedAt, CollectedAt: observation.CollectedAt, Summary: summary, Relationship: relationship, Origin: origin}
-		if related != nil {
-			evidence.RelatedActivityID = int64Pointer(related.ID)
-			evidence.RelatedActivity = related.Title
 		}
 		result = append(result, evidence)
 		if len(result) == 24 {
@@ -328,6 +367,68 @@ func alignmentEvidence(block PlanBlock, activity *Activity, activities []Activit
 		}
 	}
 	return result
+}
+
+// classifyContextEvidence never picks a winner among conflicting matches.
+func classifyContextEvidence(evidence *AlignmentEvidence, activityIDs []int64, currentActivityID, interleaveActivityID int64, activities map[int64]Activity) {
+	if len(activityIDs) != 1 {
+		evidence.Relationship = "ambiguous"
+		return
+	}
+	id := activityIDs[0]
+	switch {
+	case id == currentActivityID:
+		evidence.Relationship = "matched"
+	case interleaveActivityID != 0 && id == interleaveActivityID:
+		evidence.Relationship = "interleave"
+	default:
+		evidence.Relationship = "unmatched"
+	}
+	if id != currentActivityID {
+		evidence.RelatedActivityID = int64Pointer(id)
+		evidence.RelatedActivity = activities[id].Title
+	}
+}
+
+// agentContextSources pairs foreground apps with the agent watcher whose
+// retained events carry that app's project context.
+var agentContextSources = map[string]string{"codex": "aw-watcher-codex"}
+
+func agentContextApp(app string) bool {
+	_, ok := agentContextSources[strings.ToLower(strings.TrimSpace(app))]
+	return ok
+}
+
+func corroboratingAgentContext(human ObservationView, observations []ObservationView, rules []ActivityContextRule) ([]ContextMatch, bool) {
+	watcher := agentContextSources[strings.ToLower(strings.TrimSpace(ExtractActivityContext(human).App))]
+	humanEnd := human.OccurredAt
+	if human.EndedAt != nil {
+		humanEnd = *human.EndedAt
+	}
+	var all []ContextMatch
+	for _, observation := range observations {
+		if !strings.Contains(observation.SourceInstanceKey, watcher) {
+			continue
+		}
+		end := observation.OccurredAt
+		if observation.EndedAt != nil {
+			end = *observation.EndedAt
+		}
+		if observation.OccurredAt.After(humanEnd) || end.Before(human.OccurredAt) {
+			continue
+		}
+		context := ExtractActivityContext(observation)
+		if context.empty() {
+			continue
+		}
+		matches := MatchActivityContext(context, rules)
+		if len(matches) == 0 {
+			// Agent work in an unmapped context makes the foreground ambiguous.
+			return nil, false
+		}
+		all = append(all, matches...)
+	}
+	return all, len(all) > 0 && len(matchedActivities(all)) == 1
 }
 
 func alignmentRelatedActivity(text string, activities []Activity, currentID int64) (Activity, bool) {

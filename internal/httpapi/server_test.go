@@ -298,6 +298,8 @@ type fakeRepository struct {
 	proposalRequest    store.PlanChangeRequest
 	proposalProvenance json.RawMessage
 	proposalSaves      int
+
+	contextRules []store.ActivityContextRule
 }
 
 func (f *fakeRepository) Ingest(_ context.Context, batch model.Batch) (store.Receipt, error) {
@@ -534,6 +536,37 @@ func (f *fakeRepository) RejectPlanChangeProposal(_ context.Context, _ time.Time
 	proposal.Status = store.ProposalRejected
 	f.proposalProvenance = provenance
 	return *proposal, nil
+}
+
+func (f *fakeRepository) CreateActivityContextRule(_ context.Context, rule store.ActivityContextRule) (store.ActivityContextRule, error) {
+	if rule.ActivityID == 404 {
+		return store.ActivityContextRule{}, store.ErrNotFound
+	}
+	if rule.Signal == "app_name" {
+		return store.ActivityContextRule{}, store.ErrInvalidContextRule
+	}
+	rule.ID = int64(len(f.contextRules) + 1)
+	f.contextRules = append(f.contextRules, rule)
+	return rule, nil
+}
+
+func (f *fakeRepository) ListActivityContextRules(_ context.Context, includeDisabled bool) ([]store.ActivityContextRule, error) {
+	rules := []store.ActivityContextRule{}
+	for _, rule := range f.contextRules {
+		if includeDisabled || rule.DisabledAt == nil {
+			rules = append(rules, rule)
+		}
+	}
+	return rules, nil
+}
+
+func (f *fakeRepository) DisableActivityContextRule(_ context.Context, id int64) (store.ActivityContextRule, error) {
+	if id < 1 || id > int64(len(f.contextRules)) {
+		return store.ActivityContextRule{}, store.ErrNotFound
+	}
+	now := time.Now()
+	f.contextRules[id-1].DisabledAt = &now
+	return f.contextRules[id-1], nil
 }
 
 func (f *fakeRepository) Ping(context.Context) error { return nil }

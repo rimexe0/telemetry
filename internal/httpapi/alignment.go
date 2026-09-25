@@ -124,6 +124,10 @@ func (s *Server) loadAlignmentAt(ctx context.Context, at time.Time) (store.Align
 		return store.AlignmentView{}, err
 	}
 	activitiesLimited := len(activities) == 200
+	contextRules, err := s.repository.ListActivityContextRules(ctx, false)
+	if err != nil {
+		return store.AlignmentView{}, err
+	}
 	sources, err := s.repository.ListSources(ctx, 1000)
 	if err != nil {
 		return store.AlignmentView{}, err
@@ -150,6 +154,7 @@ func (s *Server) loadAlignmentAt(ctx context.Context, at time.Time) (store.Align
 		Interleaves:     interleaves,
 		Sources:         sources,
 		Observations:    observations,
+		ContextRules:    contextRules,
 	})
 	return alignmentCoverageResult(view, coverageLimited || activitiesLimited), nil
 }
@@ -160,6 +165,10 @@ func (s *Server) loadAlignmentHistory(ctx context.Context, from, to time.Time, l
 		return nil, err
 	}
 	activitiesLimited := len(activities) == 200
+	contextRules, err := s.repository.ListActivityContextRules(ctx, false)
+	if err != nil {
+		return nil, err
+	}
 	sources, err := s.repository.ListSources(ctx, 1000)
 	if err != nil {
 		return nil, err
@@ -216,6 +225,7 @@ func (s *Server) loadAlignmentHistory(ctx context.Context, from, to time.Time, l
 				Interleaves:     interleaves,
 				Sources:         sources,
 				Observations:    observations,
+				ContextRules:    contextRules,
 			})
 			views = append(views, alignmentCoverageResult(view, coverageLimited || sessionsLimited || activitiesLimited))
 			if len(views) == limit {
