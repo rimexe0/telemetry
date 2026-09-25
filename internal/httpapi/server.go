@@ -133,6 +133,9 @@ func (s *Server) ingest(writer http.ResponseWriter, request *http.Request) {
 		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
 		return
 	}
+	if batchHasAgentLifecycle(batch) {
+		s.reconcileAgentLifecycle(request.Context())
+	}
 	writeJSON(writer, http.StatusAccepted, receipt)
 }
 

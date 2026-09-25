@@ -123,7 +123,14 @@ describe('NOW view derivation', () => {
     expect(view.kind === 'waiting' && view.ready).toBe(true);
   });
 
-  it('puts the resume marker first for interrupted work', () => {
+  it('distinguishes a failed agent run from a completed one', () => {
+    const failed = session({ state: 'waiting_external', events: [event('started'), event('waiting_external'), event('external_ready', { occurred_at: '2026-09-25T07:10:00Z', metadata: { agent_outcome: 'failed' }, provenance: { recorded_by: 'system' } })] });
+    expect(deriveNowView(snapshot({ primary: failed }), now)).toMatchObject({ kind: 'waiting', ready: true, agentOutcome: 'failed', readyAt: '2026-09-25T07:10:00Z' });
+    const manual = session({ state: 'waiting_external', events: [event('started'), event('waiting_external'), event('external_ready')] });
+    expect(deriveNowView(snapshot({ primary: manual }), now)).toMatchObject({ kind: 'waiting', ready: true, agentOutcome: undefined });
+  });
+
+    it('puts the resume marker first for interrupted work', () => {
     const primary = session({ state: 'interrupted', resume_marker: 'Halfway through section 2', events: [event('started'), event('switched_out')] });
     const view = deriveNowView(snapshot({ primary }), now);
     expect(view.kind).toBe('interrupted');

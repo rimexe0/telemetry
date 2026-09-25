@@ -24,7 +24,7 @@ export type NowView =
   | { kind: 'ready'; block: PlanBlock; activityId: number; task: NowTask; upcoming: boolean }
   | { kind: 'choose'; startable: PlanBlock[]; unlinked: PlanBlock[] }
   | { kind: 'active'; primary: ExecutionSession; task: NowTask }
-  | { kind: 'waiting'; primary: ExecutionSession; task: NowTask; waitingNote: string; ready: boolean; interleave?: ExecutionSession; interleaveTask?: NowTask }
+  | { kind: 'waiting'; primary: ExecutionSession; task: NowTask; waitingNote: string; ready: boolean; readyAt?: string; agentOutcome?: 'completed' | 'failed'; interleave?: ExecutionSession; interleaveTask?: NowTask }
   | { kind: 'interrupted'; primary: ExecutionSession; task: NowTask }
   | { kind: 'recovery'; primary: ExecutionSession; task: NowTask; startedAt: string };
 
@@ -88,6 +88,11 @@ export function deriveNowView(snapshot: NowSnapshot, now: Date): NowView {
         task,
         waitingNote: waiting?.note ?? '',
         ready: last?.event_type === 'external_ready',
+        readyAt: last?.event_type === 'external_ready' ? last.occurred_at : undefined,
+        // Set when agent lifecycle evidence (#14) recorded the readiness.
+        agentOutcome: last?.event_type === 'external_ready' && (last.metadata?.agent_outcome === 'completed' || last.metadata?.agent_outcome === 'failed')
+          ? last.metadata.agent_outcome
+          : undefined,
         interleave,
         interleaveTask: interleave ? taskFor(interleave, snapshot) : undefined
       };

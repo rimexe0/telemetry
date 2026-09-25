@@ -234,3 +234,7 @@ func (fakeRepository) ListActivityContextRules(context.Context, bool) ([]store.A
 func (fakeRepository) DisableActivityContextRule(context.Context, int64) (store.ActivityContextRule, error) {
 	return store.ActivityContextRule{}, store.ErrNotFound
 }
+
+func (fakeRepository) RecordAgentReady(context.Context, int64, store.AgentReadyCandidate) (store.ExecutionSession, error) {
+	return store.ExecutionSession{}, nil
+}

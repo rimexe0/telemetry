@@ -300,6 +300,21 @@ func (p *Postgres) StartExecutionSession(ctx context.Context, input ExecutionSes
 }
 
 func (p *Postgres) TransitionExecutionSession(ctx context.Context, sessionID int64, input ExecutionEventInput) (ExecutionSession, error) {
+	return p.transitionExecutionSession(ctx, sessionID, input, defaultExecutionProvenance)
+}
+
+var agentLifecycleProvenance = json.RawMessage(`{"recorded_by":"system","source":"agent_lifecycle"}`)
+
+// RecordAgentReady records external_ready for a waiting primary from agent
+// lifecycle evidence. It uses the same rules as an owner-recorded readiness:
+// the primary must still be waiting, the event cannot predate its latest
+// event, and only one readiness is kept per waiting cycle.
+func (p *Postgres) RecordAgentReady(ctx context.Context, primarySessionID int64, candidate AgentReadyCandidate) (ExecutionSession, error) {
+	at := candidate.Lifecycle.At
+	return p.transitionExecutionSession(ctx, primarySessionID, ExecutionEventInput{EventType: executionEventExternalReady, OccurredAt: &at, Metadata: candidate.Metadata()}, agentLifecycleProvenance)
+}
+
+func (p *Postgres) transitionExecutionSession(ctx context.Context, sessionID int64, input ExecutionEventInput, provenance json.RawMessage) (ExecutionSession, error) {
 	if sessionID <= 0 {
 		return ExecutionSession{}, fmt.Errorf("%w: session id must be a positive integer", ErrInvalidExecutionInput)
 	}
@@ -452,7 +467,7 @@ func (p *Postgres) TransitionExecutionSession(ctx context.Context, sessionID int
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO execution_events (session_id, event_type, occurred_at, note, metadata, provenance)
-		VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)`, sessionID, eventType, occurredAt, note, string(metadata), string(defaultExecutionProvenance)); err != nil {
+		VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)`, sessionID, eventType, occurredAt, note, string(metadata), string(provenance)); err != nil {
 		return ExecutionSession{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

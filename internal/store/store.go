@@ -92,6 +92,7 @@ type Repository interface {
 	CreateActivityContextRule(context.Context, ActivityContextRule) (ActivityContextRule, error)
 	ListActivityContextRules(context.Context, bool) ([]ActivityContextRule, error)
 	DisableActivityContextRule(context.Context, int64) (ActivityContextRule, error)
+	RecordAgentReady(context.Context, int64, AgentReadyCandidate) (ExecutionSession, error)
 	StartExecutionSession(context.Context, ExecutionSessionInput) (ExecutionSession, error)
 	TransitionExecutionSession(context.Context, int64, ExecutionEventInput) (ExecutionSession, error)
 	ReturnToPrimary(context.Context, int64, ReturnToPrimaryInput) (ExecutionReturn, error)

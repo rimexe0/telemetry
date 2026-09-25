@@ -300,6 +300,7 @@ type fakeRepository struct {
 	proposalSaves      int
 
 	contextRules []store.ActivityContextRule
+	agentReady   []store.AgentReadyCandidate
 }
 
 func (f *fakeRepository) Ingest(_ context.Context, batch model.Batch) (store.Receipt, error) {
@@ -567,6 +568,22 @@ func (f *fakeRepository) DisableActivityContextRule(_ context.Context, id int64)
 	now := time.Now()
 	f.contextRules[id-1].DisabledAt = &now
 	return f.contextRules[id-1], nil
+}
+
+// RecordAgentReady mirrors the store's one-readiness-per-waiting-cycle rule.
+func (f *fakeRepository) RecordAgentReady(_ context.Context, sessionID int64, candidate store.AgentReadyCandidate) (store.ExecutionSession, error) {
+	primary := f.executionPrimary
+	if primary == nil || primary.ID != sessionID || primary.State != "waiting_external" {
+		return store.ExecutionSession{}, store.ErrInvalidExecutionTransition
+	}
+	for _, event := range primary.Events {
+		if event.EventType == "external_ready" {
+			return *primary, nil
+		}
+	}
+	f.agentReady = append(f.agentReady, candidate)
+	primary.Events = append(primary.Events, store.ExecutionEvent{ID: int64(len(primary.Events) + 1), EventType: "external_ready", OccurredAt: candidate.Lifecycle.At, Metadata: candidate.Metadata()})
+	return *primary, nil
 }
 
 func (f *fakeRepository) Ping(context.Context) error { return nil }

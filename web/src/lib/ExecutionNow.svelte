@@ -111,7 +111,13 @@
       {#if view.kind !== 'interrupted' && view.task.resumeMarker}<p class="resume"><strong>Resume marker:</strong> {view.task.resumeMarker}</p>{/if}
 
       {#if view.kind === 'waiting'}
-        <p class="waiting">{view.ready ? 'Ready: the external work has finished. Return to this task.' : `Waiting on ${view.waitingNote || 'an agent, build or download'}.`}</p>
+        {#if view.agentOutcome === 'failed'}
+          <p class="waiting prominent-ready">The agent run failed{view.readyAt ? ` at ${time(view.readyAt)}` : ''}. Return to this task to handle it.</p>
+        {:else if view.ready}
+          <p class="waiting prominent-ready">Ready{view.agentOutcome ? ': the agent finished' : ': the external work has finished'}{view.readyAt ? ` at ${time(view.readyAt)}` : ''}. Return to this task.</p>
+        {:else}
+          <p class="waiting">Waiting on {view.waitingNote || 'an agent, build or download'}.</p>
+        {/if}
         {#if view.interleave && view.interleaveTask}
           <p class="interleave">Doing meanwhile: {view.interleaveTask.title}</p>
         {/if}
@@ -179,6 +185,7 @@
   .state { border: 1px solid var(--line); font-size: .72rem; padding: 1px 6px; text-transform: uppercase; }
   .title { font-size: 1.2rem; font-weight: 600; margin: 4px 0; }
   .next, .resume, .waiting, .interleave { margin: 6px 0; }
+  .prominent-ready { border-left: 3px solid var(--fg); padding-left: 8px; }
   .resume.prominent { background: var(--soft); border-left: 3px solid var(--fg); font-size: 1.05rem; padding: 8px; }
   .muted { color: var(--muted); }
   .small { font-size: .8rem; }
