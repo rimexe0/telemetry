@@ -19,8 +19,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.net.HttpURLConnection
-import java.net.URL
 import java.time.Instant
 
 /**
@@ -29,9 +27,6 @@ import java.time.Instant
  */
 class MainActivity : ComponentActivity() {
     private companion object {
-        const val CACHE = "telemetry-now"
-        const val KEY_JSON = "json"
-        const val KEY_FETCHED_AT = "fetched_at"
         const val REFRESH_MS = 60_000L
         val BACKGROUND = Color.rgb(17, 18, 19)
         val FOREGROUND = Color.rgb(238, 238, 235)
@@ -130,14 +125,8 @@ class MainActivity : ComponentActivity() {
             }
             return
         }
-        val body = withContext(Dispatchers.IO) {
-            runCatching { fetch(config.serverUrl, DeviceIdentity.get(this@MainActivity), token) }.getOrNull()
-        }
+        val body = withContext(Dispatchers.IO) { NowCache.refresh(this@MainActivity) }
         if (body != null) {
-            getSharedPreferences(CACHE, MODE_PRIVATE).edit()
-                .putString(KEY_JSON, body)
-                .putString(KEY_FETCHED_AT, Instant.now().toString())
-                .apply()
             render(NowModel.parse(body, Instant.now(), Instant.now(), offline = false))
         } else if (!showCached()) {
             mode.text = "OFFLINE"
@@ -148,9 +137,7 @@ class MainActivity : ComponentActivity() {
 
     /** Shows the cached state, following its timeline while offline. */
     private fun showCached(): Boolean {
-        val preferences = getSharedPreferences(CACHE, MODE_PRIVATE)
-        val json = preferences.getString(KEY_JSON, null) ?: return false
-        val fetchedAt = preferences.getString(KEY_FETCHED_AT, null)?.let(Instant::parse) ?: return false
+        val (json, fetchedAt) = NowCache.read(this) ?: return false
         val now = Instant.now()
         if (!NowModel.timelineCovers(json, now)) {
             mode.text = "OFFLINE"
@@ -174,20 +161,5 @@ class MainActivity : ComponentActivity() {
         reason.text = view.reason
         val age = NowModel.ageText(view.asOf, Instant.now())
         footer.text = if (view.offline) "Offline: following the plan cached $age." else "Updated $age."
-    }
-
-    private fun fetch(server: String, deviceId: String, token: String): String {
-        val connection = URL(server.trimEnd('/') + "/v1/device/now").openConnection() as HttpURLConnection
-        try {
-            connection.connectTimeout = 10_000
-            connection.readTimeout = 10_000
-            connection.setRequestProperty("Authorization", "Bearer $token")
-            connection.setRequestProperty("X-Telemetry-Device-ID", deviceId)
-            connection.setRequestProperty("Accept", "application/json")
-            check(connection.responseCode == 200) { "now request failed with ${connection.responseCode}" }
-            return connection.inputStream.bufferedReader().use { it.readText() }
-        } finally {
-            connection.disconnect()
-        }
     }
 }

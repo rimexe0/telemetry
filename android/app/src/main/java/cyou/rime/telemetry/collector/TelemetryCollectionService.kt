@@ -13,6 +13,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -40,6 +41,7 @@ class TelemetryCollectionService : Service() {
             collectionJob = scope.launch {
                 while (isActive) {
                     val cycle = CollectionRuntime.runCycle(this@TelemetryCollectionService, backgroundHealth = true)
+                    runCatching { withContext(Dispatchers.IO) { PolicyWatch.check(this@TelemetryCollectionService) } }
                     getSystemService(NotificationManager::class.java).notify(ID, notification(cycle.summary))
                     delay(cycle.nextDelayMillis)
                 }

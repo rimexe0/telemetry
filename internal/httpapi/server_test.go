@@ -606,6 +606,10 @@ func (f *fakeRepository) SavePolicy(_ context.Context, config policy.Config, not
 	return version, nil
 }
 
+func (f *fakeRepository) AndroidAppUsage(context.Context, time.Time, int) ([]store.AppUsageSuggestion, error) {
+	return []store.AppUsageSuggestion{{Package: "com.example.feed", Events: 12}}, nil
+}
+
 func (f *fakeRepository) Ping(context.Context) error { return nil }
 
 func TestBatchJSONFixtureRemainsValid(t *testing.T) {

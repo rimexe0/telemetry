@@ -164,3 +164,18 @@ func (s *Server) policyInputs(ctx context.Context, from, to time.Time) (policy.C
 	}
 	return config, version, facts, nil
 }
+
+// policySuggestions lists the phone's most used apps so the owner can pick
+// what to block. Nothing is added to the policy by this call.
+func (s *Server) policySuggestions(writer http.ResponseWriter, request *http.Request) {
+	if !s.ownerAuthorized(request) {
+		writeError(writer, http.StatusUnauthorized, "unauthorized", "owner credentials are required")
+		return
+	}
+	apps, err := s.repository.AndroidAppUsage(request.Context(), time.Now().UTC().Add(-30*24*time.Hour), 40)
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"android_apps": apps})
+}

@@ -31,6 +31,9 @@ enum class SetupStep(
     BATTERY(false, "Let it run in the background",
         "Stops Android from pausing collection to save battery.",
         "Allow"),
+    BLOCKING(false, "Turn on blocking",
+        "Lets Telemetry close distracting apps during work and breaks and show you why. Open Telemetry blocking, switch it on and allow, then come back.",
+        "Open setting"),
     START(true, "Start collecting",
         "Starts collection now. A small notification shows while it runs.",
         "Start");

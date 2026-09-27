@@ -1,3 +1,3 @@
 <resources>
-    <string name="accessibility_service_description">Telemetry optional soft block</string>
+    <string name="accessibility_service_description">Closes the apps you chose to block during work and breaks, and shows why. Follows your Telemetry policy; free time is never blocked.</string>
 </resources>

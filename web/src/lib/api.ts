@@ -645,3 +645,31 @@ export async function listPendingPairings(): Promise<PendingPairing[]> {
   const result = await request<{ sessions: PendingPairing[] | null }>('/v1/pairing/sessions');
   return result.sessions ?? [];
 }
+
+export type TargetGroup = { id: string; label: string; android_packages?: string[]; mac_apps?: string[]; domains?: string[] };
+export type PolicyConfig = {
+  timezone?: string;
+  distractions: TargetGroup[];
+  essentials: TargetGroup[];
+  plan_gate?: { enabled: boolean; ends_at?: string };
+  emergency_minutes?: number;
+};
+export type PolicyVersion = { id: number; config: PolicyConfig; note?: string; created_at: string };
+export type AppUsageSuggestion = { package: string; events: number; last_seen: string };
+
+export async function getPolicy(): Promise<PolicyVersion | null> {
+  const result = await request<{ policy: PolicyVersion | null }>('/v1/policy/config');
+  return result.policy;
+}
+
+export async function savePolicy(config: PolicyConfig, note = ''): Promise<PolicyVersion> {
+  const result = await request<{ policy: PolicyVersion }>('/v1/policy/config', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config, note })
+  });
+  return result.policy;
+}
+
+export async function getAppSuggestions(): Promise<AppUsageSuggestion[]> {
+  const result = await request<{ android_apps: AppUsageSuggestion[] | null }>('/v1/policy/suggestions');
+  return result.android_apps ?? [];
+}

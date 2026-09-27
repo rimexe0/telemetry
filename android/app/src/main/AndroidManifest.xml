@@ -82,7 +82,7 @@
         <service
             android:name=".TelemetryAccessibilityService"
             android:exported="false"
-            android:label="Telemetry optional soft block"
+            android:label="Telemetry blocking"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />

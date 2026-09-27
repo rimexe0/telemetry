@@ -78,3 +78,18 @@ func TestPolicyUsesPlanGateSettingAndRecovery(t *testing.T) {
 		t.Fatalf("mode = %v", mode)
 	}
 }
+
+func TestPolicySuggestionsAreOwnerOnly(t *testing.T) {
+	server := testServer(t, &fakeRepository{})
+	request := httptest.NewRequest(http.MethodGet, "/v1/policy/suggestions", nil)
+	request.Header.Set("Authorization", "Bearer read-secret")
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d", response.Code)
+	}
+	response2, payload := serve(t, ownerTestServer(t, &fakeRepository{}), http.MethodGet, "/v1/policy/suggestions", "")
+	if response2.Code != http.StatusOK || len(payload["android_apps"].([]any)) != 1 {
+		t.Fatalf("suggestions = %d %v", response2.Code, payload)
+	}
+}

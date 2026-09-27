@@ -60,6 +60,7 @@ class SetupActivity : ComponentActivity() {
             if (granted(context, Manifest.permission.ACCESS_FINE_LOCATION) || granted(context, Manifest.permission.ACCESS_COARSE_LOCATION)) done += SetupStep.LOCATION
             if (granted(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION)) done += SetupStep.BACKGROUND_LOCATION
             if (context.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(context.packageName)) done += SetupStep.BATTERY
+            if (PolicyEvents.blockingEnabled(context)) done += SetupStep.BLOCKING
             if (preferences(context).getBoolean(KEY_STARTED, false)) done += SetupStep.START
             return done
         }
@@ -202,6 +203,7 @@ class SetupActivity : ComponentActivity() {
                 Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")),
                 Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
             )
+            SetupStep.BLOCKING -> openSetting(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS), Intent(Settings.ACTION_SETTINGS))
             SetupStep.START -> startCollection()
         }
     }

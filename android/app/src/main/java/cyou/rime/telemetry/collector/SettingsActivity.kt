@@ -66,8 +66,6 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var permissionLauncher: ActivityResultLauncher<Set<String>>
     private lateinit var locationPermissionLauncher: ActivityResultLauncher<Array<String>>
     private lateinit var backgroundLocationLauncher: ActivityResultLauncher<String>
-    private lateinit var blockedPackagesInput: EditText
-    private lateinit var softBlockSwitch: Switch
     private lateinit var notificationSwitch: Switch
     private lateinit var deliveryUrlInput: EditText
     private lateinit var deliveryTokenInput: EditText
@@ -184,7 +182,7 @@ class SettingsActivity : ComponentActivity() {
             setOnClickListener { stopLocationCollection() }
         })
         content.addView(TextView(this).apply {
-            text = "Notifications and soft block"
+            text = "Notifications and blocking"
             textSize = 20f
         })
         notificationSwitch = Switch(this).apply {
@@ -197,20 +195,8 @@ class SettingsActivity : ComponentActivity() {
             text = "Open notification access settings"
             setOnClickListener { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
         })
-        softBlockSwitch = Switch(this).apply {
-            text = "Enable configured soft block"
-            isChecked = PolicyStore(this@SettingsActivity).softBlockEnabled
-        }
-        content.addView(softBlockSwitch)
-        blockedPackagesInput = EditText(this).apply {
-            hint = "Blocked package names, comma separated"
-            setText(PolicyStore(this@SettingsActivity).blockedPackages.sorted().joinToString(","))
-            setSingleLine(false)
-        }
-        content.addView(blockedPackagesInput)
-        content.addView(Button(this).apply {
-            text = "Save soft-block policy"
-            setOnClickListener { saveSoftBlockPolicy() }
+        content.addView(TextView(this).apply {
+            text = "Blocking follows your policy: choose apps in the planner (Plan → Blocked apps). It needs the Telemetry blocking accessibility service switched on."
         })
         content.addView(Button(this).apply {
             text = "Open Accessibility settings"
@@ -513,22 +499,6 @@ class SettingsActivity : ComponentActivity() {
             action = LOCATION_STOP_ACTION
         })
         status.text = "Location collection stopped."
-    }
-
-    private fun saveSoftBlockPolicy() {
-        val packages = blockedPackagesInput.text.toString()
-            .split(',')
-            .map(String::trim)
-            .filter(String::isNotBlank)
-            .toSet()
-        val policy = PolicyStore(this)
-        policy.blockedPackages = packages
-        policy.softBlockEnabled = softBlockSwitch.isChecked && packages.isNotEmpty()
-        status.text = if (policy.softBlockEnabled) {
-            "Soft block saved for ${packages.size} package(s). Enable the Telemetry accessibility service to enforce it."
-        } else {
-            "Soft block disabled; no packages are blocked."
-        }
     }
 
     private fun saveDeliveryProvisioning() {

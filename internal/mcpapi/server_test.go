@@ -245,3 +245,7 @@ func (fakeRepository) LatestPolicy(context.Context) (*store.PolicyVersion, error
 func (fakeRepository) SavePolicy(context.Context, policy.Config, string) (store.PolicyVersion, error) {
 	return store.PolicyVersion{}, nil
 }
+
+func (fakeRepository) AndroidAppUsage(context.Context, time.Time, int) ([]store.AppUsageSuggestion, error) {
+	return nil, nil
+}

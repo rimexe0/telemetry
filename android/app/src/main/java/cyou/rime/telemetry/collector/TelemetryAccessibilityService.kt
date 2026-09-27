@@ -1,30 +1,55 @@
 package cyou.rime.telemetry.collector
 
 import android.accessibilityservice.AccessibilityService
+import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Typeface
 import android.view.Gravity
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import java.time.Instant
 
 /**
- * Optional, owner-enabled soft block. It is inert until both the policy switch
- * and a non-empty package list are saved in the setup screen.
+ * Stage-1 blocking (#20). When the approved policy blocks the app coming to the
+ * foreground, a full-screen reason covers it and the owner is sent home. Every
+ * block is recorded. It follows the cached server timeline, so it keeps working
+ * offline, and it never blocks when that cache is missing or out of date.
  */
 class TelemetryAccessibilityService : AccessibilityService() {
     private var overlay: LinearLayout? = null
+    private var systemSafe: Set<String> = emptySet()
+    private var cached: Pair<Instant, String>? = null
+    private var lastRecorded = ""
+
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        systemSafe = PolicyEvents.systemSafe(this)
+    }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-            event.eventType != AccessibilityEvent.TYPE_WINDOWS_CHANGED
-        ) return
-        val packageName = event.packageName?.toString().orEmpty()
-        val policy = PolicyStore(this)
-        if (!policy.softBlockEnabled || packageName.isBlank() || packageName == applicationContext.packageName) return
-        if (packageName !in policy.blockedPackages) return
-        showOverlay(packageName)
+        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        val pkg = event.packageName?.toString().orEmpty()
+        if (pkg.isBlank() || pkg == "com.android.systemui") return
+        val decision = currentDecision()
+        if (!BlockPolicy.shouldBlock(decision, pkg, systemSafe)) {
+            if (pkg != packageName) removeOverlay()
+            return
+        }
+        showOverlay(decision!!)
+        val key = "block:$pkg:${Instant.now().epochSecond / 60}"
+        if (key != lastRecorded) {
+            lastRecorded = key
+            Thread { runCatching { PolicyEvents.record(this, "android.policy_block", key, decision, mapOf("package" to pkg)) } }.start()
+        }
+    }
+
+    private fun currentDecision(): BlockDecision? {
+        val entry = NowCache.read(this) ?: return null
+        val json = if (cached?.first == entry.fetchedAt) cached!!.second else entry.json.also { cached = entry.fetchedAt to it }
+        return runCatching { BlockPolicy.at(json, Instant.now()) }.getOrNull()
     }
 
     override fun onInterrupt() = removeOverlay()
@@ -34,23 +59,42 @@ class TelemetryAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    private fun showOverlay(packageName: String) {
-        if (overlay != null) return
+    private fun showOverlay(decision: BlockDecision) {
+        val density = resources.displayMetrics.density
+        val pad = (28 * density).toInt()
+        val title = NowModel.modeLabel(decision.mode).uppercase()
+        val existing = overlay
+        if (existing != null) {
+            (existing.getChildAt(1) as? TextView)?.text = decision.reason
+            return
+        }
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(48, 48, 48, 48)
-            setBackgroundColor(0xFFF8F8F8.toInt())
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(pad, pad, pad, pad)
+            setBackgroundColor(Color.rgb(17, 18, 19))
         }
         container.addView(TextView(this).apply {
-            text = "Telemetry pause"
-            textSize = 24f
+            text = title
+            textSize = 15f
+            letterSpacing = 0.12f
+            setTextColor(Color.rgb(170, 169, 164))
+            typeface = Typeface.DEFAULT_BOLD
         })
         container.addView(TextView(this).apply {
-            text = "This app is in your configured soft-block list. Return to the plan or disable the policy from Telemetry."
+            text = decision.reason
+            textSize = 26f
+            setTextColor(Color.rgb(238, 238, 235))
+            setPadding(0, pad / 2, 0, pad)
+        })
+        container.addView(TextView(this).apply {
+            text = "This app is closed right now."
             textSize = 16f
+            setTextColor(Color.rgb(170, 169, 164))
+            setPadding(0, 0, 0, pad)
         })
         container.addView(Button(this).apply {
-            text = "Return to home"
+            text = "Go back"
             setOnClickListener {
                 performGlobalAction(GLOBAL_ACTION_HOME)
                 removeOverlay()
@@ -58,21 +102,17 @@ class TelemetryAccessibilityService : AccessibilityService() {
         })
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            PixelFormat.TRANSLUCENT,
-        ).apply {
-            gravity = Gravity.CENTER
-        }
-        getSystemService(WindowManager::class.java).addView(container, params)
-        overlay = container
+            PixelFormat.OPAQUE,
+        )
+        runCatching { getSystemService(WindowManager::class.java).addView(container, params) }
+            .onSuccess { overlay = container }
     }
 
     private fun removeOverlay() {
-        overlay?.let { view ->
-            runCatching { getSystemService(WindowManager::class.java).removeView(view) }
-        }
+        overlay?.let { view -> runCatching { getSystemService(WindowManager::class.java).removeView(view) } }
         overlay = null
     }
 }
