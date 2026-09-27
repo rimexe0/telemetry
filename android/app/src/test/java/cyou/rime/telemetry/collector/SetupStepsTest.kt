@@ -1,0 +1,35 @@
+package cyou.rime.telemetry.collector
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+
+class SetupStepsTest {
+    @Test
+    fun stepsComeInOrder() {
+        assertEquals(SetupStep.PAIR, SetupStep.next(emptySet(), emptySet()))
+        assertEquals(SetupStep.NOTIFICATIONS, SetupStep.next(setOf(SetupStep.PAIR), emptySet()))
+    }
+
+    @Test
+    fun skippedOptionalStepsAreNotAskedAgain() {
+        val done = setOf(SetupStep.PAIR, SetupStep.NOTIFICATIONS, SetupStep.USAGE_ACCESS)
+        assertEquals(SetupStep.HEALTH, SetupStep.next(done, emptySet()))
+        assertEquals(SetupStep.LOCATION, SetupStep.next(done, setOf(SetupStep.HEALTH)))
+    }
+
+    @Test
+    fun backgroundLocationWaitsForLocation() {
+        val done = setOf(SetupStep.PAIR, SetupStep.NOTIFICATIONS, SetupStep.USAGE_ACCESS, SetupStep.HEALTH)
+        assertEquals(SetupStep.BATTERY, SetupStep.next(done, setOf(SetupStep.LOCATION)))
+        assertEquals(SetupStep.BACKGROUND_LOCATION, SetupStep.next(done + SetupStep.LOCATION, emptySet()))
+    }
+
+    @Test
+    fun finishedWhenEverythingIsDoneOrSkipped() {
+        val all = SetupStep.entries.toSet()
+        assertNull(SetupStep.next(all, emptySet()))
+        assertEquals(0, SetupStep.remainingRequired(all))
+        assertEquals(4, SetupStep.remainingRequired(emptySet()))
+    }
+}

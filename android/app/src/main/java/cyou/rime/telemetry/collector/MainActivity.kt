@@ -71,9 +71,9 @@ class MainActivity : ComponentActivity() {
         reason = text(16f, MUTED)
         footer = text(13f, MUTED)
         setup = Button(this).apply {
-            text = "Set up this phone"
+            text = "Finish setting up this phone"
             visibility = View.GONE
-            setOnClickListener { openSettings() }
+            setOnClickListener { openSetup() }
         }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -101,6 +101,7 @@ class MainActivity : ComponentActivity() {
         window.decorView.setBackgroundColor(BACKGROUND)
         setContentView(ScrollView(this).apply { setBackgroundColor(BACKGROUND); addView(content) })
         showCached()
+        if (savedInstanceState == null && SetupActivity.needsSetup(this)) openSetup()
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.RESUMED) {
@@ -114,6 +115,8 @@ class MainActivity : ComponentActivity() {
 
     private fun openSettings() = startActivity(Intent(this, SettingsActivity::class.java))
 
+    private fun openSetup() = startActivity(Intent(this, SetupActivity::class.java))
+
     private fun openPanel() {
         val server = DeliveryConfig(this).serverUrl.trimEnd('/')
         startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("$server/panel/")))
@@ -122,16 +125,15 @@ class MainActivity : ComponentActivity() {
     private suspend fun refresh() {
         val config = DeliveryConfig(this)
         val token = config.token()
+        setup.visibility = if (SetupActivity.needsSetup(this)) View.VISIBLE else View.GONE
         if (token == null) {
-            setup.visibility = View.VISIBLE
             if (!showCached()) {
                 mode.text = "NOT SET UP"
                 title.text = "This phone is not paired yet"
-                reason.text = "Pair it in Settings to see your current task and follow your plan."
+                reason.text = "Finish setting it up to see your current task and follow your plan."
             }
             return
         }
-        setup.visibility = View.GONE
         val body = withContext(Dispatchers.IO) {
             runCatching { fetch(config.serverUrl, DeviceIdentity.get(this@MainActivity), token) }.getOrNull()
         }

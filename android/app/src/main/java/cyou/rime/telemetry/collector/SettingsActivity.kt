@@ -50,9 +50,6 @@ class SettingsActivity : ComponentActivity() {
         const val HEALTH_CONNECT_PACKAGE = "com.google.android.apps.healthdata"
         const val SAMSUNG_HEALTH_PACKAGE = "com.sec.android.app.shealth"
         const val LOCATION_STOP_ACTION = "cyou.rime.telemetry.collector.STOP_LOCATION"
-        const val COLLECTION_WORK_NAME = "telemetry-collection"
-        const val DELIVERY_WORK_NAME = "telemetry-delivery"
-        const val PAIRING_POLL_INTERVAL_MS = 3_000L
     }
 
     private val requestedPermissions = setOf(
@@ -74,7 +71,6 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var notificationSwitch: Switch
     private lateinit var deliveryUrlInput: EditText
     private lateinit var deliveryTokenInput: EditText
-    private var pairingJob: Job? = null
     private lateinit var freshnessStatus: TextView
     private lateinit var notificationPermissionLauncher: ActivityResultLauncher<String>
     private lateinit var smsPermissionLauncher: ActivityResultLauncher<String>
@@ -221,7 +217,7 @@ class SettingsActivity : ComponentActivity() {
             setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         })
         content.addView(TextView(this).apply {
-            text = "Fedora delivery"
+            text = "Server connection"
             textSize = 20f
         })
         content.addView(TextView(this).apply {
@@ -550,135 +546,20 @@ class SettingsActivity : ComponentActivity() {
         status.text = "Delivery provisioning saved; token fingerprint ${config.tokenFingerprint()}…; background drain is scheduled."
     }
 
+    private val pairingFlow by lazy {
+        PairingFlow(this, lifecycleScope, onStatus = { status.text = it })
+    }
+
     private fun beginPairing() {
-        val config = DeliveryConfig(this)
-        val serverUrl = deliveryUrlInput.text.toString().trim().ifBlank { config.serverUrl }
-        if (serverUrl.isBlank()) {
-            status.text = "Enter the private Telemetry server URL first."
-            return
-        }
-        pairingJob?.cancel()
-        val secret = try { config.newPairingSecret(serverUrl) } catch (error: Exception) {
-            status.text = "Finish the pending connection before changing servers."
-            return
-        }
-        status.text = "Creating a secure pairing request…"
-        lifecycleScope.launch {
-            try {
-                val retainedId = config.pairingId
-                val start = if (retainedId != null) {
-                    PairingStart(retainedId, Uri.parse(serverUrl.trimEnd('/') + "/panel/").buildUpon().appendQueryParameter("pair", retainedId).build().toString())
-                } else withContext(Dispatchers.IO) {
-                    TelemetryPairingClient(
-                        serverUrl = serverUrl,
-                        deviceId = DeviceIdentity.get(applicationContext),
-                        deviceName = deviceDisplayName(),
-                    ).start(secret)
-                }
-                config.savePairing(start.id, secret)
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(start.panelUrl)))
-                status.text = "Telemetry panel opened. Sign in there to approve this device."
-                pollPairing(serverUrl, start.id, secret)
-            } catch (error: Exception) {
-                if (error is kotlinx.coroutines.CancellationException) throw error
-                status.text = "Unable to start pairing; queued records remain on this device."
-            }
-        }
+        val serverUrl = deliveryUrlInput.text.toString().trim().ifBlank { DeliveryConfig(this).serverUrl }
+        pairingFlow.start(serverUrl)
     }
 
-    private fun resumePairingIfNeeded() {
-        val config = DeliveryConfig(this)
-        val pairingId = config.pairingId ?: return
-        val secret = config.pairingSecret() ?: return
-        if (pairingJob?.isActive == true) return
-        pollPairing(config.pairingServer() ?: return, pairingId, secret)
-    }
+    private fun resumePairingIfNeeded() = pairingFlow.resume()
 
-    private fun pollPairing(serverUrl: String, pairingId: String, secret: String) {
-        pairingJob?.cancel()
-        pairingJob = lifecycleScope.launch {
-            val config = DeliveryConfig(applicationContext)
-            val client = TelemetryPairingClient(
-                serverUrl = serverUrl,
-                deviceId = DeviceIdentity.get(applicationContext),
-                deviceName = deviceDisplayName(),
-            )
-            while (true) {
-                try {
-                    val result = withContext(Dispatchers.IO) { client.poll(pairingId, secret) }
-                    when (result.state) {
-                        PairingStatus.State.PENDING -> {
-                            status.text = "Waiting for approval in the Telemetry panel…"
-                        }
-                        PairingStatus.State.APPROVED -> {
-                            val returnedDeviceId = result.deviceId
-                            if (returnedDeviceId != DeviceIdentity.get(applicationContext)) {
-                                throw IllegalStateException("pairing approval was for another device")
-                            }
-                            config.completePairing(serverUrl, secret)
-                            scheduleDelivery()
-                            status.text = "Device paired. Background delivery is scheduled."
-                            return@launch
-                        }
-                        PairingStatus.State.DENIED -> {
-                            config.clearPairing()
-                            status.text = "Pairing was denied. Queued records remain on this device."
-                            return@launch
-                        }
-                        PairingStatus.State.EXPIRED -> {
-                            config.clearPairing()
-                            status.text = "Pairing expired. Start it again when ready."
-                            return@launch
-                        }
-                    }
-                } catch (error: PairingException) {
-                    if (error.status !in setOf(408, 425, 429, 500, 502, 503, 504)) {
-                        config.clearPairing()
-                        status.text = "Pairing could not be continued; start it again when ready."
-                        return@launch
-                    }
-                    status.text = "Waiting for the private Telemetry server…"
-                } catch (error: IllegalStateException) {
-                    if (error is kotlinx.coroutines.CancellationException) throw error
-                    status.text = "Pairing response was invalid; start it again when ready."
-                    return@launch
-                } catch (error: Exception) {
-                    if (error is kotlinx.coroutines.CancellationException) throw error
-                    status.text = "Waiting for the private Telemetry server…"
-                }
-                delay(PAIRING_POLL_INTERVAL_MS)
-            }
-        }
-    }
+    private fun scheduleDelivery() = BackgroundJobs.scheduleDelivery(this)
 
-    private fun deviceDisplayName(): String = listOf(Build.MANUFACTURER, Build.MODEL)
-        .filter(String::isNotBlank)
-        .joinToString(" ")
-        .ifBlank { "Android device" }
-
-    private fun scheduleDelivery() {
-        scheduleCollection()
-        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-            DELIVERY_WORK_NAME,
-            ExistingPeriodicWorkPolicy.KEEP,
-            PeriodicWorkRequestBuilder<TelemetryUploadWorker>(15, TimeUnit.MINUTES)
-                .setConstraints(
-                    Constraints.Builder()
-                        .setRequiredNetworkType(NetworkType.CONNECTED)
-                        .build(),
-                )
-                .build(),
-        )
-    }
-
-    private fun scheduleCollection() {
-        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-            COLLECTION_WORK_NAME,
-            ExistingPeriodicWorkPolicy.KEEP,
-            PeriodicWorkRequestBuilder<TelemetryCollectionWorker>(15, TimeUnit.MINUTES)
-                .build(),
-        )
-    }
+    private fun scheduleCollection() = BackgroundJobs.scheduleCollection(this)
 
     private fun uploadPendingQueue() {
         freshnessStatus.text = "Collecting available sources and delivering within resource limits…"
