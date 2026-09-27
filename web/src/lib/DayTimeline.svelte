@@ -3,7 +3,7 @@
   import DayPicker from './DayPicker.svelte';
   import { tick } from 'svelte';
   import { moveWindow, resizeWindow, tooltipPosition } from './timeline-window';
-  import { clock, deriveDay } from './day';
+  import { clock, deriveDay, eventRows } from './day';
   import { formatDuration, describeEvent } from './event-detail';
 
   export let observations: Observation[] = [];
@@ -42,6 +42,9 @@
   let search='';
   let hiddenLanes:string[]=[];
   let density:'compact'|'records'='compact';
+  let layout:'timeline'|'list'='timeline';
+  let listLimit=200;
+  $: rows=eventRows(filteredLanes);
   let brushMode:'start'|'end'|'move'|null=null;
   let brushOrigin=0;
   let brushWindow={start:0,end:dayLength};
@@ -300,6 +303,8 @@
   <div class="day-header">
     <DayPicker value={date} onchange={changeDate} />
     <div class="day-controls" aria-label="Timeline controls">
+      <button class:chosen={layout==='timeline'} aria-pressed={layout==='timeline'} on:click={()=>layout='timeline'}>Timeline</button>
+      <button class:chosen={layout==='list'} aria-pressed={layout==='list'} on:click={()=>{layout='list'; listLimit=200;}}>List</button>
       <button class:chosen={density==='compact'} aria-pressed={density==='compact'} on:click={()=>density='compact'}>Compact</button>
       <button class:chosen={density==='records'} aria-pressed={density==='records'} on:click={()=>density='records'}>Records</button>
       {#each [24,6,1,0.25] as preset}<button class:chosen={Math.abs(zoomHours-preset)<0.00001} aria-pressed={Math.abs(zoomHours-preset)<0.00001} on:click={()=>setZoomWindow(preset)}>{preset===24?'Full day':preset===0.25?'15m':`${preset}h`}</button>{/each}
@@ -331,6 +336,29 @@
     {#if loading}<div class="inline-state" role="status">Refreshing…</div>{/if}
     {#if error}<div class="inline-state error" role="alert">{error}</div>{/if}
 
+    {#if layout==='list'}
+      <section class="timeline-card event-list" aria-labelledby="event-list-title">
+        <div class="card-head">
+          <h3 id="event-list-title">Events</h3>
+          <span class="range-label">{rows.length.toLocaleString()} {density==='compact'?'grouped':'records'}, newest first</span>
+        </div>
+        {#if rows.length}
+          <ol>
+            {#each rows.slice(0, listLimit) as row}
+              <li><button type="button" on:click={()=>row.segment.evidence[0] && oninspect(row.segment.evidence[0])}>
+                <span class="when">{clock(row.segment.start)}{row.segment.end>row.segment.start?`–${clock(row.segment.end)}`:''}</span>
+                <span class="lane">{row.lane}</span>
+                <span class="what"><strong>{row.segment.label}</strong>{#if row.segment.detail}<small>{row.segment.detail}</small>{/if}</span>
+                <span class="length">{row.segment.end>row.segment.start?formatDuration(row.segment.end-row.segment.start):''}</span>
+              </button></li>
+            {/each}
+          </ol>
+          {#if rows.length>listLimit}<button type="button" class="more" on:click={()=>listLimit+=200}>Show {Math.min(200, rows.length-listLimit)} more</button>{/if}
+        {:else}
+          <div class="empty">No events</div>
+        {/if}
+      </section>
+    {:else}
     <section class="timeline-card" aria-labelledby="timeline-title">
       <div class="card-head">
         <h3 id="timeline-title">Timeline</h3>
@@ -417,6 +445,7 @@
         <div class="empty">No events</div>
       {/if}
     </section>
+    {/if}
 
   {/if}
 </section>
@@ -437,6 +466,15 @@
  button {cursor:pointer;} button:hover,button:focus-visible {outline:1px solid var(--fg);}
  button.chosen {background:var(--fg);color:var(--bg);} button:disabled {opacity:.4;cursor:default;}
  .lane-controls {padding-bottom:4px;} .lane-controls .muted {opacity:.4;}
+ .event-list ol {list-style:none;margin:0;padding:0;}
+ .event-list li button {display:grid;grid-template-columns:110px 80px 1fr 70px;gap:10px;align-items:baseline;width:100%;text-align:left;border:0;border-top:1px solid var(--line);background:none;color:inherit;padding:7px 4px;font:inherit;cursor:pointer;}
+ .event-list li button:hover {background:var(--soft);}
+ .event-list .when,.event-list .length,.event-list .lane {color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums;}
+ .event-list .what {display:flex;flex-direction:column;min-width:0;}
+ .event-list .what strong,.event-list .what small {overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+ .event-list .what small {color:var(--muted);}
+ .event-list .more {margin:10px 4px;}
+ @media (max-width:640px) {.event-list li button {grid-template-columns:96px 1fr;row-gap:0;} .event-list .when {grid-column:1;grid-row:1;} .event-list .lane {grid-column:1;grid-row:2;} .event-list .what {grid-column:2;grid-row:1 / span 2;} .event-list .length {display:none;}}
  .search {width:170px;} .inline-state {font-size:12px;color:var(--muted);}
  .day-status {margin:0;color:var(--muted);font-size:11px;}
  .day-stats {display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:1px;border:1px solid var(--line);background:var(--line);}

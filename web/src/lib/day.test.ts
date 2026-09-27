@@ -62,3 +62,14 @@ test('different window titles remain inspectable even within the same app',()=>{
  expect(d.lanes.find(l=>l.name.startsWith('Computer'))!.segments.map(r=>r.detail)).toEqual(['First','Second']);
  expect(d.apps).toEqual([{name:'Browser',minutes:20}]);
 });
+
+test('event list flattens lanes newest first and keeps the lane name', async () => {
+    const { eventRows } = await import('./day');
+    const segment = (start: number, label: string) => ({ start, end: start + 60_000, label, detail: '', evidence: [], kind: 'app' });
+    const rows = eventRows([
+      { name: 'Computer · Mac', note: '', segments: [segment(1_000, 'Editor'), segment(5_000, 'Browser')] },
+      { name: 'Phone', note: '', segments: [segment(3_000, 'Chat')] },
+    ]);
+    expect(rows.map(row => `${row.lane}:${row.segment.label}`)).toEqual(['Computer:Browser', 'Phone:Chat', 'Computer:Editor']);
+    expect(eventRows([{ name: 'Phone', note: '', segments: [segment(2, 'b'), segment(1, 'a')] }], 'oldest').map(row => row.segment.label)).toEqual(['a', 'b']);
+});

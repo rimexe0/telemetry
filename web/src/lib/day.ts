@@ -177,3 +177,13 @@ export function deriveDay(observations:Observation[],sources:SourceSummary[],dat
  lanes.sort((a,b)=>order.findIndex(prefix=>a.name.startsWith(prefix))-order.findIndex(prefix=>b.name.startsWith(prefix)));
  return {lanes,chapters:chapters.sort((a,b)=>a.start-b.start || a.end-b.end),apps,facts,warnings};
 }
+
+export type EventRow = { lane: string; segment: DaySegment };
+
+// Flattens timeline lanes into one list, newest first, so events can be
+// scanned without the chart. Lanes and search filters are applied upstream.
+export function eventRows(lanes: Lane[], order: 'newest' | 'oldest' = 'newest'): EventRow[] {
+  const rows = lanes.flatMap(lane => lane.segments.map(segment => ({ lane: lane.name.split(' · ')[0], segment })));
+  rows.sort((a, b) => order === 'newest' ? b.segment.start - a.segment.start : a.segment.start - b.segment.start);
+  return rows;
+}
