@@ -19,6 +19,11 @@ object PolicyWatch {
     private const val CHANNEL = "telemetry-checkins"
     private const val NOTIFICATION_ID = 4201
 
+    // Updates and reboots delete the app's notifications. The first check in a
+    // new process asks again about a bypass that is still open; later checks
+    // leave a dismissed question alone.
+    @Volatile private var askedThisProcess = false
+
     fun check(context: Context) {
         NowCache.refresh(context)
         val entry = NowCache.read(context)
@@ -33,6 +38,7 @@ object PolicyWatch {
                 preferences.edit().putString(KEY_BYPASS_SINCE, since).apply()
                 notify(context, decision!!)
             }
+            bypassed && !askedThisProcess -> notify(context, decision!!)
             !bypassed && openSince != null -> {
                 PolicyEvents.record(context, "android.policy_bypass_end", "bypass-end:$openSince", decision, mapOf("started_at" to openSince))
                 preferences.edit().remove(KEY_BYPASS_SINCE).apply()
@@ -42,6 +48,7 @@ object PolicyWatch {
     }
 
     private fun notify(context: Context, decision: BlockDecision) {
+        askedThisProcess = true
         val manager = context.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(CHANNEL, "Check-ins", NotificationManager.IMPORTANCE_DEFAULT))
         val open = PendingIntent.getActivity(context, 2, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)

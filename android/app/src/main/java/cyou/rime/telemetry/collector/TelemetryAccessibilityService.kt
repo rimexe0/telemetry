@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
+import android.util.Log
 import android.view.Gravity
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
@@ -19,6 +20,10 @@ import java.time.Instant
  * offline, and it never blocks when that cache is missing or out of date.
  */
 class TelemetryAccessibilityService : AccessibilityService() {
+    private companion object {
+        const val TAG = "TelemetryBlocking"
+    }
+
     private var overlay: LinearLayout? = null
     private var systemSafe: Set<String> = emptySet()
     private var cached: Pair<Instant, String>? = null
@@ -37,10 +42,13 @@ class TelemetryAccessibilityService : AccessibilityService() {
         if (pkg.isBlank() || pkg == "com.android.systemui") return
         val decision = currentDecision()
         if (!BlockPolicy.shouldBlock(decision, pkg, systemSafe)) {
-            if (pkg != packageName) removeOverlay()
+            // Keyboards, popups and toasts are not full screen; the blocked app
+            // is still underneath them.
+            if (pkg != packageName && event.isFullScreen) removeOverlay()
             return
         }
-        showOverlay(decision!!)
+        Log.i(TAG, "blocking $pkg (${decision!!.mode})")
+        showOverlay(decision)
         val key = "block:$pkg:${Instant.now().epochSecond / 60}"
         if (key != lastRecorded) {
             lastRecorded = key
