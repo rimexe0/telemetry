@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/rimexe0/telemetry/internal/model"
+	"github.com/rimexe0/telemetry/internal/policy"
 )
 
 type Receipt struct {
@@ -93,6 +94,8 @@ type Repository interface {
 	ListActivityContextRules(context.Context, bool) ([]ActivityContextRule, error)
 	DisableActivityContextRule(context.Context, int64) (ActivityContextRule, error)
 	RecordAgentReady(context.Context, int64, AgentReadyCandidate) (ExecutionSession, error)
+	LatestPolicy(context.Context) (*PolicyVersion, error)
+	SavePolicy(context.Context, policy.Config, string) (PolicyVersion, error)
 	StartExecutionSession(context.Context, ExecutionSessionInput) (ExecutionSession, error)
 	TransitionExecutionSession(context.Context, int64, ExecutionEventInput) (ExecutionSession, error)
 	ReturnToPrimary(context.Context, int64, ReturnToPrimaryInput) (ExecutionReturn, error)

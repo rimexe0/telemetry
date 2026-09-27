@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/rimexe0/telemetry/internal/model"
+	"github.com/rimexe0/telemetry/internal/policy"
 	"github.com/rimexe0/telemetry/internal/store"
 )
 
@@ -237,4 +238,10 @@ func (fakeRepository) DisableActivityContextRule(context.Context, int64) (store.
 
 func (fakeRepository) RecordAgentReady(context.Context, int64, store.AgentReadyCandidate) (store.ExecutionSession, error) {
 	return store.ExecutionSession{}, nil
+}
+
+func (fakeRepository) LatestPolicy(context.Context) (*store.PolicyVersion, error) { return nil, nil }
+
+func (fakeRepository) SavePolicy(context.Context, policy.Config, string) (store.PolicyVersion, error) {
+	return store.PolicyVersion{}, nil
 }

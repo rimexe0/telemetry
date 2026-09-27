@@ -1,0 +1,94 @@
+{
+ "description": "With the daily plan gate on, feeds stay closed until a plan exists or the configured end time.",
+ "config": {
+  "timezone": "Europe/Istanbul",
+  "distractions": [
+   {
+    "id": "social",
+    "label": "Social feeds",
+    "android_packages": [
+     "com.example.feed"
+    ],
+    "mac_apps": [
+     "com.example.FeedApp"
+    ],
+    "domains": [
+     "feed.example.com"
+    ]
+   },
+   {
+    "id": "video",
+    "label": "Video site",
+    "domains": [
+     "video.example.com"
+    ]
+   },
+   {
+    "id": "chat",
+    "label": "Chat app",
+    "android_packages": [
+     "com.example.chat"
+    ]
+   }
+  ],
+  "essentials": [
+   {
+    "id": "calls",
+    "label": "Phone and messages",
+    "android_packages": [
+     "com.example.dialer",
+     "com.example.sms"
+    ]
+   }
+  ],
+  "plan_gate": {
+   "enabled": true,
+   "ends_at": "12:00"
+  },
+  "emergency_minutes": 10
+ },
+ "start": {
+  "plan_exists": false
+ },
+ "events": [
+  {
+   "at": "09:30",
+   "plan_saved": [
+    {
+     "id": 7,
+     "title": "Write report",
+     "start": "10:00",
+     "end": "11:00"
+    }
+   ]
+  }
+ ],
+ "expect": [
+  {
+   "at": "09:00",
+   "mode": "plan_gate",
+   "blocked": [
+    "social"
+   ],
+   "not_blocked": [
+    "calls"
+   ]
+  },
+  {
+   "at": "09:31",
+   "mode": "leisure",
+   "nothing_blocked": true
+  },
+  {
+   "at": "10:30",
+   "mode": "work"
+  },
+  {
+   "at": "11:30",
+   "mode": "leisure",
+   "nothing_blocked": true
+  }
+ ],
+ "name": "plan-gate",
+ "day": "2026-09-28"
+}

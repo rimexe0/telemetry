@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/rimexe0/telemetry/internal/model"
+	"github.com/rimexe0/telemetry/internal/policy"
 	"github.com/rimexe0/telemetry/internal/store"
 )
 
@@ -301,6 +303,7 @@ type fakeRepository struct {
 
 	contextRules []store.ActivityContextRule
 	agentReady   []store.AgentReadyCandidate
+	policies     []store.PolicyVersion
 }
 
 func (f *fakeRepository) Ingest(_ context.Context, batch model.Batch) (store.Receipt, error) {
@@ -584,6 +587,23 @@ func (f *fakeRepository) RecordAgentReady(_ context.Context, sessionID int64, ca
 	f.agentReady = append(f.agentReady, candidate)
 	primary.Events = append(primary.Events, store.ExecutionEvent{ID: int64(len(primary.Events) + 1), EventType: "external_ready", OccurredAt: candidate.Lifecycle.At, Metadata: candidate.Metadata()})
 	return *primary, nil
+}
+
+func (f *fakeRepository) LatestPolicy(context.Context) (*store.PolicyVersion, error) {
+	if len(f.policies) == 0 {
+		return nil, nil
+	}
+	latest := f.policies[len(f.policies)-1]
+	return &latest, nil
+}
+
+func (f *fakeRepository) SavePolicy(_ context.Context, config policy.Config, note string) (store.PolicyVersion, error) {
+	if err := config.Normalize(); err != nil {
+		return store.PolicyVersion{}, fmt.Errorf("%w: %s", store.ErrInvalidPolicy, err)
+	}
+	version := store.PolicyVersion{ID: int64(len(f.policies) + 1), Config: config, Note: note, CreatedAt: time.Now()}
+	f.policies = append(f.policies, version)
+	return version, nil
 }
 
 func (f *fakeRepository) Ping(context.Context) error { return nil }

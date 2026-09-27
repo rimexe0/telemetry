@@ -1,0 +1,82 @@
+{
+ "description": "A group listed as both distraction and essential is never blocked.",
+ "config": {
+  "timezone": "Europe/Istanbul",
+  "distractions": [
+   {
+    "id": "social",
+    "label": "Social feeds",
+    "android_packages": [
+     "com.example.feed"
+    ],
+    "mac_apps": [
+     "com.example.FeedApp"
+    ],
+    "domains": [
+     "feed.example.com"
+    ]
+   },
+   {
+    "id": "video",
+    "label": "Video site",
+    "domains": [
+     "video.example.com"
+    ]
+   },
+   {
+    "id": "chat",
+    "label": "Chat app",
+    "android_packages": [
+     "com.example.chat"
+    ]
+   }
+  ],
+  "essentials": [
+   {
+    "id": "calls",
+    "label": "Phone and messages",
+    "android_packages": [
+     "com.example.dialer",
+     "com.example.sms"
+    ]
+   },
+   {
+    "id": "chat",
+    "label": "Chat is essential",
+    "android_packages": [
+     "com.example.chat"
+    ]
+   }
+  ],
+  "plan_gate": {
+   "enabled": false
+  },
+  "emergency_minutes": 10
+ },
+ "start": {
+  "plan_exists": true,
+  "blocks": [
+   {
+    "id": 1,
+    "title": "Work",
+    "start": "09:00",
+    "end": "10:00"
+   }
+  ]
+ },
+ "expect": [
+  {
+   "at": "09:30",
+   "mode": "work",
+   "blocked": [
+    "social"
+   ],
+   "not_blocked": [
+    "chat",
+    "calls"
+   ]
+  }
+ ],
+ "name": "essential-conflict",
+ "day": "2026-09-28"
+}

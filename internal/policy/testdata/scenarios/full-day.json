@@ -1,0 +1,193 @@
+{
+ "description": "Morning gate, work with a break, free lunch, work finished early, then free evening.",
+ "start": {
+  "plan_exists": true,
+  "blocks": [
+   {
+    "id": 1,
+    "title": "Client work",
+    "start": "09:00",
+    "end": "11:00"
+   },
+   {
+    "id": 2,
+    "title": "Lunch",
+    "start": "12:00",
+    "end": "13:00",
+    "kind": "free"
+   },
+   {
+    "id": 3,
+    "title": "Custom ROM",
+    "start": "13:00",
+    "end": "15:00"
+   }
+  ],
+  "gates": [
+   {
+    "id": "morning",
+    "label": "Go outside and move before the day starts",
+    "from": "07:30",
+    "until": "11:00"
+   }
+  ]
+ },
+ "events": [
+  {
+   "at": "08:40",
+   "satisfy_gate": "morning",
+   "note": "outside + moved"
+  },
+  {
+   "at": "09:00",
+   "execution": {
+    "state": "active",
+    "title": "Client work"
+   }
+  },
+  {
+   "at": "09:30",
+   "break_start": true
+  },
+  {
+   "at": "09:40",
+   "break_end": true
+  },
+  {
+   "at": "11:00",
+   "clear_execution": true
+  },
+  {
+   "at": "13:00",
+   "execution": {
+    "state": "active",
+    "title": "Custom ROM"
+   }
+  },
+  {
+   "at": "14:30",
+   "block_state": {
+    "id": 3,
+    "state": "done"
+   }
+  },
+  {
+   "at": "14:30",
+   "clear_execution": true
+  }
+ ],
+ "expect": [
+  {
+   "at": "07:45",
+   "mode": "gate",
+   "block_all": true,
+   "blocked": [
+    "social",
+    "video"
+   ],
+   "not_blocked": [
+    "calls"
+   ]
+  },
+  {
+   "at": "08:45",
+   "mode": "leisure",
+   "nothing_blocked": true
+  },
+  {
+   "at": "09:10",
+   "mode": "work",
+   "blocked": [
+    "social",
+    "video",
+    "chat"
+   ],
+   "reason_contains": "Client work"
+  },
+  {
+   "at": "09:35",
+   "mode": "break",
+   "blocked": [
+    "social"
+   ],
+   "reason_contains": "Break"
+  },
+  {
+   "at": "09:45",
+   "mode": "work"
+  },
+  {
+   "at": "11:30",
+   "mode": "leisure",
+   "nothing_blocked": true
+  },
+  {
+   "at": "12:30",
+   "mode": "leisure",
+   "nothing_blocked": true
+  },
+  {
+   "at": "13:30",
+   "mode": "work",
+   "reason_contains": "Custom ROM"
+  },
+  {
+   "at": "14:31",
+   "mode": "leisure",
+   "nothing_blocked": true
+  },
+  {
+   "at": "20:00",
+   "mode": "leisure",
+   "nothing_blocked": true
+  }
+ ],
+ "config": {
+  "timezone": "Europe/Istanbul",
+  "distractions": [
+   {
+    "id": "social",
+    "label": "Social feeds",
+    "android_packages": [
+     "com.example.feed"
+    ],
+    "mac_apps": [
+     "com.example.FeedApp"
+    ],
+    "domains": [
+     "feed.example.com"
+    ]
+   },
+   {
+    "id": "video",
+    "label": "Video site",
+    "domains": [
+     "video.example.com"
+    ]
+   },
+   {
+    "id": "chat",
+    "label": "Chat app",
+    "android_packages": [
+     "com.example.chat"
+    ]
+   }
+  ],
+  "essentials": [
+   {
+    "id": "calls",
+    "label": "Phone and messages",
+    "android_packages": [
+     "com.example.dialer",
+     "com.example.sms"
+    ]
+   }
+  ],
+  "plan_gate": {
+   "enabled": false
+  },
+  "emergency_minutes": 10
+ },
+ "name": "full-day",
+ "day": "2026-09-28"
+}

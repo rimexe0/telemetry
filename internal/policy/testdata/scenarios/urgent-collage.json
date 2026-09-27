@@ -1,0 +1,122 @@
+{
+ "description": "Urgent monthly collage during work: chat app allowed, feeds still blocked, back to work after expiry.",
+ "start": {
+  "plan_exists": true,
+  "blocks": [
+   {
+    "id": 1,
+    "title": "Client work",
+    "start": "09:00",
+    "end": "11:00"
+   },
+   {
+    "id": 2,
+    "title": "Lunch",
+    "start": "12:00",
+    "end": "13:00",
+    "kind": "free"
+   },
+   {
+    "id": 3,
+    "title": "Custom ROM",
+    "start": "13:00",
+    "end": "15:00"
+   }
+  ]
+ },
+ "events": [
+  {
+   "at": "09:00",
+   "execution": {
+    "state": "active",
+    "title": "Client work"
+   }
+  },
+  {
+   "at": "10:00",
+   "urgent": {
+    "purpose": "Monthly team collage from chat exports",
+    "allowed_group_ids": [
+     "chat"
+    ],
+    "until": "10:45"
+   }
+  }
+ ],
+ "expect": [
+  {
+   "at": "09:30",
+   "mode": "work",
+   "blocked": [
+    "chat"
+   ]
+  },
+  {
+   "at": "10:15",
+   "mode": "urgent",
+   "blocked": [
+    "social",
+    "video"
+   ],
+   "not_blocked": [
+    "chat"
+   ],
+   "reason_contains": "collage"
+  },
+  {
+   "at": "10:45",
+   "mode": "work",
+   "blocked": [
+    "chat"
+   ]
+  }
+ ],
+ "config": {
+  "timezone": "Europe/Istanbul",
+  "distractions": [
+   {
+    "id": "social",
+    "label": "Social feeds",
+    "android_packages": [
+     "com.example.feed"
+    ],
+    "mac_apps": [
+     "com.example.FeedApp"
+    ],
+    "domains": [
+     "feed.example.com"
+    ]
+   },
+   {
+    "id": "video",
+    "label": "Video site",
+    "domains": [
+     "video.example.com"
+    ]
+   },
+   {
+    "id": "chat",
+    "label": "Chat app",
+    "android_packages": [
+     "com.example.chat"
+    ]
+   }
+  ],
+  "essentials": [
+   {
+    "id": "calls",
+    "label": "Phone and messages",
+    "android_packages": [
+     "com.example.dialer",
+     "com.example.sms"
+    ]
+   }
+  ],
+  "plan_gate": {
+   "enabled": false
+  },
+  "emergency_minutes": 10
+ },
+ "name": "urgent-collage",
+ "day": "2026-09-28"
+}

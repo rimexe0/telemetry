@@ -1,0 +1,71 @@
+{
+ "description": "A missing plan stops blocking at the configured end time.",
+ "config": {
+  "timezone": "Europe/Istanbul",
+  "distractions": [
+   {
+    "id": "social",
+    "label": "Social feeds",
+    "android_packages": [
+     "com.example.feed"
+    ],
+    "mac_apps": [
+     "com.example.FeedApp"
+    ],
+    "domains": [
+     "feed.example.com"
+    ]
+   },
+   {
+    "id": "video",
+    "label": "Video site",
+    "domains": [
+     "video.example.com"
+    ]
+   },
+   {
+    "id": "chat",
+    "label": "Chat app",
+    "android_packages": [
+     "com.example.chat"
+    ]
+   }
+  ],
+  "essentials": [
+   {
+    "id": "calls",
+    "label": "Phone and messages",
+    "android_packages": [
+     "com.example.dialer",
+     "com.example.sms"
+    ]
+   }
+  ],
+  "plan_gate": {
+   "enabled": true,
+   "ends_at": "12:00"
+  },
+  "emergency_minutes": 10
+ },
+ "start": {
+  "plan_exists": false
+ },
+ "expect": [
+  {
+   "at": "11:59",
+   "mode": "plan_gate"
+  },
+  {
+   "at": "12:00",
+   "mode": "leisure",
+   "nothing_blocked": true
+  },
+  {
+   "at": "23:00",
+   "mode": "leisure",
+   "nothing_blocked": true
+  }
+ ],
+ "name": "plan-gate-ends",
+ "day": "2026-09-28"
+}

@@ -1,0 +1,74 @@
+{
+ "description": "The outside check never arrives (stale GPS); the gate still ends at its bound.",
+ "start": {
+  "plan_exists": true,
+  "gates": [
+   {
+    "id": "morning",
+    "label": "Go outside",
+    "from": "07:30",
+    "until": "10:00"
+   }
+  ]
+ },
+ "expect": [
+  {
+   "at": "09:59",
+   "mode": "gate",
+   "block_all": true
+  },
+  {
+   "at": "10:00",
+   "mode": "leisure",
+   "nothing_blocked": true
+  }
+ ],
+ "config": {
+  "timezone": "Europe/Istanbul",
+  "distractions": [
+   {
+    "id": "social",
+    "label": "Social feeds",
+    "android_packages": [
+     "com.example.feed"
+    ],
+    "mac_apps": [
+     "com.example.FeedApp"
+    ],
+    "domains": [
+     "feed.example.com"
+    ]
+   },
+   {
+    "id": "video",
+    "label": "Video site",
+    "domains": [
+     "video.example.com"
+    ]
+   },
+   {
+    "id": "chat",
+    "label": "Chat app",
+    "android_packages": [
+     "com.example.chat"
+    ]
+   }
+  ],
+  "essentials": [
+   {
+    "id": "calls",
+    "label": "Phone and messages",
+    "android_packages": [
+     "com.example.dialer",
+     "com.example.sms"
+    ]
+   }
+  ],
+  "plan_gate": {
+   "enabled": false
+  },
+  "emergency_minutes": 10
+ },
+ "name": "gate-expires-without-evidence",
+ "day": "2026-09-28"
+}

@@ -1,0 +1,94 @@
+{
+ "description": "Offline recovery keeps feeds closed; waiting on an agent outside a block still counts as work.",
+ "start": {
+  "plan_exists": true,
+  "blocks": []
+ },
+ "events": [
+  {
+   "at": "09:00",
+   "execution": {
+    "state": "waiting_external",
+    "title": "Agent run"
+   }
+  },
+  {
+   "at": "10:00",
+   "execution": {
+    "state": "interrupted",
+    "recovery": true
+   }
+  },
+  {
+   "at": "10:30",
+   "clear_execution": true
+  }
+ ],
+ "expect": [
+  {
+   "at": "09:30",
+   "mode": "work",
+   "reason_contains": "Agent run"
+  },
+  {
+   "at": "10:15",
+   "mode": "recovery",
+   "blocked": [
+    "social"
+   ]
+  },
+  {
+   "at": "10:45",
+   "mode": "leisure",
+   "nothing_blocked": true
+  }
+ ],
+ "config": {
+  "timezone": "Europe/Istanbul",
+  "distractions": [
+   {
+    "id": "social",
+    "label": "Social feeds",
+    "android_packages": [
+     "com.example.feed"
+    ],
+    "mac_apps": [
+     "com.example.FeedApp"
+    ],
+    "domains": [
+     "feed.example.com"
+    ]
+   },
+   {
+    "id": "video",
+    "label": "Video site",
+    "domains": [
+     "video.example.com"
+    ]
+   },
+   {
+    "id": "chat",
+    "label": "Chat app",
+    "android_packages": [
+     "com.example.chat"
+    ]
+   }
+  ],
+  "essentials": [
+   {
+    "id": "calls",
+    "label": "Phone and messages",
+    "android_packages": [
+     "com.example.dialer",
+     "com.example.sms"
+    ]
+   }
+  ],
+  "plan_gate": {
+   "enabled": false
+  },
+  "emergency_minutes": 10
+ },
+ "name": "recovery-and-waiting",
+ "day": "2026-09-28"
+}

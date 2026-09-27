@@ -1,0 +1,129 @@
+{
+ "description": "Emergency++ unlocks everything for exactly the configured minutes, even over a gate.",
+ "start": {
+  "plan_exists": true,
+  "blocks": [
+   {
+    "id": 1,
+    "title": "Client work",
+    "start": "09:00",
+    "end": "11:00"
+   },
+   {
+    "id": 2,
+    "title": "Lunch",
+    "start": "12:00",
+    "end": "13:00",
+    "kind": "free"
+   },
+   {
+    "id": 3,
+    "title": "Custom ROM",
+    "start": "13:00",
+    "end": "15:00"
+   }
+  ],
+  "gates": [
+   {
+    "id": "shower",
+    "label": "Shower is due",
+    "from": "10:00",
+    "until": "12:00"
+   }
+  ]
+ },
+ "events": [
+  {
+   "at": "09:00",
+   "execution": {
+    "state": "active",
+    "title": "Client work"
+   }
+  },
+  {
+   "at": "09:20",
+   "emergency": true
+  },
+  {
+   "at": "10:30",
+   "emergency": true
+  }
+ ],
+ "expect": [
+  {
+   "at": "09:25",
+   "mode": "emergency",
+   "nothing_blocked": true
+  },
+  {
+   "at": "09:29",
+   "mode": "emergency"
+  },
+  {
+   "at": "09:30",
+   "mode": "work"
+  },
+  {
+   "at": "10:10",
+   "mode": "gate",
+   "block_all": true
+  },
+  {
+   "at": "10:35",
+   "mode": "emergency",
+   "nothing_blocked": true
+  },
+  {
+   "at": "10:40",
+   "mode": "gate"
+  }
+ ],
+ "config": {
+  "timezone": "Europe/Istanbul",
+  "distractions": [
+   {
+    "id": "social",
+    "label": "Social feeds",
+    "android_packages": [
+     "com.example.feed"
+    ],
+    "mac_apps": [
+     "com.example.FeedApp"
+    ],
+    "domains": [
+     "feed.example.com"
+    ]
+   },
+   {
+    "id": "video",
+    "label": "Video site",
+    "domains": [
+     "video.example.com"
+    ]
+   },
+   {
+    "id": "chat",
+    "label": "Chat app",
+    "android_packages": [
+     "com.example.chat"
+    ]
+   }
+  ],
+  "essentials": [
+   {
+    "id": "calls",
+    "label": "Phone and messages",
+    "android_packages": [
+     "com.example.dialer",
+     "com.example.sms"
+    ]
+   }
+  ],
+  "plan_gate": {
+   "enabled": false
+  },
+  "emergency_minutes": 10
+ },
+ "name": "emergency-plus",
+ "day": "2026-09-28"
+}
