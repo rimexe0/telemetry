@@ -27,6 +27,8 @@ class TelemetryAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         systemSafe = PolicyEvents.systemSafe(this)
+        // Android reconnects this service after updates and reboots.
+        CollectionStarter.ensureRunning(this)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
@@ -104,9 +106,12 @@ class TelemetryAccessibilityService : AccessibilityService() {
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.OPAQUE,
-        )
+        ).apply {
+            // Cover the status bar and cutout too, so nothing of the blocked app shows through.
+            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+        }
         runCatching { getSystemService(WindowManager::class.java).addView(container, params) }
             .onSuccess { overlay = container }
     }

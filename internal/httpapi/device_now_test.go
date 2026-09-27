@@ -78,3 +78,19 @@ func TestDeviceNowShowsTaskAndPolicy(t *testing.T) {
 		t.Fatalf("block-only task = %+v", payload.Task)
 	}
 }
+
+func TestDeviceNowTimelineStartsBeforeNow(t *testing.T) {
+	response := deviceGet(deviceServer(t, &fakeRepository{}), "android-1", "device-secret")
+	var payload struct {
+		GeneratedAt time.Time `json:"generated_at"`
+		Timeline    []struct {
+			From time.Time `json:"from"`
+		} `json:"timeline"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil || len(payload.Timeline) == 0 {
+		t.Fatalf("payload = %s", response.Body)
+	}
+	if !payload.Timeline[0].From.Before(payload.GeneratedAt.Add(-5 * time.Minute)) {
+		t.Fatalf("timeline starts at %s, generated %s", payload.Timeline[0].From, payload.GeneratedAt)
+	}
+}

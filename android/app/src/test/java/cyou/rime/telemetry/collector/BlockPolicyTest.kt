@@ -48,4 +48,10 @@ class BlockPolicyTest {
         assertNull(BlockPolicy.at(json, Instant.parse("2026-09-28T21:00:00Z")))
         assertFalse(BlockPolicy.shouldBlock(null, "com.example.feed", safe))
     }
+
+    @Test
+    fun toleratesADeviceClockSlightlyBehindTheServer() {
+        assertEquals("work", BlockPolicy.at(json, Instant.parse("2026-09-28T05:59:57Z"))?.mode)
+        assertNull(BlockPolicy.at(json, Instant.parse("2026-09-28T05:40:00Z")))
+    }
 }

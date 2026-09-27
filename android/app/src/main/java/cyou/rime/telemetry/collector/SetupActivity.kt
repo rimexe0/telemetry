@@ -38,7 +38,7 @@ class SetupActivity : ComponentActivity() {
     companion object {
         private const val PREFS = "telemetry-setup"
         private const val KEY_SKIPPED = "skipped"
-        private const val KEY_STARTED = "collection_started"
+        const val KEY_STARTED = "collection_started"
         private const val HEALTH_CONNECT_PACKAGE = "com.google.android.apps.healthdata"
         private val BACKGROUND = Color.rgb(17, 18, 19)
         private val FOREGROUND = Color.rgb(238, 238, 235)

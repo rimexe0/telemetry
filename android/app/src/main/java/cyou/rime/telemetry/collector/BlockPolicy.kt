@@ -17,12 +17,21 @@ data class BlockDecision(
 }
 
 object BlockPolicy {
+    private const val CLOCK_TOLERANCE_SECONDS = 600L
+
     /**
      * The decision covering [now], or null when the cache does not cover it.
      * A missing or out-of-date cache never blocks anything.
      */
     fun at(json: String, now: Instant): BlockDecision? {
         val timeline = JSONObject(json).optJSONArray("timeline") ?: return null
+        if (timeline.length() == 0) return null
+        // Tolerate a device clock running a little behind the server's.
+        val first = timeline.getJSONObject(0)
+        val firstFrom = Instant.parse(first.getString("from"))
+        if (now.isBefore(firstFrom) && !now.isBefore(firstFrom.minusSeconds(CLOCK_TOLERANCE_SECONDS))) {
+            return parse(first.getJSONObject("decision"))
+        }
         for (index in 0 until timeline.length()) {
             val segment = timeline.getJSONObject(index)
             if (!now.isBefore(Instant.parse(segment.getString("from"))) && now.isBefore(Instant.parse(segment.getString("to")))) {

@@ -343,9 +343,9 @@
   {/if}
 
   <section class="planning-settings" aria-labelledby="planning-settings-heading">
-    <div class="section-head"><div><h3 id="planning-settings-heading">Planning settings</h3><p class="muted">The daily-plan gate is stored for later enforcement work.</p></div></div>
+    <div class="section-head"><div><h3 id="planning-settings-heading">Planning settings</h3><p class="muted">Controls what the phone blocks when there is no plan for today.</p></div></div>
     <label class="setting-row"><input type="checkbox" checked={planningSettings?.daily_plan_gate_enabled ?? false} disabled={settingsBusy || !planningSettings} on:change={(event) => updateGate(event.currentTarget.checked)} /> Daily-plan gate preference</label>
-    <p class="muted setting-note">Enforcement is inactive in this slice. Changing this preference does not block any app or action.</p>
+    <p class="muted setting-note">On: while today has no plan, your blocked apps stay closed until you plan the day. Off: a day without a plan counts as free time.</p>
     {#if settingsError}<p class="error" role="alert">{settingsError}</p>{/if}
   </section>
 

@@ -9,6 +9,8 @@ class TelemetryCollectionWorker(context: Context, workerParameters: WorkerParame
     CoroutineWorker(context, workerParameters) {
     override suspend fun doWork(): Result {
         CollectionRuntime.runCycle(applicationContext, backgroundHealth = true)
+        runCatching { PolicyWatch.check(applicationContext) }
+        CollectionStarter.ensureRunning(applicationContext)
         return Result.success()
     }
 }

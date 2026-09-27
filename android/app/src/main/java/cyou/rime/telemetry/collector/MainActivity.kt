@@ -42,6 +42,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var reason: TextView
     private lateinit var footer: TextView
     private lateinit var setup: Button
+    private lateinit var blocking: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -69,6 +70,11 @@ class MainActivity : ComponentActivity() {
             visibility = View.GONE
             setOnClickListener { openSetup() }
         }
+        blocking = Button(this).apply {
+            text = "Turn on blocking"
+            visibility = View.GONE
+            setOnClickListener { startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+        }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad * 2, pad, pad)
@@ -79,6 +85,7 @@ class MainActivity : ComponentActivity() {
             addView(resume)
             addView(reason)
             addView(setup)
+            addView(blocking)
             addView(Button(this@MainActivity).apply {
                 text = "Open planner"
                 setOnClickListener { openPanel() }
@@ -96,6 +103,7 @@ class MainActivity : ComponentActivity() {
         setContentView(ScrollView(this).apply { setBackgroundColor(BACKGROUND); addView(content) })
         showCached()
         if (savedInstanceState == null && SetupActivity.needsSetup(this)) openSetup()
+        CollectionStarter.ensureRunning(this)
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.RESUMED) {
@@ -117,6 +125,7 @@ class MainActivity : ComponentActivity() {
         val config = DeliveryConfig(this)
         val token = config.token()
         setup.visibility = if (SetupActivity.needsSetup(this)) View.VISIBLE else View.GONE
+        blocking.visibility = if (token != null && !PolicyEvents.blockingEnabled(this)) View.VISIBLE else View.GONE
         if (token == null) {
             if (!showCached()) {
                 mode.text = "NOT SET UP"
