@@ -34,6 +34,8 @@ type Config struct {
 	DeviceAuthorized    func(context.Context, string, string) (bool, bool, error)
 	ClerkPublishableKey string
 	PairingEnabled      bool
+	// DeviceSessions, when set, lets paired devices open owner panel views.
+	DeviceSessions *DeviceSessions
 }
 
 type Server struct {
@@ -89,6 +91,7 @@ func New(repository store.Repository, config Config) (*Server, error) {
 	server.mux.HandleFunc("GET /v1/policy/current", server.policyCurrent)
 	server.mux.HandleFunc("GET /v1/policy/timeline", server.policyTimeline)
 	server.mux.HandleFunc("GET /v1/device/now", server.deviceNow)
+	server.mux.HandleFunc("POST /v1/device/panel-session", server.devicePanelSession)
 	server.mux.HandleFunc("POST /v1/context-rules/{id}/disable", server.disableContextRule)
 	server.mux.HandleFunc("GET /v1/plans/{date}/replan-proposals/{id}", server.replanProposal)
 	server.mux.HandleFunc("POST /v1/plans/{date}/replan-proposals/{id}/accept", server.acceptReplanProposal)
@@ -232,7 +235,7 @@ func (s *Server) ingestAuthorized(request *http.Request, deviceID string) bool {
 
 func (s *Server) readAuthorized(request *http.Request) bool {
 	if s.config.OwnerAuthorized != nil {
-		return s.authorized(request, s.config.ReadToken) || s.config.OwnerAuthorized(request)
+		return s.authorized(request, s.config.ReadToken) || s.ownerAuthorized(request)
 	}
 	return s.authorized(request, s.config.ReadToken) || s.panelSessionAuthorized(request)
 }
@@ -244,7 +247,7 @@ func (s *Server) panelSessionsEnabled() bool {
 func (s *Server) panelSessionStatus(writer http.ResponseWriter, request *http.Request) {
 	if s.config.OwnerAuthorized != nil {
 		writer.Header().Set("Cache-Control", "no-store")
-		writeJSON(writer, http.StatusOK, map[string]bool{"authenticated": s.config.OwnerAuthorized(request)})
+		writeJSON(writer, http.StatusOK, map[string]bool{"authenticated": s.ownerAuthorized(request)})
 		return
 	}
 	if !s.panelSessionsEnabled() {

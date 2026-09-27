@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -86,11 +87,19 @@ func main() {
 			log.Print("Clerk sign-in setup only: owner API access disabled until TELEMETRY_CLERK_OWNER_ID is configured")
 		}
 	}
+	// A fresh key per start: the app requests a new device session each time
+	// it opens the panel, so a restart only invalidates open in-app views.
+	deviceSessionKey := make([]byte, 32)
+	if _, err := rand.Read(deviceSessionKey); err != nil {
+		log.Fatal(err)
+	}
+	deviceSessions := httpapi.NewDeviceSessions(deviceSessionKey, 12*time.Hour)
 	server, err := httpapi.New(database, httpapi.Config{
 		IngestToken:         *ingestToken,
 		OwnerAuthorized:     ownerAuthorized,
 		DeviceAuthorized:    devices.AuthorizeDevice,
 		PairingEnabled:      clerkKey != "" && ownerID != "",
+		DeviceSessions:      deviceSessions,
 		ClerkPublishableKey: clerkKey,
 		IngestDeviceTokens:  ingestDeviceTokens,
 		ReadToken:           *readToken,

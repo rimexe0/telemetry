@@ -32,6 +32,7 @@
     loadHealthHistory,
     loadObservationHistory,
     iterateObservationHistory,
+    listPendingPairings,
     pairingDetails,
     recordExecutionEvent,
     returnToPrimary,
@@ -52,6 +53,7 @@
     type Device,
     type Observation,
     type PairingDetails,
+    type PendingPairing,
     type Plan,
     type PlanBlock,
     type PlanInput,
@@ -123,6 +125,9 @@
   let pairingError = '';
   let pairingIntent = false;
   let pairingApproved = false;
+  let pendingPairings: PendingPairing[] = [];
+  let pendingApproving = '';
+  let pendingError = '';
   let clerkUnsubscribe: (() => void) | undefined;
   let sources: SourceSummary[] = [];
   let observations: Observation[] = [];
@@ -491,6 +496,29 @@
     }
   }
 
+  // Devices waiting to be connected can be approved from any signed-in panel.
+  async function refreshPendingPairings(): Promise<void> {
+    try {
+      pendingPairings = await listPendingPairings();
+    } catch {
+      pendingPairings = [];
+    }
+  }
+
+  async function approvePending(item: PendingPairing): Promise<void> {
+    pendingApproving = item.pairing_id;
+    pendingError = '';
+    try {
+      await approvePairing(item.pairing_id);
+      await refreshPendingPairings();
+      if (view === 'devices') await refreshDevices();
+    } catch (cause) {
+      pendingError = cause instanceof Error ? cause.message : 'Could not connect the device.';
+    } finally {
+      pendingApproving = '';
+    }
+  }
+
   async function revoke(device: Device): Promise<void> {
     devicesError = '';
     try {
@@ -510,6 +538,7 @@
       }
       return;
     }
+    void refreshPendingPairings();
     const requestedView = view;
     if (requestedView !== 'day') {
       loading = true;
@@ -819,6 +848,13 @@
       <button class:active={view === 'collection'} aria-pressed={view === 'collection'} on:click={() => { view = 'collection'; void refresh(); }}>Sources</button>
       <button class:active={view === 'devices'} aria-pressed={view === 'devices'} on:click={() => { view = 'devices'; void refresh(); }}>Devices</button>
     </nav>
+    {#each pendingPairings as item (item.pairing_id)}
+      <section class="pairing" aria-label="Device waiting to connect">
+        <div class="pairing-row"><strong>{item.device_name || 'A device'} wants to connect</strong><span>{item.device_id}</span>
+          <button on:click={() => approvePending(item)} disabled={pendingApproving === item.pairing_id}>{pendingApproving === item.pairing_id ? 'Connecting…' : 'Connect'}</button></div>
+        {#if pendingError}<p class="error" role="alert">{pendingError}</p>{/if}
+      </section>
+    {/each}
     {#if pairingId}
       <section class="pairing" aria-labelledby="pairing-heading">
         <div class="section-title"><h2 id="pairing-heading">Connect device</h2><span class="count">{pairing?.status ?? 'pending'}</span></div>

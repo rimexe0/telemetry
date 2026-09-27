@@ -16,7 +16,7 @@ import (
 // so neither device tokens nor the read token may touch them. Agents gain a
 // separate scoped path later through the reviewed change loop.
 func (s *Server) ownerAuthorized(request *http.Request) bool {
-	return s.config.OwnerAuthorized != nil && s.config.OwnerAuthorized(request)
+	return (s.config.OwnerAuthorized != nil && s.config.OwnerAuthorized(request)) || s.config.DeviceSessions.Authorized(request)
 }
 
 func (s *Server) activities(writer http.ResponseWriter, request *http.Request) {

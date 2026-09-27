@@ -61,6 +61,7 @@ func NewHandler(service *Service, config HandlerConfig) (*Handler, error) {
 		mux:           http.NewServeMux(),
 	}
 	handler.mux.HandleFunc("POST /v1/pairing/sessions", handler.start)
+	handler.mux.HandleFunc("GET /v1/pairing/sessions", handler.listPending)
 	handler.mux.HandleFunc("GET /v1/pairing/sessions/{pairing_id}", handler.poll)
 	handler.mux.HandleFunc("GET /v1/pairing/sessions/{pairing_id}/details", handler.details)
 	handler.mux.HandleFunc("POST /v1/pairing/sessions/{pairing_id}/approve", handler.approve)
@@ -155,6 +156,19 @@ func (h *Handler) approve(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"status": session.Status, "device_id": session.DeviceID})
+}
+
+func (h *Handler) listPending(writer http.ResponseWriter, request *http.Request) {
+	if !h.verifyOwner(request) {
+		writeError(writer, http.StatusUnauthorized, "unauthorized", "owner credentials are required")
+		return
+	}
+	sessions, err := h.service.ListPending(request.Context())
+	if err != nil {
+		writeServiceError(writer, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"sessions": sessions})
 }
 
 func (h *Handler) listDevices(writer http.ResponseWriter, request *http.Request) {

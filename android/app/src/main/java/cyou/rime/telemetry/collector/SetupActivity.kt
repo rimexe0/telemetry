@@ -84,12 +84,16 @@ class SetupActivity : ComponentActivity() {
     private lateinit var status: TextView
     private lateinit var primary: Button
     private lateinit var skip: Button
+    private lateinit var approveHere: Button
     private lateinit var permissionLauncher: ActivityResultLauncher<Array<String>>
     private lateinit var healthLauncher: ActivityResultLauncher<Set<String>>
     private var current: SetupStep? = null
     private var healthDone = false
-    private val pairingFlow by lazy {
-        PairingFlow(this, lifecycleScope, onStatus = { status.text = it }, onPaired = { refresh() })
+    private val pairingFlow: PairingFlow by lazy {
+        PairingFlow(this, lifecycleScope, onStatus = {
+            status.text = it
+            approveHere.visibility = if (current == SetupStep.PAIR && pairingFlow.approvalUrl != null) View.VISIBLE else View.GONE
+        }, onPaired = { refresh() })
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -113,6 +117,13 @@ class SetupActivity : ComponentActivity() {
             text = "Skip for now"
             setOnClickListener { current?.let(::skipStep) }
         }
+        approveHere = Button(this).apply {
+            text = "Approve on this phone instead"
+            visibility = View.GONE
+            setOnClickListener {
+                pairingFlow.approvalUrl?.let { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(it))) }
+            }
+        }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad * 2, pad, pad)
@@ -122,6 +133,7 @@ class SetupActivity : ComponentActivity() {
             addView(primary)
             addView(skip)
             addView(status)
+            addView(approveHere)
         }
         window.decorView.setBackgroundColor(BACKGROUND)
         setContentView(ScrollView(this).apply { setBackgroundColor(BACKGROUND); addView(content) })
@@ -160,6 +172,7 @@ class SetupActivity : ComponentActivity() {
             why.text = "Collection is running. You can change anything later in Settings."
             primary.text = "Go to Now"
             skip.visibility = View.GONE
+            approveHere.visibility = View.GONE
             return
         }
         val total = SetupStep.entries.size
@@ -173,7 +186,7 @@ class SetupActivity : ComponentActivity() {
     private fun act() {
         val step = current ?: run { finish(); return }
         when (step) {
-            SetupStep.PAIR -> pairingFlow.start(DeliveryConfig(this).serverUrl)
+            SetupStep.PAIR -> pairingFlow.start(DeliveryConfig(this).serverUrl, openBrowser = false)
             SetupStep.NOTIFICATIONS -> if (Build.VERSION.SDK_INT >= 33) {
                 permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
             }

@@ -66,6 +66,12 @@ func TestPairingHTTPApprovalBoundary(t *testing.T) {
 			t.Fatalf("approval %v got %d", tc, w.Code)
 		}
 	}
+	if w := call("GET", "/v1/pairing/sessions", "other", "", ""); w.Code != 401 {
+		t.Fatalf("pending list leaked %d", w.Code)
+	}
+	if w := call("GET", "/v1/pairing/sessions", "owner", "", ""); w.Code != 200 || !strings.Contains(w.Body.String(), session.PairingID) {
+		t.Fatalf("pending list %d %s", w.Code, w.Body.String())
+	}
 	if w := call("GET", base+"/details", "other", "", ""); w.Code != 401 {
 		t.Fatalf("details leaked %d", w.Code)
 	}
@@ -74,6 +80,9 @@ func TestPairingHTTPApprovalBoundary(t *testing.T) {
 	}
 	if w := call("POST", base+"/approve", "owner", "https://panel.example:8443", "{}"); w.Code != 200 {
 		t.Fatalf("approve %d %s", w.Code, w.Body.String())
+	}
+	if w := call("GET", "/v1/pairing/sessions", "owner", "", ""); strings.Contains(w.Body.String(), session.PairingID) {
+		t.Fatal("approved request still listed as pending")
 	}
 	if w := call("GET", base, secret, "", ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"approved"`) {
 		t.Fatalf("poll %d %s", w.Code, w.Body.String())

@@ -11,7 +11,7 @@ enum class SetupStep(
     val action: String,
 ) {
     PAIR(true, "Connect this phone",
-        "Links the phone to your Telemetry server so it can show your current task and send what it collects. Turn Tailscale on first. Your browser opens to sign in; tap Connect there, then come back.",
+        "Links the phone to your Telemetry server. Turn Tailscale on first, tap Connect here, then approve it in the Telemetry panel on your Mac.",
         "Connect"),
     NOTIFICATIONS(true, "Allow notifications",
         "Collection runs with a visible notification, and later the phone asks you short questions when something looks off.",

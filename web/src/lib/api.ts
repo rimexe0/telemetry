@@ -637,3 +637,10 @@ export async function rejectReplanProposal(planDate: string, proposalId: number,
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note })
   });
 }
+
+export type PendingPairing = { pairing_id: string; device_id: string; device_name?: string; status: string; expires_at: string };
+
+export async function listPendingPairings(): Promise<PendingPairing[]> {
+  const result = await request<{ sessions: PendingPairing[] | null }>('/v1/pairing/sessions');
+  return result.sessions ?? [];
+}

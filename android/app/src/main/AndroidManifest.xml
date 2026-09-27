@@ -40,6 +40,10 @@
             </intent-filter>
         </activity>
         <activity
+            android:name=".PanelActivity"
+            android:label="Telemetry"
+            android:exported="false" />
+        <activity
             android:name=".SetupActivity"
             android:label="Set up Telemetry"
             android:exported="false" />

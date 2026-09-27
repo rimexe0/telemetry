@@ -29,7 +29,11 @@ class PairingFlow(
 
     private var job: Job? = null
 
-    fun start(serverUrl: String) {
+    /** The panel link for approving on this phone instead of another signed-in panel. */
+    var approvalUrl: String? = null
+        private set
+
+    fun start(serverUrl: String, openBrowser: Boolean = true) {
         val config = DeliveryConfig(context)
         if (serverUrl.isBlank()) {
             onStatus("Enter the private Telemetry server URL first.")
@@ -52,8 +56,13 @@ class PairingFlow(
                     client(serverUrl).start(secret)
                 }
                 config.savePairing(start.id, secret)
-                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(start.panelUrl)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                onStatus("Sign in in the browser and tap Connect, then come back here.")
+                approvalUrl = start.panelUrl
+                if (openBrowser) {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(start.panelUrl)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    onStatus("Sign in in the browser and tap Connect, then come back here.")
+                } else {
+                    onStatus("Now open the Telemetry panel on your Mac and click Connect on the \"wants to connect\" banner. This screen moves on by itself.")
+                }
                 poll(serverUrl, start.id, secret)
             } catch (error: Exception) {
                 if (error is kotlinx.coroutines.CancellationException) throw error

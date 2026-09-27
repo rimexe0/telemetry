@@ -4,7 +4,6 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
@@ -86,7 +85,7 @@ class MainActivity : ComponentActivity() {
             addView(reason)
             addView(setup)
             addView(Button(this@MainActivity).apply {
-                text = "Start, stuck, done… (opens Now)"
+                text = "Open planner"
                 setOnClickListener { openPanel() }
             })
             addView(footer)
@@ -117,10 +116,7 @@ class MainActivity : ComponentActivity() {
 
     private fun openSetup() = startActivity(Intent(this, SetupActivity::class.java))
 
-    private fun openPanel() {
-        val server = DeliveryConfig(this).serverUrl.trimEnd('/')
-        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("$server/panel/")))
-    }
+    private fun openPanel() = startActivity(Intent(this, PanelActivity::class.java))
 
     private suspend fun refresh() {
         val config = DeliveryConfig(this)

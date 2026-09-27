@@ -298,6 +298,25 @@ func (s *Service) Approve(ctx context.Context, pairingID string) (PairingSession
 	return value, tx.Commit(ctx)
 }
 
+// ListPending returns unexpired pairing requests so the owner can approve a
+// device from any signed-in panel instead of only the link it opened.
+func (s *Service) ListPending(ctx context.Context) ([]PairingSession, error) {
+	rows, err := s.pool.Query(ctx, `SELECT pairing_id,device_id,device_name,status,expires_at,approved_at FROM telemetry_pairing_sessions WHERE status='pending' AND expires_at > $1 ORDER BY created_at DESC LIMIT 20`, s.now())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []PairingSession{}
+	for rows.Next() {
+		var v PairingSession
+		if err := rows.Scan(&v.PairingID, &v.DeviceID, &v.DeviceName, &v.Status, &v.ExpiresAt, &v.ApprovedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, v)
+	}
+	return result, rows.Err()
+}
+
 func (s *Service) ListDevices(ctx context.Context) ([]Device, error) {
 	rows, err := s.pool.Query(ctx, `SELECT device_id,device_name,pairing_id,status,created_at,approved_at,revoked_at,last_seen_at FROM telemetry_devices WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 1000`, ownerIdentity)
 	if err != nil {
