@@ -77,7 +77,7 @@ class PairingFlow(
         val pairingId = config.pairingId ?: return
         val secret = config.pairingSecret() ?: return
         if (job?.isActive == true) return
-        poll(config.pairingServer() ?: return, pairingId, secret)
+        poll(config.pairingServer() ?: return, pairingId, secret, resumed = true)
     }
 
     private fun client(serverUrl: String) = TelemetryPairingClient(
@@ -86,7 +86,8 @@ class PairingFlow(
         deviceName = deviceDisplayName(),
     )
 
-    private fun poll(serverUrl: String, pairingId: String, secret: String) {
+    // A resumed request that has expired is cleared quietly; it is not news.
+    private fun poll(serverUrl: String, pairingId: String, secret: String, resumed: Boolean = false) {
         job?.cancel()
         job = scope.launch {
             val config = DeliveryConfig(context.applicationContext)
@@ -113,14 +114,14 @@ class PairingFlow(
                         }
                         PairingStatus.State.EXPIRED -> {
                             config.clearPairing()
-                            onStatus("Pairing expired. Start it again when ready.")
+                            onStatus(if (resumed) "" else "Pairing expired. Tap Connect to try again.")
                             return@launch
                         }
                     }
                 } catch (error: PairingException) {
                     if (error.status !in RETRYABLE) {
                         config.clearPairing()
-                        onStatus("Pairing could not be continued; start it again when ready.")
+                        onStatus(if (resumed) "" else "Pairing could not be continued; start it again when ready.")
                         return@launch
                     }
                     onStatus("Waiting for the private Telemetry server…")
