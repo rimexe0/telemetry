@@ -119,7 +119,8 @@ export async function listDevices(): Promise<Device[]> {
 }
 
 export async function revokeDevice(deviceId: string): Promise<void> {
-  await request(`/v1/devices/${encodeURIComponent(deviceId)}/revoke`, { method: 'POST' });
+  // The server requires an explicit empty JSON object for these actions.
+  await request(`/v1/devices/${encodeURIComponent(deviceId)}/revoke`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
 }
 
 export async function pairingDetails(pairingId: string): Promise<PairingDetails> {
@@ -127,7 +128,7 @@ export async function pairingDetails(pairingId: string): Promise<PairingDetails>
 }
 
 export async function approvePairing(pairingId: string): Promise<void> {
-  await request(`/v1/pairing/sessions/${encodeURIComponent(pairingId)}/approve`, { method: 'POST' });
+  await request(`/v1/pairing/sessions/${encodeURIComponent(pairingId)}/approve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
 }
 
 export async function listSources(): Promise<SourceSummary[]> {

@@ -188,3 +188,16 @@ test('stale replan acceptance surfaces the server conflict', async () => {
 
   await expect(acceptReplanProposal('2026-09-25', { id: 3, content_hash: 'abc' })).rejects.toEqual(new APIError(409, 'plan changed after the proposal was prepared'));
 });
+
+test('pairing approval and device revocation send the empty JSON object the server requires', async () => {
+  const { approvePairing, revokeDevice } = await import('./api');
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 'approved' }), { status: 200 }));
+  vi.stubGlobal('fetch', fetch);
+  await approvePairing('pair-1');
+  await revokeDevice('android-1');
+  for (const call of fetch.mock.calls) {
+    const init = call[1] as RequestInit;
+    expect(init.body).toBe('{}');
+    expect(new Headers(init.headers).get('Content-Type')).toBe('application/json');
+  }
+});

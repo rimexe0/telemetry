@@ -17,7 +17,7 @@ enum class SetupStep(
         "Collection runs with a visible notification, and later the phone asks you short questions when something looks off.",
         "Allow"),
     USAGE_ACCESS(true, "Allow usage access",
-        "Lets Telemetry see which app is open, so it can tell work from scrolling. Find Telemetry in the list and switch it on, then come back.",
+        "Lets Telemetry see which app is open, so it can tell work from scrolling. Switch it on, then come back.",
         "Open setting"),
     HEALTH(false, "Allow health data",
         "Sleep and steps from Health Connect let Telemetry notice when you wake up and when you've moved.",

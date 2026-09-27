@@ -96,7 +96,7 @@ class PairingFlow(
                 try {
                     val result = withContext(Dispatchers.IO) { client.poll(pairingId, secret) }
                     when (result.state) {
-                        PairingStatus.State.PENDING -> onStatus("Waiting for you to approve in the browser…")
+                        PairingStatus.State.PENDING -> onStatus("Waiting for approval. Click Connect on the \"wants to connect\" banner in the Telemetry panel.")
                         PairingStatus.State.APPROVED -> {
                             if (result.deviceId != DeviceIdentity.get(context.applicationContext)) {
                                 throw IllegalStateException("pairing approval was for another device")

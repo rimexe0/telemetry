@@ -181,6 +181,7 @@ class SetupActivity : ComponentActivity() {
         why.text = step.why
         primary.text = step.action
         skip.visibility = if (step.required) View.GONE else View.VISIBLE
+        approveHere.visibility = if (step == SetupStep.PAIR && pairingFlow.approvalUrl != null) View.VISIBLE else View.GONE
     }
 
     private fun act() {

@@ -4,6 +4,9 @@ import android.annotation.SuppressLint
 import android.graphics.Color
 import android.os.Bundle
 import android.webkit.CookieManager
+import android.widget.FrameLayout
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.TextView
@@ -42,7 +45,17 @@ class PanelActivity : ComponentActivity() {
             settings.domStorageEnabled = true
             webViewClient = WebViewClient()
         }
-        setContentView(web)
+        // Keep the page clear of the status and navigation bars (edge-to-edge on Android 15+).
+        val frame = FrameLayout(this).apply {
+            setBackgroundColor(Color.rgb(17, 18, 19))
+            addView(web)
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(frame) { view, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            WindowInsetsCompat.CONSUMED
+        }
+        setContentView(frame)
         onBackPressedDispatcher.addCallback(this) {
             if (web.canGoBack()) web.goBack() else finish()
         }
