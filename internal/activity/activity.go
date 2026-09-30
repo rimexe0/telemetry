@@ -79,7 +79,7 @@ func Build(records []Record, from, to time.Time) Result {
 	var windows, afk, web []span
 	var usage []Record
 	var screen []screenState
-	recordTimes := map[string][]time.Time{}
+	covered := map[string][]span{}
 	for _, record := range records {
 		device := DeviceOf(record.Source)
 		if device == "" {
@@ -92,10 +92,7 @@ func Build(records []Record, from, to time.Time) Result {
 		if at.After(result.LastRecord[device]) {
 			result.LastRecord[device] = at
 		}
-		recordTimes[device] = append(recordTimes[device], record.Start)
-		if record.End != nil {
-			recordTimes[device] = append(recordTimes[device], *record.End)
-		}
+		covered[device] = append(covered[device], span{start: record.Start, end: at})
 		switch {
 		case strings.Contains(record.Source, "aw-watcher-window"):
 			windows = appendAWSpan(windows, record)
@@ -118,7 +115,7 @@ func Build(records []Record, from, to time.Time) Result {
 	segments = append(segments, phoneSegments(usage, screen, to)...)
 	result.Segments = clipAndMerge(segments, from, to)
 	for _, device := range []string{DeviceMac, DevicePhone} {
-		result.Gaps = append(result.Gaps, gaps(device, recordTimes[device], from, to)...)
+		result.Gaps = append(result.Gaps, gaps(device, covered[device], from, to)...)
 	}
 	sort.Slice(result.Gaps, func(i, j int) bool { return result.Gaps[i].Start.Before(result.Gaps[j].Start) })
 	return result
@@ -337,21 +334,20 @@ func clipAndMerge(segments []Segment, from, to time.Time) []Segment {
 	return result
 }
 
-func gaps(device string, times []time.Time, from, to time.Time) []Gap {
-	sort.Slice(times, func(i, j int) bool { return times[i].Before(times[j]) })
+// gaps finds periods of at least gapThreshold covered by no record. A record
+// covers its whole span, so one long AFK event is not a gap.
+func gaps(device string, spans []span, from, to time.Time) []Gap {
+	sort.Slice(spans, func(i, j int) bool { return spans[i].start.Before(spans[j].start) })
 	result := []Gap{}
 	cursor := from
-	for _, at := range times {
-		if at.Before(from) {
-			continue
-		}
-		if at.After(to) {
+	for _, s := range spans {
+		if s.start.After(to) {
 			break
 		}
-		if at.Sub(cursor) >= gapThreshold {
-			result = append(result, Gap{Device: device, Start: cursor, End: at})
+		if s.start.Sub(cursor) >= gapThreshold {
+			result = append(result, Gap{Device: device, Start: cursor, End: s.start})
 		}
-		cursor = later(cursor, at)
+		cursor = later(cursor, s.end)
 	}
 	if to.Sub(cursor) >= gapThreshold {
 		result = append(result, Gap{Device: device, Start: cursor, End: to})

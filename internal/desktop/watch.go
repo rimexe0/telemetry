@@ -145,7 +145,9 @@ func (w *afkWatcher) sample(ctx context.Context) error {
 	}
 	now := w.options.Now()
 	lastInput := now.Add(-idle)
-	pulse := (w.options.AFKPoll + time.Second).Seconds()
+	// Like aw-watcher-afk: inputs less than the AFK timeout apart belong to
+	// one active span.
+	pulse := (w.options.AFKTimeout + w.options.AFKPoll).Seconds()
 	nowAFK := locked || idle >= w.options.AFKTimeout
 	if nowAFK != w.afk {
 		if err := w.beat(ctx, lastInput, now, pulse); err != nil {

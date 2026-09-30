@@ -103,3 +103,12 @@ func TestSilenceIsReportedNotCountedAsInactivity(t *testing.T) {
 		t.Fatalf("a device with no records must show one gap over the whole range: %+v", macGaps)
 	}
 }
+
+func TestLongRecordCoversItsSpanForSilence(t *testing.T) {
+	records := []Record{aw("aw-watcher-afk_h", 0, 50, `{"status":"afk"}`), aw("aw-watcher-afk_h", 50, 10, `{"status":"not-afk"}`)}
+	for _, gap := range Build(records, at(0), at(60)).Gaps {
+		if gap.Device == DeviceMac {
+			t.Fatalf("a 50-minute afk record is evidence, not silence: %+v", gap)
+		}
+	}
+}
