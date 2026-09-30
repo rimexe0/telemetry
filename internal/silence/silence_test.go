@@ -20,6 +20,10 @@ func kinds(findings []Finding) map[string]bool {
 	return result
 }
 
+func mac(state string, at int, window *WindowStatus) DesktopStatus {
+	return DesktopStatus{DeviceID: "mac-1", Name: "plagiarism", At: *ago(at), State: state, Window: window}
+}
+
 func TestPhoneSilenceUsesReceiptTime(t *testing.T) {
 	if got := kinds(Evaluate(Evidence{PhoneLastReceived: ago(5)}, now)); len(got) != 0 {
 		t.Fatalf("5 minutes is normal: %v", got)
@@ -34,29 +38,49 @@ func TestPhoneSilenceUsesReceiptTime(t *testing.T) {
 
 func TestAnnouncedSleepIsNotAProblem(t *testing.T) {
 	for _, state := range []string{"sleeping", "stopping"} {
-		if got := Evaluate(Evidence{Desktop: &DesktopStatus{At: *ago(300), State: state}}, now); len(got) != 0 {
+		if got := Evaluate(Evidence{Desktops: []DesktopStatus{mac(state, 300, nil)}}, now); len(got) != 0 {
 			t.Fatalf("%s: %v", state, got)
 		}
 	}
-	got := kinds(Evaluate(Evidence{Desktop: &DesktopStatus{At: *ago(11), State: "running", TitlesReadable: true, LastWindowAt: ago(11)}}, now))
-	if !got["mac/silent"] || len(got) != 1 {
-		t.Fatalf("unannounced silence must be reported alone: %v", got)
+	got := Evaluate(Evidence{Desktops: []DesktopStatus{mac("running", 11, &WindowStatus{TitlesReadable: true, LastWindowAt: ago(11)})}}, now)
+	if len(got) != 1 || got[0].Device != "mac-1" || got[0].Kind != KindSilent || got[0].Detail["device_name"] != "plagiarism" {
+		t.Fatalf("unannounced silence must be reported alone: %+v", got)
+	}
+}
+
+func TestEachDeviceIsJudgedOnItsOwn(t *testing.T) {
+	server := DesktopStatus{DeviceID: "datalix", Name: "vps1", At: *ago(1), State: "running"}
+	got := kinds(Evaluate(Evidence{Desktops: []DesktopStatus{server, mac("running", 12, &WindowStatus{TitlesReadable: true, LastWindowAt: ago(12)})}}, now))
+	if !got["mac-1/silent"] || len(got) != 1 {
+		t.Fatalf("a headless server without the window module must not be judged on windows: %v", got)
 	}
 }
 
 func TestRunningCollectorThatCannotSeeIsReported(t *testing.T) {
-	got := kinds(Evaluate(Evidence{Desktop: &DesktopStatus{At: *ago(1), State: "running", TitlesReadable: false, LastWindowAt: ago(9)}}, now))
-	if !got["mac/titles_unreadable"] || !got["mac/window_sampling_stopped"] {
+	got := kinds(Evaluate(Evidence{Desktops: []DesktopStatus{mac("running", 1, &WindowStatus{TitlesReadable: false, LastWindowAt: ago(9)})}}, now))
+	if !got["mac-1/titles_unreadable"] || !got["mac-1/window_sampling_stopped"] {
 		t.Fatalf("got %v", got)
 	}
-	healthy := Evaluate(Evidence{Desktop: &DesktopStatus{At: *ago(1), State: "running", TitlesReadable: true, LastWindowAt: ago(1)}}, now)
+	healthy := Evaluate(Evidence{Desktops: []DesktopStatus{mac("running", 1, &WindowStatus{TitlesReadable: true, LastWindowAt: ago(1)})}}, now)
 	if len(healthy) != 0 {
 		t.Fatalf("healthy collector: %v", healthy)
 	}
 }
 
-func TestStartupStatusDoesNotJudgeWatchers(t *testing.T) {
-	if got := Evaluate(Evidence{Desktop: &DesktopStatus{At: *ago(0), State: "started"}}, now); len(got) != 0 {
+func TestFailingModuleIsReportedAfterAWhile(t *testing.T) {
+	status := DesktopStatus{DeviceID: "datalix", Name: "vps1", At: *ago(1), State: "running",
+		Modules: map[string]ModuleStatus{"t3": {Error: "schema changed", ErrorSince: ago(3)}}}
+	if got := Evaluate(Evidence{Desktops: []DesktopStatus{status}}, now); len(got) != 0 {
+		t.Fatalf("a brief failure is not an incident: %v", got)
+	}
+	status.Modules["t3"] = ModuleStatus{Error: "schema changed", ErrorSince: ago(12)}
+	if got := kinds(Evaluate(Evidence{Desktops: []DesktopStatus{status}}, now)); !got["datalix/module_failing:t3"] {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestStartupStatusDoesNotJudgeModules(t *testing.T) {
+	if got := Evaluate(Evidence{Desktops: []DesktopStatus{mac("started", 0, &WindowStatus{})}}, now); len(got) != 0 {
 		t.Fatalf("got %v", got)
 	}
 }

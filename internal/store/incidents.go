@@ -26,29 +26,75 @@ func (p *Postgres) CollectionEvidence(ctx context.Context) (silence.Evidence, er
 	if err := p.pool.QueryRow(ctx, `SELECT MAX(received_at) FROM ingestion_batches WHERE device_id LIKE 'android-%'`).Scan(&evidence.PhoneLastReceived); err != nil {
 		return evidence, err
 	}
-	var at time.Time
-	var payload []byte
-	err := p.pool.QueryRow(ctx, `
-		SELECT o.occurred_at, r.projection
-		FROM observations o JOIN observation_revisions r ON r.id = o.effective_revision_id
+	rows, err := p.pool.Query(ctx, `
+		SELECT DISTINCT ON (o.source_instance_key) si.device_id, o.occurred_at, r.projection
+		FROM observations o
+		JOIN observation_revisions r ON r.id = o.effective_revision_id
+		JOIN source_instances si ON si.source_instance_key = o.source_instance_key
 		WHERE o.source_instance_key LIKE 'telemetry-desktop:%:collector' AND o.kind = 'telemetry.collector_status'
-		ORDER BY o.occurred_at DESC LIMIT 1`).Scan(&at, &payload)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return evidence, nil
-	}
+		ORDER BY o.source_instance_key, o.occurred_at DESC`)
 	if err != nil {
 		return evidence, err
 	}
-	var status struct {
-		State          string     `json:"state"`
+	defer rows.Close()
+	for rows.Next() {
+		var device string
+		var at time.Time
+		var payload []byte
+		if err := rows.Scan(&device, &at, &payload); err != nil {
+			return evidence, err
+		}
+		status, err := desktopStatus(device, at, payload)
+		if err != nil {
+			return evidence, err
+		}
+		evidence.Desktops = append(evidence.Desktops, status)
+	}
+	return evidence, rows.Err()
+}
+
+// desktopStatus reads a collector status record. Version 0.1 records kept
+// the window fields at the top level; later ones report per module.
+func desktopStatus(device string, at time.Time, payload []byte) (silence.DesktopStatus, error) {
+	type window struct {
 		TitlesReadable bool       `json:"titles_readable"`
 		LastWindowAt   *time.Time `json:"last_window_sample_at"`
 	}
-	if err := json.Unmarshal(payload, &status); err != nil {
-		return evidence, err
+	var record struct {
+		State    string                     `json:"state"`
+		Hostname string                     `json:"hostname"`
+		Modules  map[string]json.RawMessage `json:"modules"`
+		window
 	}
-	evidence.Desktop = &silence.DesktopStatus{At: at, State: status.State, TitlesReadable: status.TitlesReadable, LastWindowAt: status.LastWindowAt}
-	return evidence, nil
+	if err := json.Unmarshal(payload, &record); err != nil {
+		return silence.DesktopStatus{}, err
+	}
+	status := silence.DesktopStatus{DeviceID: device, Name: record.Hostname, At: at, State: record.State, Modules: map[string]silence.ModuleStatus{}}
+	if status.Name == "" {
+		status.Name = device
+	}
+	if record.Modules == nil {
+		status.Window = &silence.WindowStatus{TitlesReadable: record.TitlesReadable, LastWindowAt: record.LastWindowAt}
+		return status, nil
+	}
+	for name, raw := range record.Modules {
+		var module struct {
+			Error      string     `json:"error"`
+			ErrorSince *time.Time `json:"error_since"`
+		}
+		if err := json.Unmarshal(raw, &module); err != nil {
+			return status, err
+		}
+		status.Modules[name] = silence.ModuleStatus{Error: module.Error, ErrorSince: module.ErrorSince}
+		if name == "window" {
+			var fields window
+			if err := json.Unmarshal(raw, &fields); err != nil {
+				return status, err
+			}
+			status.Window = &silence.WindowStatus{TitlesReadable: fields.TitlesReadable, LastWindowAt: fields.LastWindowAt}
+		}
+	}
+	return status, nil
 }
 
 // SyncCollectionIncidents opens an incident for each new finding and closes

@@ -71,6 +71,9 @@ type DeviceNow struct {
 
 type ActivityNowOutput struct {
 	Now time.Time `json:"now"`
+	// Coding is T3 Code threads with activity in the last hour, running now,
+	// or waiting for the owner, on every machine that runs the collector.
+	Coding []activity.CodingThread `json:"coding_threads"`
 	// OpenIncidents are current collection problems; affected devices'
 	// activity is incomplete.
 	OpenIncidents []store.CollectionIncident `json:"open_collection_incidents"`
@@ -98,7 +101,35 @@ type ActivityLabelsOutput struct {
 const labelNotes = "Labels are the owner's own names for apps and sites; change them with change_activity_labels. " +
 	"activity_summary totals time per label; a site label wins over the browser's app label."
 
+type CodingThreadsInput struct {
+	ActivityRangeInput
+}
+
+type CodingThreadsOutput struct {
+	From    time.Time               `json:"from"`
+	To      time.Time               `json:"to"`
+	Threads []activity.CodingThread `json:"threads"`
+	Notes   string                  `json:"notes"`
+}
+
+const codingNotes = "T3 Code threads from every machine running the Telemetry collector (each machine's T3 server records work done from any client: desktop, web or phone). " +
+	"messages_sent counts the owner's messages in the range; agent_minutes is time the agent spent working; waiting_for_owner means an approval or answer is pending. Message contents are not collected."
+
 func addActivityTools(server *mcp.Server, repository store.Repository, now func() time.Time) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "coding_threads",
+		Description: "T3 Code threads active in a day or range, or running or waiting for the owner now, newest first. " + codingNotes,
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input CodingThreadsInput) (*mcp.CallToolResult, CodingThreadsOutput, error) {
+		from, to, _, err := activityRange(ctx, repository, input.ActivityRangeInput, now())
+		if err != nil {
+			return nil, CodingThreadsOutput{}, err
+		}
+		records, err := repository.CodingRecords(ctx, from)
+		if err != nil {
+			return nil, CodingThreadsOutput{}, err
+		}
+		return nil, CodingThreadsOutput{From: from, To: to, Threads: activity.CodingThreads(records, from, to), Notes: codingNotes}, nil
+	})
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "activity_labels",
 		Description: "The owner's current labels for apps and sites. " + labelNotes,
@@ -141,13 +172,18 @@ func addActivityTools(server *mcp.Server, repository store.Repository, now func(
 		if err != nil {
 			return nil, ActivityNowOutput{}, err
 		}
+		coding, err := repository.CodingRecords(ctx, from)
+		if err != nil {
+			return nil, ActivityNowOutput{}, err
+		}
 		result := activity.Build(records, from, current)
 		labels, err := repository.ListActivityLabels(ctx)
 		if err != nil {
 			return nil, ActivityNowOutput{}, err
 		}
 		summaries := activity.Summarize(result, 10, store.LabelsForSummary(labels))
-		output := ActivityNowOutput{Now: current, Timezone: location.String(), Notes: activityNotes, OpenIncidents: []store.CollectionIncident{}}
+		output := ActivityNowOutput{Now: current, Timezone: location.String(), Notes: activityNotes, OpenIncidents: []store.CollectionIncident{},
+			Coding: activity.CodingThreads(coding, from, current)}
 		incidents, err := repository.ListCollectionIncidents(ctx, current, 50)
 		if err != nil {
 			return nil, ActivityNowOutput{}, err

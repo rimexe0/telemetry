@@ -80,8 +80,25 @@ func TestPostgresCollectionEvidenceAndActivityRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 	evidence, err := database.CollectionEvidence(ctx)
-	if err != nil || evidence.Desktop == nil || evidence.Desktop.State != "sleeping" || evidence.PhoneLastReceived == nil {
+	if err != nil || len(evidence.Desktops) != 1 || evidence.Desktops[0].State != "sleeping" || evidence.Desktops[0].Window == nil || evidence.PhoneLastReceived == nil {
 		t.Fatalf("evidence = %+v, %v", evidence, err)
+	}
+	later := at.Add(time.Minute)
+	if _, err := database.Ingest(ctx, model.Batch{ID: "b3", DeviceID: "datalix", CollectorVersion: "test", Observations: []model.Observation{
+		{SourceInstanceKey: "telemetry-desktop:datalix:collector", SourceKind: "telemetry_collector", DeviceID: "datalix", SourceRecordKey: "status:1",
+			Kind: "telemetry.collector_status", OccurredAt: later, CollectedAt: later,
+			OriginalPayload: json.RawMessage(`{"state":"running","hostname":"vps1","modules":{"t3":{"error":"schema changed","error_since":"2026-09-30T09:00:00Z"}}}`)},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err = database.CollectionEvidence(ctx)
+	if err != nil || len(evidence.Desktops) != 2 {
+		t.Fatalf("evidence = %+v, %v", evidence, err)
+	}
+	for _, status := range evidence.Desktops {
+		if status.DeviceID == "datalix" && (status.Name != "vps1" || status.Window != nil || status.Modules["t3"].ErrorSince == nil) {
+			t.Fatalf("datalix status = %+v", status)
+		}
 	}
 	records, lastSeen, err := database.ActivityRecords(ctx, at.Add(-time.Hour), at.Add(time.Hour))
 	if err != nil || len(records) != 2 || lastSeen["mac"].IsZero() || lastSeen["phone"].IsZero() {

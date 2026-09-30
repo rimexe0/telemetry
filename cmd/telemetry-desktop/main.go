@@ -10,22 +10,24 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/rimexe0/telemetry/internal/awserver"
+	"github.com/rimexe0/telemetry/internal/collector"
 	"github.com/rimexe0/telemetry/internal/desktop"
 	"github.com/rimexe0/telemetry/internal/deviceauth"
 	"github.com/rimexe0/telemetry/internal/ingest"
 	"github.com/rimexe0/telemetry/internal/queue"
 )
 
-const collectorVersion = "telemetry-desktop/0.1.0"
+const collectorVersion = "telemetry-desktop/0.2.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -63,16 +65,52 @@ func permissions() {
 	fmt.Println("Allow telemetry-desktop in System Settings > Privacy & Security > Accessibility.")
 }
 
+// defaultModules are the modules this system can run.
+func defaultModules() string {
+	if runtime.GOOS == "darwin" {
+		return "window,activitywatch-api,t3"
+	}
+	return "activitywatch-api,t3"
+}
+
+func buildModules(names, listen, t3Dir string) ([]collector.Module, error) {
+	modules := []collector.Module{}
+	seen := map[string]bool{}
+	for _, name := range strings.Split(names, ",") {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		switch name {
+		case "window":
+			modules = append(modules, &collector.Window{})
+		case "activitywatch-api":
+			modules = append(modules, &collector.ActivityWatchAPI{Listen: listen, Version: collectorVersion})
+		case "t3":
+			modules = append(modules, &collector.T3{Dir: t3Dir})
+		default:
+			return nil, fmt.Errorf("unknown module %q (known: window, activitywatch-api, t3)", name)
+		}
+	}
+	if len(modules) == 0 {
+		return nil, errors.New("-modules must name at least one module")
+	}
+	return modules, nil
+}
+
 func run(arguments []string) error {
 	flags := flag.NewFlagSet("run", flag.ExitOnError)
-	listen := flags.String("listen", "127.0.0.1:5600", "loopback address for the ActivityWatch-compatible API")
+	moduleNames := flags.String("modules", defaultModules(), "comma-separated modules to run: window, activitywatch-api, t3")
+	listen := flags.String("listen", "127.0.0.1:5600", "loopback address for the activitywatch-api module")
+	home, _ := os.UserHomeDir()
+	t3Dir := flags.String("t3-dir", filepath.Join(home, ".t3", "userdata"), "T3 Code userdata directory for the t3 module")
 	queuePath := flags.String("queue", "", "SQLite queue path (required)")
 	deviceID := flags.String("device", "", "Telemetry device ID")
 	configPath := flags.String("config", "", "paired device configuration")
 	serverURL := flags.String("server", "", "Telemetry core URL; omit to queue only")
 	tokenFile := flags.String("ingest-token-file", "", "file containing the Telemetry ingest token")
 	hostname := flags.String("hostname", "", "hostname used in bucket names (default: this computer's)")
-	watch := flags.Bool("watch", true, "record the focused window and AFK state")
 	deliverEvery := flags.Duration("deliver-every", 30*time.Second, "how often queued records are sent")
 	flags.Parse(arguments)
 
@@ -90,12 +128,9 @@ func run(arguments []string) error {
 		}
 		*hostname = name
 	}
-	host, _, err := net.SplitHostPort(*listen)
+	modules, err := buildModules(*moduleNames, *listen, *t3Dir)
 	if err != nil {
 		return err
-	}
-	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
-		return errors.New("-listen must be a loopback address")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -109,36 +144,21 @@ func run(arguments []string) error {
 	if err != nil {
 		return err
 	}
-
-	listener, err := net.Listen("tcp", *listen)
-	if err != nil {
-		return fmt.Errorf("listen %s (is aw-server still running?): %w", *listen, err)
-	}
-	server := &http.Server{
-		Handler:           awserver.Handler{Store: store, Hostname: *hostname, Version: collectorVersion},
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-	}
-	health := &desktop.Health{}
-	status := statusReporter{queue: localQueue, client: client, deviceID: *deviceID, health: health, started: time.Now().UTC()}
-	errs := make(chan error, 2)
-	go func() {
-		if err := server.Serve(listener); !errors.Is(err, http.ErrServerClosed) {
-			errs <- err
-		}
-	}()
-	if *watch {
-		platform, err := desktop.NewPlatform()
-		if err != nil {
-			return err
-		}
-		go func() {
-			if err := desktop.Run(ctx, store, platform, desktop.Options{Hostname: *hostname, Health: health}); err != nil {
-				errs <- err
+	host := collector.Host{Store: store, Queue: localQueue, DeviceID: *deviceID, Hostname: *hostname, Logf: log.Printf}
+	status := statusReporter{queue: localQueue, client: client, deviceID: *deviceID, hostname: *hostname, modules: modules, started: time.Now().UTC()}
+	errs := make(chan error, len(modules))
+	moduleCtx, stopModules := context.WithCancel(ctx)
+	defer stopModules()
+	names := []string{}
+	for _, module := range modules {
+		names = append(names, module.Name())
+		go func(module collector.Module) {
+			if err := module.Run(moduleCtx, host); err != nil {
+				errs <- fmt.Errorf("module %s: %w", module.Name(), err)
 			}
-		}()
+		}(module)
 	}
-	log.Printf("%s collecting as %s (%s) on %s", collectorVersion, *deviceID, *hostname, *listen)
+	log.Printf("%s collecting as %s (%s) with %s", collectorVersion, *deviceID, *hostname, strings.Join(names, ", "))
 	if err := status.report(ctx, stateStarted, true); err != nil {
 		log.Printf("status: %v", err)
 	}
@@ -167,9 +187,9 @@ func run(arguments []string) error {
 		case err := <-errs:
 			return err
 		case <-ctx.Done():
+			stopModules()
 			shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			server.Shutdown(shutdown)
 			// Keep the latest state of open events before exiting.
 			err := store.Flush(shutdown)
 			if statusErr := status.report(shutdown, stateStopping, true); statusErr != nil {

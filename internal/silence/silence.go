@@ -13,6 +13,8 @@ const (
 	KindSilent           = "silent"
 	KindTitlesUnreadable = "titles_unreadable"
 	KindWindowStopped    = "window_sampling_stopped"
+	// KindModulePrefix plus a module name: that module kept failing.
+	KindModulePrefix = "module_failing:"
 )
 
 // Thresholds are deliberately above each source's normal cadence: the phone
@@ -21,21 +23,36 @@ const (
 	PhoneSilentAfter   = 15 * time.Minute
 	DesktopSilentAfter = 10 * time.Minute
 	WindowStaleAfter   = 5 * time.Minute
+	ModuleFailingAfter = 10 * time.Minute
 )
 
-// DesktopStatus is the latest telemetry.collector_status from the Mac.
+// DesktopStatus is the latest telemetry.collector_status from one desktop
+// collector (the Mac, or a Linux machine running it headless).
 type DesktopStatus struct {
-	At             time.Time
-	State          string
+	DeviceID string
+	Name     string
+	At       time.Time
+	State    string
+	// Window is nil when the machine does not run the window module.
+	Window  *WindowStatus
+	Modules map[string]ModuleStatus
+}
+
+type WindowStatus struct {
 	TitlesReadable bool
 	LastWindowAt   *time.Time
+}
+
+type ModuleStatus struct {
+	Error      string
+	ErrorSince *time.Time
 }
 
 type Evidence struct {
 	// PhoneLastReceived is when the server last received anything from the
 	// phone. Receipt time is used because a phone backfills old events.
 	PhoneLastReceived *time.Time
-	Desktop           *DesktopStatus
+	Desktops          []DesktopStatus
 }
 
 type Finding struct {
@@ -51,38 +68,57 @@ func Evaluate(evidence Evidence, now time.Time) []Finding {
 	findings := []Finding{}
 	if last := evidence.PhoneLastReceived; last != nil && now.Sub(*last) >= PhoneSilentAfter {
 		findings = append(findings, Finding{Device: DevicePhone, Kind: KindSilent, Since: *last, Detail: map[string]any{
-			"message": "The phone has delivered nothing since this time. It reports every minute, so collection has probably stopped (app force-stopped, no network or Tailscale, or the phone is off).",
+			"device_name": "Phone",
+			"message":     "The phone has delivered nothing since this time. It reports every minute, so collection has probably stopped (app force-stopped, no network or Tailscale, or the phone is off).",
 		}})
 	}
-	status := evidence.Desktop
-	if status == nil {
-		return findings
+	for _, status := range evidence.Desktops {
+		findings = append(findings, evaluateDesktop(status, now)...)
+	}
+	return findings
+}
+
+func evaluateDesktop(status DesktopStatus, now time.Time) []Finding {
+	findings := []Finding{}
+	add := func(kind string, since time.Time, detail map[string]any) {
+		detail["device_name"] = status.Name
+		findings = append(findings, Finding{Device: status.DeviceID, Kind: kind, Since: since, Detail: detail})
 	}
 	switch {
 	case status.State == "sleeping" || status.State == "stopping":
 		// Announced: the silence that follows is expected.
 	case now.Sub(status.At) >= DesktopSilentAfter:
-		findings = append(findings, Finding{Device: DeviceMac, Kind: KindSilent, Since: status.At, Detail: map[string]any{
+		add(KindSilent, status.At, map[string]any{
 			"last_state": status.State,
-			"message":    "The Mac collector stopped reporting without announcing sleep or a stop. It may have crashed, lost its network, or been unloaded.",
-		}})
+			"message":    "The collector on " + status.Name + " stopped reporting without announcing sleep or a stop. It may have crashed, lost its network, or been unloaded.",
+		})
 	case status.State != "running":
-		// "started" and "awake" are sent before the watchers have run, so
-		// they say nothing about watcher health yet.
+		// "started" and "awake" are sent before the modules have run, so
+		// they say nothing about module health yet.
 	default:
-		if !status.TitlesReadable {
-			findings = append(findings, Finding{Device: DeviceMac, Kind: KindTitlesUnreadable, Since: status.At, Detail: map[string]any{
-				"message": "The Mac collector cannot read window titles. Accessibility access for Telemetry Desktop is missing.",
-			}})
-		}
-		if status.LastWindowAt == nil || status.At.Sub(*status.LastWindowAt) >= WindowStaleAfter {
-			since := status.At
-			if status.LastWindowAt != nil {
-				since = *status.LastWindowAt
+		if window := status.Window; window != nil {
+			if !window.TitlesReadable {
+				add(KindTitlesUnreadable, status.At, map[string]any{
+					"message": "The collector on " + status.Name + " cannot read window titles. Accessibility access for Telemetry Desktop is missing.",
+				})
 			}
-			findings = append(findings, Finding{Device: DeviceMac, Kind: KindWindowStopped, Since: since, Detail: map[string]any{
-				"message": "The Mac collector is running but has not recorded the focused window recently.",
-			}})
+			if window.LastWindowAt == nil || status.At.Sub(*window.LastWindowAt) >= WindowStaleAfter {
+				since := status.At
+				if window.LastWindowAt != nil {
+					since = *window.LastWindowAt
+				}
+				add(KindWindowStopped, since, map[string]any{
+					"message": "The collector on " + status.Name + " is running but has not recorded the focused window recently.",
+				})
+			}
+		}
+		for name, module := range status.Modules {
+			if module.ErrorSince != nil && now.Sub(*module.ErrorSince) >= ModuleFailingAfter {
+				add(KindModulePrefix+name, *module.ErrorSince, map[string]any{
+					"module": name, "error": module.Error,
+					"message": "The " + name + " module on " + status.Name + " keeps failing: " + module.Error,
+				})
+			}
 		}
 	}
 	return findings

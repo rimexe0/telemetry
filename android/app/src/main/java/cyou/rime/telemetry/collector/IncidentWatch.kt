@@ -11,7 +11,14 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-data class CollectionIncident(val id: Long, val device: String, val kind: String, val since: Instant, val message: String)
+data class CollectionIncident(
+    val id: Long,
+    val device: String,
+    val kind: String,
+    val since: Instant,
+    val message: String,
+    val deviceName: String = device,
+)
 
 /**
  * Tells the owner when another device's collection has a problem (#28), once
@@ -35,6 +42,8 @@ object IncidentWatch {
                     kind = item.getString("kind"),
                     since = Instant.parse(item.getString("started_at")),
                     message = item.optJSONObject("detail")?.optString("message").orEmpty(),
+                    deviceName = item.optJSONObject("detail")?.optString("device_name").orEmpty()
+                        .removeSuffix(".local").ifBlank { item.getString("device") },
                 )
             }.getOrNull()
         }.filter { it.device != "phone" }
@@ -56,12 +65,14 @@ object IncidentWatch {
     }
 
     fun title(incident: CollectionIncident): String {
-        val device = if (incident.device == "mac") "Mac" else incident.device
+        val device = incident.deviceName
         val time = DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault()).format(incident.since)
-        return when (incident.kind) {
-            "silent" -> "$device: no data since $time"
-            "titles_unreadable" -> "$device can't read window titles"
-            "window_sampling_stopped" -> "$device stopped recording windows at $time"
+        val kind = incident.kind
+        return when {
+            kind == "silent" -> "$device: no data since $time"
+            kind == "titles_unreadable" -> "$device can't read window titles"
+            kind == "window_sampling_stopped" -> "$device stopped recording windows at $time"
+            kind.startsWith("module_failing:") -> "$device: ${kind.removePrefix("module_failing:")} collection failing since $time"
             else -> "$device collection problem since $time"
         }
     }

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/rimexe0/telemetry/internal/desktop"
+	"github.com/rimexe0/telemetry/internal/collector"
 	"github.com/rimexe0/telemetry/internal/ingest"
 	"github.com/rimexe0/telemetry/internal/model"
 	"github.com/rimexe0/telemetry/internal/queue"
@@ -25,7 +25,8 @@ type statusReporter struct {
 	queue    *queue.Queue
 	client   *ingest.Client
 	deviceID string
-	health   *desktop.Health
+	hostname string
+	modules  []collector.Module
 	started  time.Time
 }
 
@@ -37,13 +38,18 @@ func (r statusReporter) report(ctx context.Context, state string, urgent bool) e
 	if stats, err := r.queue.Stats(ctx); err == nil {
 		pending = stats.Pending + stats.Leased
 	}
+	modules := map[string]map[string]any{}
+	for _, module := range r.modules {
+		modules[module.Name()] = module.Status()
+	}
 	payload, err := json.Marshal(struct {
-		State     string    `json:"state"`
-		Version   string    `json:"version"`
-		StartedAt time.Time `json:"started_at"`
-		Pending   int64     `json:"queue_pending"`
-		desktop.HealthSnapshot
-	}{state, collectorVersion, r.started, pending, r.health.Snapshot()})
+		State     string                    `json:"state"`
+		Version   string                    `json:"version"`
+		Hostname  string                    `json:"hostname"`
+		StartedAt time.Time                 `json:"started_at"`
+		Pending   int64                     `json:"queue_pending"`
+		Modules   map[string]map[string]any `json:"modules"`
+	}{state, collectorVersion, r.hostname, r.started, pending, modules})
 	if err != nil {
 		return err
 	}

@@ -1,0 +1,21 @@
+# Headless Telemetry collector for a Linux machine that runs T3 Code (Datalix,
+# and Fedora when it is back). Install as a systemd user service:
+#   ~/.config/systemd/user/telemetry-collector.service
+# Edit -device and -server for the machine. The ingest token file is 0600.
+[Unit]
+Description=Telemetry collector (headless)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=%h/telemetry-collector/telemetry-desktop run \
+  -modules t3 \
+  -device datalix \
+  -queue %h/telemetry-collector/queue.sqlite3 \
+  -server http://127.0.0.1:18080 \
+  -ingest-token-file %h/telemetry-collector/ingest-token
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

@@ -308,6 +308,10 @@ func (fakeRepository) ListCollectionIncidents(context.Context, time.Time, int) (
 	return []store.CollectionIncident{}, nil
 }
 
+func (fakeRepository) CodingRecords(context.Context, time.Time) ([]activity.Record, error) {
+	return nil, nil
+}
+
 func (fakeRepository) ActivityRecords(context.Context, time.Time, time.Time) ([]activity.Record, map[string]time.Time, error) {
 	return nil, nil, nil
 }

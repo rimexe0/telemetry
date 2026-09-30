@@ -84,3 +84,32 @@ func (p *Postgres) ActivityRecords(ctx context.Context, from, to time.Time) ([]a
 	}
 	return records, lastSeen, sources.Err()
 }
+
+// CodingRecords returns the current T3 projects and threads and the turns
+// requested since from or still unfinished.
+func (p *Postgres) CodingRecords(ctx context.Context, from time.Time) ([]activity.Record, error) {
+	rows, err := p.pool.Query(ctx, `
+		SELECT o.source_instance_key, si.device_id, o.kind, o.occurred_at, o.ended_at, r.projection
+		FROM observations o
+		JOIN observation_revisions r ON r.id = o.effective_revision_id
+		JOIN source_instances si ON si.source_instance_key = o.source_instance_key
+		WHERE si.source_kind = 't3' AND (o.kind IN ('t3.project', 't3.thread')
+			OR (o.kind = 't3.turn' AND (o.occurred_at >= $1 OR o.ended_at IS NULL OR o.ended_at >= $1)))
+		LIMIT $2`, from, maxActivityRecord+1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	records := []activity.Record{}
+	for rows.Next() {
+		var record activity.Record
+		if err := rows.Scan(&record.Source, &record.Device, &record.Kind, &record.Start, &record.End, &record.Payload); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	if len(records) > maxActivityRecord {
+		return nil, ErrActivityRangeTooLarge
+	}
+	return records, rows.Err()
+}
