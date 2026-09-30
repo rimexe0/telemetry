@@ -6,7 +6,7 @@
   <string>com.rime.telemetry.desktop</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/ri/Library/Application Support/Telemetry/bin/telemetry-desktop</string>
+    <string>/Users/ri/Applications/Telemetry Desktop.app/Contents/MacOS/telemetry-desktop</string>
     <string>run</string>
     <string>-queue</string>
     <string>/Users/ri/Library/Application Support/Telemetry/desktop.queue.sqlite3</string>

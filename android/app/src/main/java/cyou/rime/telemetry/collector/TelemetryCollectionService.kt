@@ -38,6 +38,8 @@ class TelemetryCollectionService : Service() {
         }
         if (collectionJob?.isActive != true) {
             CollectionRuntime.setRunning(true)
+            // Explain any gap left by a force stop before collecting again.
+            scope.launch { runCatching { ExitHistory.recordNew(this@TelemetryCollectionService) } }
             collectionJob = scope.launch {
                 while (isActive) {
                     val cycle = CollectionRuntime.runCycle(this@TelemetryCollectionService, backgroundHealth = true)
