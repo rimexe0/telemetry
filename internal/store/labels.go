@@ -148,17 +148,8 @@ func (p *Postgres) DecideLabelProposal(ctx context.Context, id int64, accept boo
 	status := "rejected"
 	if accept {
 		status = "accepted"
-		for _, change := range proposal.Changes {
-			if _, err := tx.Exec(ctx, `UPDATE activity_labels SET removed_at = now()
-				WHERE kind = $1 AND lower(match) = lower($2) AND removed_at IS NULL`, change.Kind, change.Match); err != nil {
-				return proposal, err
-			}
-			if change.Action == "set" {
-				if _, err := tx.Exec(ctx, `INSERT INTO activity_labels (kind, match, label, proposal_id) VALUES ($1, $2, $3, $4)`,
-					change.Kind, change.Match, change.Label, proposal.ID); err != nil {
-					return proposal, err
-				}
-			}
+		if _, err := applyLabelsTx(ctx, tx, proposal.Changes, &proposal.ID); err != nil {
+			return proposal, err
 		}
 	}
 	decided, err := scanLabelProposal(tx.QueryRow(ctx, `UPDATE activity_label_proposals

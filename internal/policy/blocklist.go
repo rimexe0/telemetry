@@ -69,3 +69,25 @@ func ApplyBlocklist(config Config, changes []BlocklistChange) Config {
 	}
 	return next
 }
+
+// BlocklistState is where pkg stands in config, as the action that would put
+// it there: "block", "always_allow" or "unlist".
+func BlocklistState(config Config, pkg string) string {
+	has := func(groups []TargetGroup) bool {
+		for _, group := range groups {
+			for _, value := range group.AndroidPackages {
+				if value == pkg {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	switch {
+	case has(config.Distractions):
+		return "block"
+	case has(config.Essentials):
+		return "always_allow"
+	}
+	return "unlist"
+}

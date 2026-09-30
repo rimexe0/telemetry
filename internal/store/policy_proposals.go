@@ -117,35 +117,8 @@ func (p *Postgres) DecidePolicyProposal(ctx context.Context, id int64, accept bo
 	var result *int64
 	if accept {
 		status = "accepted"
-		// Serialize policy writes so the edit applies to the version in force.
-		if _, err := tx.Exec(ctx, `LOCK TABLE policy_versions IN SHARE ROW EXCLUSIVE MODE`); err != nil {
-			return proposal, err
-		}
-		config := policy.Config{}
-		var raw []byte
-		err := tx.QueryRow(ctx, `SELECT config FROM policy_versions ORDER BY id DESC LIMIT 1`).Scan(&raw)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return proposal, err
-		}
-		if raw != nil {
-			if err := json.Unmarshal(raw, &config); err != nil {
-				return proposal, err
-			}
-		}
-		next := policy.ApplyBlocklist(config, proposal.Changes)
-		if err := next.Normalize(); err != nil {
-			return proposal, fmt.Errorf("%w: %s", ErrInvalidPolicy, err)
-		}
-		encoded, err := json.Marshal(next)
+		_, version, err := applyBlocklistTx(ctx, tx, proposal.Changes, fmt.Sprintf("Blocklist proposal %d: %s", proposal.ID, proposal.Reason))
 		if err != nil {
-			return proposal, err
-		}
-		var version int64
-		note := fmt.Sprintf("Blocklist proposal %d: %s", proposal.ID, proposal.Reason)
-		if len([]rune(note)) > maxPlanningTextRunes {
-			note = string([]rune(note)[:maxPlanningTextRunes])
-		}
-		if err := tx.QueryRow(ctx, `INSERT INTO policy_versions (config, note) VALUES ($1::jsonb, $2) RETURNING id`, string(encoded), note).Scan(&version); err != nil {
 			return proposal, err
 		}
 		result = &version

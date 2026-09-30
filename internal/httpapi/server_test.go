@@ -608,6 +608,22 @@ func (f *fakeRepository) SavePolicy(_ context.Context, config policy.Config, not
 	return version, nil
 }
 
+func (f *fakeRepository) ApplyBlocklistChange(context.Context, []policy.BlocklistChange, string) (store.AgentChange, error) {
+	return store.AgentChange{}, nil
+}
+
+func (f *fakeRepository) ApplyLabelChanges(context.Context, []activity.LabelChange, string) (store.AgentChange, error) {
+	return store.AgentChange{}, nil
+}
+
+func (f *fakeRepository) ListAgentChanges(context.Context, int) ([]store.AgentChange, error) {
+	return []store.AgentChange{}, nil
+}
+
+func (f *fakeRepository) RevertAgentChange(context.Context, int64) (store.AgentChange, error) {
+	return store.AgentChange{}, nil
+}
+
 func (f *fakeRepository) CreatePolicyProposal(context.Context, []policy.BlocklistChange, string) (store.PolicyProposal, error) {
 	return store.PolicyProposal{}, nil
 }

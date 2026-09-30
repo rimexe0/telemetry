@@ -32,3 +32,12 @@ func TestBlocklistRefusesWebsites(t *testing.T) {
 		t.Fatalf("%+v %v", ok, err)
 	}
 }
+
+func TestBlocklistStateRoundTrips(t *testing.T) {
+	config := ApplyBlocklist(Config{}, []BlocklistChange{{Action: "block", AndroidPackage: "a.b"}, {Action: "always_allow", AndroidPackage: "c.d"}})
+	for pkg, want := range map[string]string{"a.b": "block", "c.d": "always_allow", "e.f": "unlist"} {
+		if got := BlocklistState(config, pkg); got != want {
+			t.Fatalf("%s = %s, want %s", pkg, got, want)
+		}
+	}
+}
