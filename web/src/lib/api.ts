@@ -673,3 +673,40 @@ export async function getAppSuggestions(): Promise<AppUsageSuggestion[]> {
   const result = await request<{ android_apps: AppUsageSuggestion[] | null }>('/v1/policy/suggestions');
   return result.android_apps ?? [];
 }
+
+export type ActivityUsage = { name: string; app?: string; label?: string; minutes: number; sessions: number };
+export type DeviceActivity = {
+  device: 'mac' | 'phone';
+  active_minutes: number;
+  afk_unknown_minutes?: number;
+  no_data_minutes: number;
+  last_record?: string;
+  apps: ActivityUsage[] | null;
+  sites?: ActivityUsage[] | null;
+  labels: ActivityUsage[] | null;
+};
+export type ActivitySummary = { from: string; to: string; timezone: string; devices: DeviceActivity[]; no_data: { device: string; start: string; end: string }[] | null };
+
+export async function getActivitySummary(date?: string): Promise<ActivitySummary> {
+  return request<ActivitySummary>(`/v1/activity/summary${date ? `?date=${encodeURIComponent(date)}` : ''}`);
+}
+
+export type LabelChange = { action: 'set' | 'remove'; kind: 'app' | 'site'; match: string; label?: string };
+export type ActivityLabel = { id: number; kind: 'app' | 'site'; match: string; label: string; created_at: string };
+export type LabelProposal = { id: number; changes: LabelChange[]; reason: string; content_hash: string; status: 'pending' | 'accepted' | 'rejected'; created_at: string; decided_at?: string };
+
+export async function getActivityLabels(): Promise<{ labels: ActivityLabel[]; proposals: LabelProposal[] }> {
+  const result = await request<{ labels: ActivityLabel[] | null; proposals: LabelProposal[] | null }>('/v1/activity-labels');
+  return { labels: result.labels ?? [], proposals: result.proposals ?? [] };
+}
+
+// Both decisions echo the reviewed content hash; the server applies nothing else.
+export async function decideLabelProposal(proposal: Pick<LabelProposal, 'id' | 'content_hash'>, accept: boolean): Promise<LabelProposal> {
+  return request<LabelProposal>(`/v1/activity-label-proposals/${encodeURIComponent(proposal.id)}/${accept ? 'accept' : 'reject'}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content_hash: proposal.content_hash })
+  });
+}
+
+export async function removeActivityLabel(id: number): Promise<void> {
+  await request(`/v1/activity-labels/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}

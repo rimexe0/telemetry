@@ -608,6 +608,26 @@ func (f *fakeRepository) SavePolicy(_ context.Context, config policy.Config, not
 	return version, nil
 }
 
+func (f *fakeRepository) CreateLabelProposal(context.Context, []activity.LabelChange, string) (store.LabelProposal, error) {
+	return store.LabelProposal{}, nil
+}
+
+func (f *fakeRepository) ListLabelProposals(context.Context, string, int) ([]store.LabelProposal, error) {
+	return []store.LabelProposal{}, nil
+}
+
+func (f *fakeRepository) DecideLabelProposal(context.Context, int64, bool, store.ProposalDecision, json.RawMessage) (store.LabelProposal, error) {
+	return store.LabelProposal{}, nil
+}
+
+func (f *fakeRepository) ListActivityLabels(context.Context) ([]store.ActivityLabel, error) {
+	return []store.ActivityLabel{}, nil
+}
+
+func (f *fakeRepository) RemoveActivityLabel(context.Context, int64) error {
+	return nil
+}
+
 func (f *fakeRepository) CollectionEvidence(context.Context) (silence.Evidence, error) {
 	return silence.Evidence{}, nil
 }

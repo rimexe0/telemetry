@@ -88,7 +88,53 @@ type CollectionIncidentsOutput struct {
 	Notes     string                     `json:"notes"`
 }
 
+type ActivityLabelsInput struct{}
+
+type ActivityLabelsOutput struct {
+	Labels  []store.ActivityLabel `json:"labels"`
+	Pending []store.LabelProposal `json:"pending_proposals"`
+	Notes   string                `json:"notes"`
+}
+
+type ProposeActivityLabelsInput struct {
+	Changes []activity.LabelChange `json:"changes" jsonschema:"label edits: action set or remove; kind app (Mac app name or Android package, exact) or site (domain, includes subdomains); match; label for set, such as distraction or work"`
+	Reason  string                 `json:"reason" jsonschema:"why, in the owner's words where possible"`
+}
+
+type ProposeActivityLabelsOutput struct {
+	Proposal store.LabelProposal `json:"proposal"`
+	Notes    string              `json:"notes"`
+}
+
+const labelNotes = "Labels are the owner's own names for apps and sites. Agents can only propose changes; nothing applies until the owner accepts the proposal in the Telemetry panel. " +
+	"activity_summary totals time per label; a site label wins over the browser's app label."
+
 func addActivityTools(server *mcp.Server, repository store.Repository, now func() time.Time) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "activity_labels",
+		Description: "The owner's current labels for apps and sites, and label proposals waiting for the owner's decision. " + labelNotes,
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ ActivityLabelsInput) (*mcp.CallToolResult, ActivityLabelsOutput, error) {
+		labels, err := repository.ListActivityLabels(ctx)
+		if err != nil {
+			return nil, ActivityLabelsOutput{}, err
+		}
+		pending, err := repository.ListLabelProposals(ctx, "pending", 50)
+		if err != nil {
+			return nil, ActivityLabelsOutput{}, err
+		}
+		return nil, ActivityLabelsOutput{Labels: labels, Pending: pending, Notes: labelNotes}, nil
+	})
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "propose_activity_labels",
+		Description: "Propose labels for apps or sites, for example when the owner says what they consider a distraction. " +
+			"Use app names and sites exactly as activity_summary reports them. " + labelNotes,
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input ProposeActivityLabelsInput) (*mcp.CallToolResult, ProposeActivityLabelsOutput, error) {
+		proposal, err := repository.CreateLabelProposal(ctx, input.Changes, input.Reason)
+		if err != nil {
+			return nil, ProposeActivityLabelsOutput{}, err
+		}
+		return nil, ProposeActivityLabelsOutput{Proposal: proposal, Notes: "Pending. Ask the owner to accept it in the Telemetry panel (Activity labels)."}, nil
+	})
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "collection_incidents",
 		Description: "Collection problems: a device or collector that went quiet unexpectedly, or a Mac collector that cannot see windows. " +
@@ -122,7 +168,11 @@ func addActivityTools(server *mcp.Server, repository store.Repository, now func(
 			return nil, ActivityNowOutput{}, err
 		}
 		result := activity.Build(records, from, current)
-		summaries := activity.Summarize(result, 10)
+		labels, err := repository.ListActivityLabels(ctx)
+		if err != nil {
+			return nil, ActivityNowOutput{}, err
+		}
+		summaries := activity.Summarize(result, 10, store.LabelsForSummary(labels))
 		output := ActivityNowOutput{Now: current, Timezone: location.String(), Notes: activityNotes, OpenIncidents: []store.CollectionIncident{}}
 		incidents, err := repository.ListCollectionIncidents(ctx, current, 50)
 		if err != nil {
@@ -177,7 +227,11 @@ func addActivityTools(server *mcp.Server, repository store.Repository, now func(
 		for device, last := range lastSeen {
 			result.LastRecord[device] = last
 		}
-		return nil, ActivitySummaryOutput{From: from, To: to, Timezone: location.String(), Devices: activity.Summarize(result, limit), NoData: result.Gaps, Notes: activityNotes}, nil
+		labels, err := repository.ListActivityLabels(ctx)
+		if err != nil {
+			return nil, ActivitySummaryOutput{}, err
+		}
+		return nil, ActivitySummaryOutput{From: from, To: to, Timezone: location.String(), Devices: activity.Summarize(result, limit, store.LabelsForSummary(labels)), NoData: result.Gaps, Notes: activityNotes}, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "activity_timeline",

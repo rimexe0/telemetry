@@ -10,6 +10,7 @@
   import ReplanReview from '$lib/ReplanReview.svelte';
   import ContextRules from '$lib/ContextRules.svelte';
   import BlockedApps from '$lib/BlockedApps.svelte';
+  import ActivityView from '$lib/ActivityView.svelte';
   import { performNowAction, type NowAction, type NowSnapshot, type NowView } from '$lib/execution';
   import { dayKey, dayStart } from '$lib/health';
   import { clearClerk, loadClerk, type ClerkClient } from '$lib/clerk';
@@ -68,7 +69,7 @@
 
   const fixtureMode = import.meta.env.VITE_TELEMETRY_FIXTURE === '1';
   const snapshotMode = import.meta.env.VITE_TELEMETRY_SNAPSHOT === '1';
-  let view: 'now' | 'day' | 'plan' | 'health' | 'collection' | 'devices' = 'now';
+  let view: 'now' | 'activity' | 'day' | 'plan' | 'health' | 'collection' | 'devices' = 'now';
   let selectedDay = dayKey(Date.now());
   let dayObservations: Observation[] = [];
   let dayLoading = false;
@@ -109,7 +110,7 @@
   let authenticated = false;
   let checkingSession = true;
   let loading = false;
-  let loadingView: 'now' | 'day' | 'plan' | 'health' | 'collection' | 'devices' | undefined;
+  let loadingView: 'now' | 'activity' | 'day' | 'plan' | 'health' | 'collection' | 'devices' | undefined;
   let refreshQueued = false;
   let refreshQueuedForceDay = false;
   let error = '';
@@ -843,6 +844,7 @@
   {:else}
     <nav class="view-tabs" aria-label="Panel views">
       <button class:active={view === 'now'} aria-pressed={view === 'now'} on:click={() => { view = 'now'; void refresh(); }}>Now</button>
+      <button class:active={view === 'activity'} aria-pressed={view === 'activity'} on:click={() => { view = 'activity'; }}>Activity</button>
       <button class:active={view === 'day'} aria-pressed={view === 'day'} on:click={() => { view = 'day'; void refresh(); }}>Day</button>
       <button class:active={view === 'plan'} aria-pressed={view === 'plan'} on:click={() => { view = 'plan'; void refresh(); }}>Plan</button>
       <button class:active={view === 'health'} aria-pressed={view === 'health'} on:click={() => { view = 'health'; void refresh(); }}>Health</button>
@@ -870,6 +872,8 @@
     {/if}
     {#if view === 'now'}
       <ExecutionNow snapshot={nowSnapshot} loading={nowLoading} error={nowError || error} onaction={handleNowAction} onopenplan={openTodayPlan} onrefresh={() => refresh()} />
+    {:else if view === 'activity'}
+      <ActivityView date={selectedDay} />
     {:else if view === 'day'}
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       <DayTimeline observations={dayObservations} {sources} bind:date={selectedDay} loading={dayLoading} error={dayError || error} status={dayStatus} ondatechange={refresh} onrefresh={() => refresh(true)} oninspect={(o) => selectedObservation = o} />

@@ -58,7 +58,7 @@ func TestMacCountsOnlyNonAFKTimeAndNamesBrowserSites(t *testing.T) {
 	if got := minutesOf(result.Segments, DeviceMac, "T3 Code", ""); got != 20 {
 		t.Fatalf("T3 Code = %v, want 20 (afk until 40)", got)
 	}
-	summary := Summarize(result, 10)
+	summary := Summarize(result, 10, nil)
 	if summary[0].Device != DeviceMac || summary[0].ActiveMinutes != 40 || summary[0].Sites[0].Name != "x.com" {
 		t.Fatalf("summary = %+v", summary[0])
 	}
@@ -119,8 +119,38 @@ func TestMacWindowTimeWithoutAFKRecordsCountsAsUnknown(t *testing.T) {
 		aw("aw-watcher-afk_h", 10, 10, `{"status":"afk"}`),
 		aw("aw-watcher-afk_h", 20, 10, `{"status":"not-afk"}`),
 	}
-	summary := Summarize(Build(records, at(0), at(60)), 5)[0]
+	summary := Summarize(Build(records, at(0), at(60)), 5, nil)[0]
 	if summary.ActiveMinutes != 50 || summary.AFKUnknownMinutes != 40 {
 		t.Fatalf("active %v unknown %v, want 50 and 40", summary.ActiveMinutes, summary.AFKUnknownMinutes)
+	}
+}
+
+func TestLabelsPreferSitesOverTheBrowser(t *testing.T) {
+	labels := []Label{
+		{Kind: LabelKindApp, Match: "helium", Label: "work"},
+		{Kind: LabelKindSite, Match: "youtube.com", Label: "distraction"},
+		{Kind: LabelKindApp, Match: "com.twitter.android", Label: "distraction"},
+	}
+	cases := map[string]Segment{
+		"distraction": {App: "Helium", Domain: "m.youtube.com"},
+		"work":        {App: "Helium", Domain: "github.com"},
+		"unlabeled":   {App: "Finder"},
+	}
+	for want, segment := range cases {
+		if got := LabelFor(labels, segment); got != want {
+			t.Fatalf("%+v = %s, want %s", segment, got, want)
+		}
+	}
+	change := LabelChange{Action: "set", Kind: "site", Match: "https://www.YouTube.com/shorts/1", Label: " distraction "}
+	if err := change.Normalize(); err != nil || change.Match != "youtube.com" || change.Label != "distraction" {
+		t.Fatalf("normalized = %+v, %v", change, err)
+	}
+	result := Build([]Record{
+		usage("resumed", "com.twitter.android", 0), usage("paused", "com.twitter.android", 30),
+		usage("resumed", "com.whatsapp", 30), usage("paused", "com.whatsapp", 40),
+	}, at(0), at(60))
+	phone := Summarize(result, 10, labels)[1]
+	if len(phone.Labels) != 2 || phone.Labels[0].Name != "distraction" || phone.Labels[0].Minutes != 30 {
+		t.Fatalf("labels = %+v", phone.Labels)
 	}
 }

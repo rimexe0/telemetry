@@ -97,6 +97,11 @@ func New(repository store.Repository, config Config) (*Server, error) {
 	server.mux.HandleFunc("GET /v1/plans/{date}/replan-proposals/{id}", server.replanProposal)
 	server.mux.HandleFunc("POST /v1/plans/{date}/replan-proposals/{id}/accept", server.acceptReplanProposal)
 	server.mux.HandleFunc("POST /v1/plans/{date}/replan-proposals/{id}/reject", server.rejectReplanProposal)
+	server.mux.HandleFunc("GET /v1/activity/summary", server.activitySummary)
+	server.mux.HandleFunc("GET /v1/activity-labels", server.activityLabels)
+	server.mux.HandleFunc("DELETE /v1/activity-labels/{id}", server.removeActivityLabel)
+	server.mux.HandleFunc("POST /v1/activity-label-proposals/{id}/accept", server.acceptLabelProposal)
+	server.mux.HandleFunc("POST /v1/activity-label-proposals/{id}/reject", server.rejectLabelProposal)
 	return server, nil
 }
 

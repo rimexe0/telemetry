@@ -101,6 +101,11 @@ type Repository interface {
 	AndroidAppUsage(context.Context, time.Time, int) ([]AppUsageSuggestion, error)
 	ActivityRecords(context.Context, time.Time, time.Time) ([]activity.Record, map[string]time.Time, error)
 	CollectionEvidence(context.Context) (silence.Evidence, error)
+	CreateLabelProposal(context.Context, []activity.LabelChange, string) (LabelProposal, error)
+	ListLabelProposals(context.Context, string, int) ([]LabelProposal, error)
+	DecideLabelProposal(context.Context, int64, bool, ProposalDecision, json.RawMessage) (LabelProposal, error)
+	ListActivityLabels(context.Context) ([]ActivityLabel, error)
+	RemoveActivityLabel(context.Context, int64) error
 	SyncCollectionIncidents(context.Context, []silence.Finding, time.Time) ([]CollectionIncident, error)
 	ListCollectionIncidents(context.Context, time.Time, int) ([]CollectionIncident, error)
 	StartExecutionSession(context.Context, ExecutionSessionInput) (ExecutionSession, error)
