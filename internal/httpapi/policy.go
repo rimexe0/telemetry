@@ -116,6 +116,13 @@ func (s *Server) policyInputs(ctx context.Context, from, to time.Time) (policy.C
 	if stored != nil {
 		config, version = stored.Config, stored.ID
 	}
+	// The owner's "distraction" and "essential" labels enforce like the
+	// policy's own lists.
+	labels, err := s.repository.ListActivityLabels(ctx)
+	if err != nil {
+		return config, 0, policy.Facts{}, err
+	}
+	config = policy.WithLabels(config, store.LabeledTargets(labels))
 	if err := config.Normalize(); err != nil {
 		return config, 0, policy.Facts{}, err
 	}

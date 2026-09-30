@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/rimexe0/telemetry/internal/policy"
 	"strings"
 	"time"
 
@@ -190,6 +191,15 @@ func (p *Postgres) RemoveActivityLabel(ctx context.Context, id int64) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// LabeledTargets converts stored labels for the policy engine.
+func LabeledTargets(labels []ActivityLabel) []policy.LabeledTarget {
+	result := make([]policy.LabeledTarget, 0, len(labels))
+	for _, label := range labels {
+		result = append(result, policy.LabeledTarget{Kind: label.Kind, Match: label.Match, Label: label.Label})
+	}
+	return result
 }
 
 // LabelsForSummary converts stored labels for activity summaries.
