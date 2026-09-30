@@ -41,69 +41,74 @@ static pid_t td_front_pid(void) {
 	return pid;
 }
 
+// td_focused_pid asks Accessibility for the focused app. It fails with
+// "cannot complete" on some systems, so callers fall back to the window list.
+static pid_t td_focused_pid(AXError *error) {
+	pid_t pid = -1;
+	AXUIElementRef system = AXUIElementCreateSystemWide();
+	// An unresponsive app must not stall sampling for the 6 s default.
+	AXUIElementSetMessagingTimeout(system, 0.5);
+	CFTypeRef app = NULL;
+	*error = AXUIElementCopyAttributeValue(system, kAXFocusedApplicationAttribute, &app);
+	if (*error == kAXErrorSuccess && app != NULL) {
+		AXUIElementGetPid((AXUIElementRef)app, &pid);
+		CFRelease(app);
+	}
+	CFRelease(system);
+	return pid;
+}
+
+// td_title reads the title of pid's focused window, or of its main window.
+static char *td_title(pid_t pid, AXError *error) {
+	AXUIElementRef app = AXUIElementCreateApplication(pid);
+	AXUIElementSetMessagingTimeout(app, 0.5);
+	char *result = NULL;
+	CFTypeRef window = NULL;
+	*error = AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute, &window);
+	if (*error != kAXErrorSuccess || window == NULL) {
+		*error = AXUIElementCopyAttributeValue(app, kAXMainWindowAttribute, &window);
+	}
+	if (*error == kAXErrorSuccess && window != NULL) {
+		CFTypeRef title = NULL;
+		*error = AXUIElementCopyAttributeValue((AXUIElementRef)window, kAXTitleAttribute, &title);
+		if (*error == kAXErrorSuccess && title != NULL && CFGetTypeID(title) == CFStringGetTypeID()) {
+			result = td_copy((__bridge NSString *)title);
+		}
+		if (title != NULL) CFRelease(title);
+		CFRelease(window);
+	}
+	CFRelease(app);
+	return result;
+}
+
 static td_window td_active(void) {
 	@autoreleasepool {
 		td_window result = {0};
-		pid_t pid = -1;
-		if (AXIsProcessTrusted()) {
-			AXUIElementRef system = AXUIElementCreateSystemWide();
-			// An unresponsive app must not stall sampling for the 6 s default.
-			AXUIElementSetMessagingTimeout(system, 0.5);
-			CFTypeRef app = NULL;
-			if (AXUIElementCopyAttributeValue(system, kAXFocusedApplicationAttribute, &app) == kAXErrorSuccess && app != NULL) {
-				AXUIElementGetPid((AXUIElementRef)app, &pid);
-				AXUIElementSetMessagingTimeout((AXUIElementRef)app, 0.5);
-				CFTypeRef window = NULL;
-				if (AXUIElementCopyAttributeValue((AXUIElementRef)app, kAXFocusedWindowAttribute, &window) == kAXErrorSuccess && window != NULL) {
-					CFTypeRef title = NULL;
-					if (AXUIElementCopyAttributeValue((AXUIElementRef)window, kAXTitleAttribute, &title) == kAXErrorSuccess && title != NULL) {
-						if (CFGetTypeID(title) == CFStringGetTypeID()) result.title = td_copy((__bridge NSString *)title);
-						CFRelease(title);
-					}
-					CFRelease(window);
-				}
-				CFRelease(app);
-			}
-			CFRelease(system);
-		}
+		int trusted = AXIsProcessTrusted();
+		AXError error = kAXErrorSuccess;
+		pid_t pid = trusted ? td_focused_pid(&error) : -1;
 		if (pid <= 0) pid = td_front_pid();
 		if (pid <= 0) return result;
 		NSRunningApplication *application = [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
 		if (application == nil) return result;
 		result.app = td_copy(application.localizedName);
 		result.bundle = td_copy(application.bundleIdentifier);
+		if (trusted) result.title = td_title(pid, &error);
 		result.ok = 1;
 		return result;
 	}
 }
 
-// td_diagnose reports each Accessibility step's result for troubleshooting.
+// td_diagnose reports each step's result for troubleshooting.
 static char *td_diagnose(void) {
 	@autoreleasepool {
-		NSMutableString *out = [NSMutableString stringWithFormat:@"trusted=%d", AXIsProcessTrusted() ? 1 : 0];
-		AXUIElementRef system = AXUIElementCreateSystemWide();
-		AXUIElementSetMessagingTimeout(system, 0.5);
-		CFTypeRef app = NULL;
-		AXError error = AXUIElementCopyAttributeValue(system, kAXFocusedApplicationAttribute, &app);
-		[out appendFormat:@" focused_app_error=%d", error];
-		if (error == kAXErrorSuccess && app != NULL) {
-			pid_t pid = 0;
-			AXUIElementGetPid((AXUIElementRef)app, &pid);
-			[out appendFormat:@" pid=%d", pid];
-			CFTypeRef window = NULL;
-			error = AXUIElementCopyAttributeValue((AXUIElementRef)app, kAXFocusedWindowAttribute, &window);
-			[out appendFormat:@" focused_window_error=%d", error];
-			if (error == kAXErrorSuccess && window != NULL) {
-				CFTypeRef title = NULL;
-				error = AXUIElementCopyAttributeValue((AXUIElementRef)window, kAXTitleAttribute, &title);
-				[out appendFormat:@" title_error=%d title=%@", error, title != NULL ? (__bridge NSString *)title : @"(null)"];
-				if (title != NULL) CFRelease(title);
-				CFRelease(window);
-			}
-			CFRelease(app);
-		}
-		CFRelease(system);
-		[out appendFormat:@" windowlist_pid=%d", td_front_pid()];
+		AXError focused = kAXErrorSuccess, title = kAXErrorSuccess;
+		pid_t pid = td_focused_pid(&focused);
+		pid_t front = td_front_pid();
+		char *text = td_title(pid > 0 ? pid : front, &title);
+		NSString *out = [NSString stringWithFormat:@"trusted=%d focused_app_error=%d focused_pid=%d windowlist_pid=%d title_error=%d title=%s",
+			AXIsProcessTrusted() ? 1 : 0, focused, pid, front, title, text != NULL ? text : "(none)"];
+		free(text);
 		return td_copy(out);
 	}
 }
