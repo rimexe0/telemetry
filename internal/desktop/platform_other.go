@@ -13,3 +13,6 @@ import (
 func NewPlatform() (Platform, error) {
 	return nil, errors.New("window and idle sampling is not implemented for " + runtime.GOOS + " yet")
 }
+
+// Diagnose has nothing to report on systems without a sampling layer.
+func Diagnose() string { return "no sampling layer on " + runtime.GOOS }

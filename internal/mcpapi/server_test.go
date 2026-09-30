@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/rimexe0/telemetry/internal/activity"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -244,6 +245,10 @@ func (fakeRepository) LatestPolicy(context.Context) (*store.PolicyVersion, error
 
 func (fakeRepository) SavePolicy(context.Context, policy.Config, string) (store.PolicyVersion, error) {
 	return store.PolicyVersion{}, nil
+}
+
+func (fakeRepository) ActivityRecords(context.Context, time.Time, time.Time) ([]activity.Record, map[string]time.Time, error) {
+	return nil, nil, nil
 }
 
 func (fakeRepository) AndroidAppUsage(context.Context, time.Time, int) ([]store.AppUsageSuggestion, error) {

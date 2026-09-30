@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/rimexe0/telemetry/internal/activity"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -604,6 +605,10 @@ func (f *fakeRepository) SavePolicy(_ context.Context, config policy.Config, not
 	version := store.PolicyVersion{ID: int64(len(f.policies) + 1), Config: config, Note: note, CreatedAt: time.Now()}
 	f.policies = append(f.policies, version)
 	return version, nil
+}
+
+func (f *fakeRepository) ActivityRecords(context.Context, time.Time, time.Time) ([]activity.Record, map[string]time.Time, error) {
+	return nil, nil, nil
 }
 
 func (f *fakeRepository) AndroidAppUsage(context.Context, time.Time, int) ([]store.AppUsageSuggestion, error) {

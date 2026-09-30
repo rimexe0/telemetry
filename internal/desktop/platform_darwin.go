@@ -77,6 +77,37 @@ static td_window td_active(void) {
 	}
 }
 
+// td_diagnose reports each Accessibility step's result for troubleshooting.
+static char *td_diagnose(void) {
+	@autoreleasepool {
+		NSMutableString *out = [NSMutableString stringWithFormat:@"trusted=%d", AXIsProcessTrusted() ? 1 : 0];
+		AXUIElementRef system = AXUIElementCreateSystemWide();
+		AXUIElementSetMessagingTimeout(system, 0.5);
+		CFTypeRef app = NULL;
+		AXError error = AXUIElementCopyAttributeValue(system, kAXFocusedApplicationAttribute, &app);
+		[out appendFormat:@" focused_app_error=%d", error];
+		if (error == kAXErrorSuccess && app != NULL) {
+			pid_t pid = 0;
+			AXUIElementGetPid((AXUIElementRef)app, &pid);
+			[out appendFormat:@" pid=%d", pid];
+			CFTypeRef window = NULL;
+			error = AXUIElementCopyAttributeValue((AXUIElementRef)app, kAXFocusedWindowAttribute, &window);
+			[out appendFormat:@" focused_window_error=%d", error];
+			if (error == kAXErrorSuccess && window != NULL) {
+				CFTypeRef title = NULL;
+				error = AXUIElementCopyAttributeValue((AXUIElementRef)window, kAXTitleAttribute, &title);
+				[out appendFormat:@" title_error=%d title=%@", error, title != NULL ? (__bridge NSString *)title : @"(null)"];
+				if (title != NULL) CFRelease(title);
+				CFRelease(window);
+			}
+			CFRelease(app);
+		}
+		CFRelease(system);
+		[out appendFormat:@" windowlist_pid=%d", td_front_pid()];
+		return td_copy(out);
+	}
+}
+
 static double td_idle(void) {
 	return CGEventSourceSecondsSinceLastEventType(kCGEventSourceStateHIDSystemState, kCGAnyInputEventType);
 }
@@ -112,6 +143,13 @@ func (darwin) ActiveWindow() (Window, bool, error) {
 		return Window{}, false, nil
 	}
 	return Window{App: goString(result.app), BundleID: goString(result.bundle), Title: goString(result.title)}, true, nil
+}
+
+// Diagnose describes what the Accessibility calls return right now.
+func Diagnose() string {
+	value := C.td_diagnose()
+	defer C.free(unsafe.Pointer(value))
+	return goString(value)
 }
 
 func (darwin) IdleTime() (time.Duration, error) {
