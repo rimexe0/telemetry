@@ -20,8 +20,8 @@ data class CollectionIncident(val id: Long, val device: String, val kind: String
  */
 object IncidentWatch {
     private const val PREFS = "telemetry-incident-watch"
-    private const val KEY_SHOWN = "shown"
-    private const val CHANNEL = "telemetry-collection"
+    private const val KEY_SHOWN = "shown_v2"
+    private const val CHANNEL = "telemetry-incidents"
     private const val BASE_ID = 4300
 
     fun parse(json: String): List<CollectionIncident> {
@@ -43,6 +43,8 @@ object IncidentWatch {
     fun check(context: Context, json: String?) {
         val incidents = json?.let { runCatching { parse(it) }.getOrNull() } ?: return
         val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        // A new key re-posts incidents an earlier build showed silently on the
+        // collection service's low-importance channel.
         val shown = preferences.getStringSet(KEY_SHOWN, emptySet()).orEmpty().mapNotNull { it.toLongOrNull() }.toSet()
         val open = incidents.map { it.id }.toSet()
         val manager = context.getSystemService(NotificationManager::class.java)
