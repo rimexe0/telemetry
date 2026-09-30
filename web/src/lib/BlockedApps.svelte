@@ -1,10 +1,12 @@
 <script lang="ts">
-  import { getAppSuggestions, getPolicy, savePolicy, type AppUsageSuggestion, type PolicyConfig } from './api';
+  import { decidePolicyProposal, getAppSuggestions, getPolicy, listPolicyProposals, savePolicy, type AppUsageSuggestion, type PolicyConfig, type PolicyProposal } from './api';
   import { packagesOf, setPackage, type ListName } from './blocklist';
 
   let config: PolicyConfig = { distractions: [], essentials: [] };
   let version = 0;
   let suggestions: AppUsageSuggestion[] = [];
+  let proposals: PolicyProposal[] = [];
+  const actionText = { block: 'Block', always_allow: 'Always allow', unlist: 'Remove from lists' };
   let loaded = false;
   let busy = false;
   let error = '';
@@ -17,7 +19,8 @@
   async function load() {
     loaded = true;
     try {
-      const [policy, apps] = await Promise.all([getPolicy(), getAppSuggestions()]);
+      const [policy, apps, pending] = await Promise.all([getPolicy(), getAppSuggestions(), listPolicyProposals()]);
+      proposals = pending.filter(item => item.status === 'pending');
       if (policy) {
         config = { ...policy.config, distractions: policy.config.distractions ?? [], essentials: policy.config.essentials ?? [] };
         version = policy.id;
@@ -25,6 +28,21 @@
       suggestions = apps;
     } catch (cause) {
       error = cause instanceof Error ? cause.message : 'Unable to load blocked apps.';
+    }
+  }
+
+  async function decide(proposal: PolicyProposal, accept: boolean) {
+    busy = true;
+    error = '';
+    saved = '';
+    try {
+      const decided = await decidePolicyProposal(proposal, accept);
+      if (decided.result_policy_version_id) saved = `Saved as version ${decided.result_policy_version_id}.`;
+      loaded = false;
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : 'Could not save the decision.';
+    } finally {
+      busy = false;
     }
   }
 
@@ -50,6 +68,14 @@
   <p class="muted small">Blocked during work and breaks, never in free time. Always-allowed apps are never blocked. Policy version {version || 'none yet'}.</p>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if saved}<p class="muted small" role="status">{saved}</p>{/if}
+  {#each proposals as proposal (proposal.id)}
+    <div class="proposal" role="group" aria-label="Blocklist proposal">
+      <strong>Blocklist proposal</strong> <span class="muted small">{proposal.reason}</span>
+      <ul>{#each proposal.changes as item}<li>{actionText[item.action]} <code>{item.android_package}</code></li>{/each}</ul>
+      <span class="actions"><button disabled={busy} on:click={() => decide(proposal, true)}>Accept</button>
+        <button class="quiet-button" disabled={busy} on:click={() => decide(proposal, false)}>Reject</button></span>
+    </div>
+  {/each}
   <ul>
     {#each [...blocked] as pkg (pkg)}<li><span class="tag">blocked</span> <code>{pkg}</code> <button class="quiet-button" disabled={busy} on:click={() => change(pkg, null)}>Remove</button></li>{/each}
     {#each [...allowed] as pkg (pkg)}<li><span class="tag">always allowed</span> <code>{pkg}</code> <button class="quiet-button" disabled={busy} on:click={() => change(pkg, null)}>Remove</button></li>{/each}
@@ -72,6 +98,9 @@
   code { overflow-wrap: anywhere; }
   .actions { display: flex; gap: 6px; margin-left: auto; }
   .tag { border: 1px solid var(--line); font-size: .68rem; padding: 0 4px; text-transform: uppercase; }
+  .proposal { border: 1px solid var(--line); margin: 8px 0; padding: 8px; }
+  .proposal li { border: 0; padding: 1px 0; }
+  .proposal .actions { margin-left: 0; }
   .muted { color: var(--muted); }
   .small { font-size: .78rem; }
 </style>

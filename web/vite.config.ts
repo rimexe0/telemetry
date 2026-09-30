@@ -58,6 +58,10 @@ function fixtureExecution() {
   const proposals: Record<string, any>[] = [];
   const rules: Record<string, any>[] = [];
   let eventId = 0;
+  let policyVersion = 2;
+  const policyConfig: Record<string, any> = { timezone: 'Europe/Istanbul', plan_gate: { enabled: false }, essentials: [], distractions: [], emergency_minutes: 10 };
+  const policyProposals: Record<string, any>[] = [{ id: 1, status: 'pending', content_hash: 'fixture-policy-1', created_at: created, reason: 'Fixture: owner named x, reddit and youtube',
+    changes: [{ action: 'block', android_package: 'com.twitter.android' }, { action: 'block', android_package: 'com.reddit.frontpage' }, { action: 'block', android_package: 'com.google.android.youtube' }] }];
   // Invented labels and usage for the Activity view.
   const labels: Record<string, any>[] = [{ id: 1, kind: 'app', match: 'com.twitter.android', label: 'distraction', created_at: created }];
   const labelProposals: Record<string, any>[] = [{ id: 1, status: 'pending', content_hash: 'fixture-label-1', created_at: created, reason: 'Fixture: owner said these are doomscrolling',
@@ -108,6 +112,23 @@ function fixtureExecution() {
         const label = labels.find(row => row.id === Number(labelRemove[1]));
         if (label) label.removed_at = created;
         return [200, { removed: Number(labelRemove[1]) }];
+      }
+      // Invented blocklist state for the Blocked apps editor.
+      if (path === '/policy/config' && method === 'GET') return [200, { policy: { id: policyVersion, config: policyConfig } }];
+      if (path === '/policy/suggestions') return [200, { android_apps: [{ package: 'com.google.android.youtube', events: 120, last_seen: created }] }];
+      if (path === '/policy/proposals') return [200, { proposals: policyProposals }];
+      const policyDecision = path.match(/^\/policy\/proposals\/(\d+)\/(accept|reject)$/);
+      if (policyDecision && method === 'POST') {
+        const proposal = policyProposals.find(row => row.id === Number(policyDecision[1]));
+        if (!proposal || proposal.status !== 'pending') return [409, { error: { detail: 'already decided' } }];
+        if (body.content_hash !== proposal.content_hash) return [409, { error: { detail: 'content_hash does not match this proposal' } }];
+        proposal.status = policyDecision[2] === 'accept' ? 'accepted' : 'rejected';
+        if (proposal.status === 'accepted') {
+          policyVersion++;
+          for (const change of proposal.changes) policyConfig.distractions.push({ id: change.android_package, label: change.android_package, android_packages: [change.android_package] });
+          proposal.result_policy_version_id = policyVersion;
+        }
+        return [200, proposal];
       }
       if (path === '/planning/settings') return [200, { daily_plan_gate_enabled: true, enforcement_active: false }];
       if (path.startsWith('/activities')) return [200, { activities }];
@@ -192,7 +213,7 @@ function fixtureAPI(): Plugin {
           return;
         }
         const path = (request.url ?? '/').split('?')[0];
-        if (path.startsWith('/execution') || path.startsWith('/plans') || path.startsWith('/activities') || path.startsWith('/activity') || path.startsWith('/context-rules') || path === '/planning/settings') {
+        if (path.startsWith('/execution') || path.startsWith('/plans') || path.startsWith('/activities') || path.startsWith('/activity') || path.startsWith('/policy') || path.startsWith('/context-rules') || path === '/planning/settings') {
           let raw = '';
           request.on('data', chunk => raw += chunk);
           request.on('end', () => {

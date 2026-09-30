@@ -710,3 +710,18 @@ export async function decideLabelProposal(proposal: Pick<LabelProposal, 'id' | '
 export async function removeActivityLabel(id: number): Promise<void> {
   await request(`/v1/activity-labels/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
+
+export type BlocklistChange = { action: 'block' | 'always_allow' | 'unlist'; android_package: string };
+export type PolicyProposal = { id: number; changes: BlocklistChange[]; reason: string; content_hash: string; status: 'pending' | 'accepted' | 'rejected'; created_at: string; result_policy_version_id?: number };
+
+export async function listPolicyProposals(): Promise<PolicyProposal[]> {
+  const result = await request<{ proposals: PolicyProposal[] | null }>('/v1/policy/proposals');
+  return result.proposals ?? [];
+}
+
+// Both decisions echo the reviewed content hash; the server applies nothing else.
+export async function decidePolicyProposal(proposal: Pick<PolicyProposal, 'id' | 'content_hash'>, accept: boolean): Promise<PolicyProposal> {
+  return request<PolicyProposal>(`/v1/policy/proposals/${encodeURIComponent(proposal.id)}/${accept ? 'accept' : 'reject'}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content_hash: proposal.content_hash })
+  });
+}

@@ -120,6 +120,7 @@ func New(repository store.Repository, readToken string) (http.Handler, error) {
 		Description: "Read bounded source coverage and recent collector resource status observations. This reports collection evidence and limits, not a health diagnosis.",
 	}, collectionHealthTool(repository))
 	addActivityTools(server, repository, time.Now)
+	addBlocklistTools(server, repository)
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{
 		Stateless:                    true,
 		JSONResponse:                 true,

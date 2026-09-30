@@ -143,3 +143,53 @@ func (s *Server) activitySummary(writer http.ResponseWriter, request *http.Reque
 		"no_data": result.Gaps,
 	})
 }
+
+// policyProposals lists blocklist proposals for the owner.
+func (s *Server) policyProposals(writer http.ResponseWriter, request *http.Request) {
+	if !s.ownerAuthorized(request) {
+		writeError(writer, http.StatusUnauthorized, "unauthorized", "owner credentials are required")
+		return
+	}
+	proposals, err := s.repository.ListPolicyProposals(request.Context(), "", 30)
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"proposals": proposals})
+}
+
+func (s *Server) acceptPolicyProposal(writer http.ResponseWriter, request *http.Request) {
+	s.decidePolicyProposal(writer, request, true)
+}
+
+func (s *Server) rejectPolicyProposal(writer http.ResponseWriter, request *http.Request) {
+	s.decidePolicyProposal(writer, request, false)
+}
+
+// decidePolicyProposal is the only way a blocklist proposal is applied.
+func (s *Server) decidePolicyProposal(writer http.ResponseWriter, request *http.Request, accept bool) {
+	if !s.ownerAuthorized(request) {
+		writeError(writer, http.StatusUnauthorized, "unauthorized", "owner credentials are required")
+		return
+	}
+	id, ok := proposalID(writer, request)
+	if !ok {
+		return
+	}
+	request.Body = http.MaxBytesReader(writer, request.Body, s.config.MaxRequestSize)
+	var decision store.ProposalDecision
+	if err := decodeExecutionJSON(request, &decision); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_json", "request body must contain one decision")
+		return
+	}
+	proposal, err := s.repository.DecidePolicyProposal(request.Context(), id, accept, decision, ownerDecisionProvenance)
+	if errors.Is(err, store.ErrInvalidPolicy) {
+		writeError(writer, http.StatusBadRequest, "invalid_policy", err.Error())
+		return
+	}
+	if err != nil {
+		writeProposalError(writer, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, proposal)
+}

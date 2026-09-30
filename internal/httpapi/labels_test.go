@@ -16,6 +16,8 @@ func TestLabelDecisionsRequireOwner(t *testing.T) {
 		httptest.NewRequest(http.MethodPost, "/v1/activity-label-proposals/1/accept", strings.NewReader(`{"content_hash":"x"}`)),
 		httptest.NewRequest(http.MethodPost, "/v1/activity-label-proposals/1/reject", strings.NewReader(`{"content_hash":"x"}`)),
 		httptest.NewRequest(http.MethodDelete, "/v1/activity-labels/1", nil),
+		httptest.NewRequest(http.MethodGet, "/v1/policy/proposals", nil),
+		httptest.NewRequest(http.MethodPost, "/v1/policy/proposals/1/accept", strings.NewReader(`{"content_hash":"x"}`)),
 	} {
 		request.Header.Set("Authorization", "Bearer read-secret")
 		response := httptest.NewRecorder()
