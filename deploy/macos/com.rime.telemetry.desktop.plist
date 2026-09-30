@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.rime.telemetry.desktop</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/ri/Library/Application Support/Telemetry/bin/telemetry-desktop</string>
+    <string>run</string>
+    <string>-queue</string>
+    <string>/Users/ri/Library/Application Support/Telemetry/desktop.queue.sqlite3</string>
+    <string>-device</string>
+    <string>mac-00000001</string>
+    <string>-server</string>
+    <string>https://server.example.ts.net:8443</string>
+    <string>-ingest-token-file</string>
+    <string>/Users/ri/Library/Application Support/Telemetry/activitywatch-codex.ingest-token</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <!-- A resident collector: launchd restarts it whenever it exits. -->
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/ri/Library/Application Support/Telemetry/desktop.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/ri/Library/Application Support/Telemetry/desktop.log</string>
+</dict>
+</plist>

@@ -86,7 +86,7 @@ func (s *Server) deviceNow(writer http.ResponseWriter, request *http.Request) {
 		"decision":     policy.Evaluate(config, version, facts, now),
 		// Start in the past so a device whose clock runs slightly behind still
 		// finds a segment covering its own "now".
-		"timeline":     policy.Timeline(config, version, facts, now.Add(-10*time.Minute), now.Add(12*time.Hour)),
-		"panel_path":   "/panel/",
+		"timeline":   policy.Timeline(config, version, facts, now.Add(-10*time.Minute), now.Add(12*time.Hour)),
+		"panel_path": "/panel/",
 	})
 }
