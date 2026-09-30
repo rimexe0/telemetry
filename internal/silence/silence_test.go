@@ -54,3 +54,9 @@ func TestRunningCollectorThatCannotSeeIsReported(t *testing.T) {
 		t.Fatalf("healthy collector: %v", healthy)
 	}
 }
+
+func TestStartupStatusDoesNotJudgeWatchers(t *testing.T) {
+	if got := Evaluate(Evidence{Desktop: &DesktopStatus{At: *ago(0), State: "started"}}, now); len(got) != 0 {
+		t.Fatalf("got %v", got)
+	}
+}

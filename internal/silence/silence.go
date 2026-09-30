@@ -66,6 +66,9 @@ func Evaluate(evidence Evidence, now time.Time) []Finding {
 			"last_state": status.State,
 			"message":    "The Mac collector stopped reporting without announcing sleep or a stop. It may have crashed, lost its network, or been unloaded.",
 		}})
+	case status.State != "running":
+		// "started" and "awake" are sent before the watchers have run, so
+		// they say nothing about watcher health yet.
 	default:
 		if !status.TitlesReadable {
 			findings = append(findings, Finding{Device: DeviceMac, Kind: KindTitlesUnreadable, Since: status.At, Detail: map[string]any{
