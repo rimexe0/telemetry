@@ -12,7 +12,7 @@ import (
 	"github.com/rimexe0/telemetry/internal/store"
 )
 
-const activityNotes = "Mac time counts only while the Mac was not AFK (3 minutes without input, or locked). " +
+const activityNotes = "Mac time excludes periods recorded as AFK (3 minutes without input, or locked); window time with no AFK record is kept and marked afk_unknown. " +
 	"Browser time is split by the open tab's site. Phone apps are Android package names; a phone session ends at pause, the next app, screen off, or after one hour. " +
 	"no_data lists periods with no records from a device: the Mac is asleep or its collector stopped; the phone collector reports every minute, so a phone gap usually means collection stopped. Missing data is never inactivity."
 

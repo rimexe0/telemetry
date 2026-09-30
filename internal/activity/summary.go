@@ -14,12 +14,14 @@ type Usage struct {
 }
 
 type DeviceSummary struct {
-	Device        string     `json:"device"`
-	ActiveMinutes float64    `json:"active_minutes"`
-	Apps          []Usage    `json:"apps"`
-	Sites         []Usage    `json:"sites,omitempty"`
-	Titles        []Usage    `json:"titles,omitempty"`
-	LastRecord    *time.Time `json:"last_record,omitempty"`
+	Device        string  `json:"device"`
+	ActiveMinutes float64 `json:"active_minutes"`
+	// AFKUnknownMinutes is the part of ActiveMinutes with no AFK record.
+	AFKUnknownMinutes float64    `json:"afk_unknown_minutes,omitempty"`
+	Apps              []Usage    `json:"apps"`
+	Sites             []Usage    `json:"sites,omitempty"`
+	Titles            []Usage    `json:"titles,omitempty"`
+	LastRecord        *time.Time `json:"last_record,omitempty"`
 	// NoDataMinutes is time in the range with no records from this device.
 	NoDataMinutes float64 `json:"no_data_minutes"`
 }
@@ -39,6 +41,9 @@ func Summarize(result Result, limit int) []DeviceSummary {
 			}
 			minutes := segment.Duration().Minutes()
 			summary.ActiveMinutes += minutes
+			if segment.AFKUnknown {
+				summary.AFKUnknownMinutes += minutes
+			}
 			add(apps, segment.App, "", minutes)
 			if segment.Domain != "" {
 				add(sites, segment.Domain, segment.App, minutes)
@@ -60,6 +65,7 @@ func Summarize(result Result, limit int) []DeviceSummary {
 		}
 		summary.ActiveMinutes = round(summary.ActiveMinutes)
 		summary.NoDataMinutes = round(summary.NoDataMinutes)
+		summary.AFKUnknownMinutes = round(summary.AFKUnknownMinutes)
 		summaries = append(summaries, summary)
 	}
 	return summaries

@@ -35,6 +35,9 @@ type Segment struct {
 	App    string    `json:"app"`
 	Title  string    `json:"title,omitempty"`
 	Domain string    `json:"domain,omitempty"`
+	// AFKUnknown marks Mac time with no AFK record: the window was in front
+	// but whether the owner was present is not known.
+	AFKUnknown bool `json:"afk_unknown,omitempty"`
 }
 
 func (s Segment) Duration() time.Duration { return s.End.Sub(s.Start) }
@@ -167,26 +170,61 @@ func sequential(spans []span) []span {
 	return result
 }
 
+// macSegments keeps window time that is not known to be AFK. Time without
+// any AFK record is kept and marked, because missing data is not absence.
 func macSegments(windows, afk, web []span) []Segment {
-	active := []span{}
+	away, present := []span{}, []span{}
 	for _, s := range sequential(afk) {
-		if text(s.data, "status") == "not-afk" {
-			active = append(active, s)
+		if text(s.data, "status") == "afk" {
+			away = append(away, s)
+		} else {
+			present = append(present, s)
 		}
 	}
 	web = sequential(web)
 	segments := []Segment{}
 	for _, window := range sequential(windows) {
-		app := text(window.data, "app")
-		for _, part := range intersect(window, active) {
-			if isBrowser(app, text(window.data, "bundle_id")) {
-				segments = append(segments, browserSegments(app, text(window.data, "title"), part, web)...)
-				continue
+		app, title, bundle := text(window.data, "app"), text(window.data, "title"), text(window.data, "bundle_id")
+		for _, part := range subtract(window, away) {
+			known := intersect(part, present)
+			pieces := make([]span, 0, len(known)*2+1)
+			unknown := map[time.Time]bool{}
+			for _, gap := range subtract(part, known) {
+				unknown[gap.start] = true
+				pieces = append(pieces, gap)
 			}
-			segments = append(segments, Segment{Device: DeviceMac, Start: part.start, End: part.end, App: app, Title: text(window.data, "title")})
+			pieces = append(pieces, known...)
+			for _, piece := range pieces {
+				var made []Segment
+				if isBrowser(app, bundle) {
+					made = browserSegments(app, title, piece, web)
+				} else {
+					made = []Segment{{Device: DeviceMac, Start: piece.start, End: piece.end, App: app, Title: title}}
+				}
+				for i := range made {
+					made[i].AFKUnknown = unknown[piece.start]
+				}
+				segments = append(segments, made...)
+			}
 		}
 	}
 	return segments
+}
+
+// subtract returns the parts of s not covered by the sorted, disjoint spans.
+func subtract(s span, cover []span) []span {
+	result := []span{}
+	cursor := s.start
+	for _, c := range overlaps(s, cover) {
+		if c.start.After(cursor) {
+			result = append(result, span{cursor, c.start, s.data})
+		}
+		cursor = later(cursor, c.end)
+	}
+	if s.end.After(cursor) {
+		result = append(result, span{cursor, s.end, s.data})
+	}
+	return result
 }
 
 // intersect returns the parts of s covered by the sorted, disjoint spans,
@@ -322,7 +360,7 @@ func clipAndMerge(segments []Segment, from, to time.Time) []Segment {
 		}
 		if n := len(result); n > 0 {
 			last := &result[n-1]
-			if last.Device == segment.Device && last.App == segment.App && last.Domain == segment.Domain && last.Title == segment.Title &&
+			if last.Device == segment.Device && last.App == segment.App && last.Domain == segment.Domain && last.Title == segment.Title && last.AFKUnknown == segment.AFKUnknown &&
 				!segment.Start.After(last.End.Add(mergeTolerance)) {
 				last.End = later(last.End, segment.End)
 				continue

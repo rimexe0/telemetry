@@ -112,3 +112,15 @@ func TestLongRecordCoversItsSpanForSilence(t *testing.T) {
 		}
 	}
 }
+
+func TestMacWindowTimeWithoutAFKRecordsCountsAsUnknown(t *testing.T) {
+	records := []Record{
+		aw("aw-watcher-window_h", 0, 60, `{"app":"T3 Code","title":"x"}`),
+		aw("aw-watcher-afk_h", 10, 10, `{"status":"afk"}`),
+		aw("aw-watcher-afk_h", 20, 10, `{"status":"not-afk"}`),
+	}
+	summary := Summarize(Build(records, at(0), at(60)), 5)[0]
+	if summary.ActiveMinutes != 50 || summary.AFKUnknownMinutes != 40 {
+		t.Fatalf("active %v unknown %v, want 50 and 40", summary.ActiveMinutes, summary.AFKUnknownMinutes)
+	}
+}
