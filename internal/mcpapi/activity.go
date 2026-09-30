@@ -70,13 +70,43 @@ type DeviceNow struct {
 }
 
 type ActivityNowOutput struct {
-	Now      time.Time   `json:"now"`
-	Timezone string      `json:"timezone"`
-	Devices  []DeviceNow `json:"devices"`
-	Notes    string      `json:"notes"`
+	Now time.Time `json:"now"`
+	// OpenIncidents are current collection problems; affected devices'
+	// activity is incomplete.
+	OpenIncidents []store.CollectionIncident `json:"open_collection_incidents"`
+	Timezone      string                     `json:"timezone"`
+	Devices       []DeviceNow                `json:"devices"`
+	Notes         string                     `json:"notes"`
+}
+
+type CollectionIncidentsInput struct {
+	Days int `json:"days,omitempty" jsonschema:"include incidents that ended within this many days, 1 through 90; default 7"`
+}
+
+type CollectionIncidentsOutput struct {
+	Incidents []store.CollectionIncident `json:"incidents"`
+	Notes     string                     `json:"notes"`
 }
 
 func addActivityTools(server *mcp.Server, repository store.Repository, now func() time.Time) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "collection_incidents",
+		Description: "Collection problems: a device or collector that went quiet unexpectedly, or a Mac collector that cannot see windows. " +
+			"Open incidents (no ended_at) mean that device's activity is currently incomplete. Announced Mac sleep and stops are not incidents.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input CollectionIncidentsInput) (*mcp.CallToolResult, CollectionIncidentsOutput, error) {
+		days := input.Days
+		if days == 0 {
+			days = 7
+		}
+		if days < 1 || days > 90 {
+			return nil, CollectionIncidentsOutput{}, errors.New("days must be between 1 and 90")
+		}
+		incidents, err := repository.ListCollectionIncidents(ctx, now().UTC().AddDate(0, 0, -days), 200)
+		if err != nil {
+			return nil, CollectionIncidentsOutput{}, err
+		}
+		return nil, CollectionIncidentsOutput{Incidents: incidents, Notes: "Incidents describe collection, never the owner's behaviour."}, nil
+	})
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "activity_now",
 		Description: "What the owner is doing right now on the Mac and phone, how fresh each device's data is, and the last hour's apps. " + activityNotes,
@@ -93,7 +123,16 @@ func addActivityTools(server *mcp.Server, repository store.Repository, now func(
 		}
 		result := activity.Build(records, from, current)
 		summaries := activity.Summarize(result, 10)
-		output := ActivityNowOutput{Now: current, Timezone: location.String(), Notes: activityNotes}
+		output := ActivityNowOutput{Now: current, Timezone: location.String(), Notes: activityNotes, OpenIncidents: []store.CollectionIncident{}}
+		incidents, err := repository.ListCollectionIncidents(ctx, current, 50)
+		if err != nil {
+			return nil, ActivityNowOutput{}, err
+		}
+		for _, incident := range incidents {
+			if incident.EndedAt == nil {
+				output.OpenIncidents = append(output.OpenIncidents, incident)
+			}
+		}
 		for _, summary := range summaries {
 			device := DeviceNow{Device: summary.Device, RecentApps: summary.Apps, LastHourActive: summary.ActiveMinutes}
 			if last, ok := lastSeen[summary.Device]; ok {

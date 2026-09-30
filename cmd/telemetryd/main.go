@@ -145,6 +145,7 @@ func main() {
 		defer shutdownCancel()
 		_ = httpServer.Shutdown(shutdownContext)
 	}()
+	go runSilenceChecker(context, database)
 	log.Printf("Telemetry core listening on %s", *listen)
 	if err := httpServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)

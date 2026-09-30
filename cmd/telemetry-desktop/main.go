@@ -119,6 +119,8 @@ func run(arguments []string) error {
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 	}
+	health := &desktop.Health{}
+	status := statusReporter{queue: localQueue, client: client, deviceID: *deviceID, health: health, started: time.Now().UTC()}
 	errs := make(chan error, 2)
 	go func() {
 		if err := server.Serve(listener); !errors.Is(err, http.ErrServerClosed) {
@@ -131,12 +133,31 @@ func run(arguments []string) error {
 			return err
 		}
 		go func() {
-			if err := desktop.Run(ctx, store, platform, desktop.Options{Hostname: *hostname}); err != nil {
+			if err := desktop.Run(ctx, store, platform, desktop.Options{Hostname: *hostname, Health: health}); err != nil {
 				errs <- err
 			}
 		}()
 	}
 	log.Printf("%s collecting as %s (%s) on %s", collectorVersion, *deviceID, *hostname, *listen)
+	if err := status.report(ctx, stateStarted, true); err != nil {
+		log.Printf("status: %v", err)
+	}
+	// Announce sleep before it happens so the silence that follows is not
+	// mistaken for a stopped collector.
+	if err := desktop.WatchPower(func(sleeping bool) {
+		state := stateAwake
+		if sleeping {
+			state = stateSleeping
+			store.Flush(context.Background())
+		}
+		if err := status.report(context.Background(), state, true); err != nil {
+			log.Printf("status %s: %v", state, err)
+		}
+	}); err != nil {
+		log.Printf("sleep announcements unavailable: %v", err)
+	}
+	statusTicker := time.NewTicker(time.Minute)
+	defer statusTicker.Stop()
 
 	ticker := time.NewTicker(*deliverEvery)
 	defer ticker.Stop()
@@ -150,7 +171,15 @@ func run(arguments []string) error {
 			defer cancel()
 			server.Shutdown(shutdown)
 			// Keep the latest state of open events before exiting.
-			return store.Flush(shutdown)
+			err := store.Flush(shutdown)
+			if statusErr := status.report(shutdown, stateStopping, true); statusErr != nil {
+				log.Printf("status stopping: %v", statusErr)
+			}
+			return err
+		case <-statusTicker.C:
+			if err := status.report(ctx, stateRunning, false); err != nil {
+				log.Printf("status: %v", err)
+			}
 		case <-ticker.C:
 			problem := ""
 			if err := store.Flush(ctx); err != nil {

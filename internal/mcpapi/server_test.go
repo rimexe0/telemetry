@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/rimexe0/telemetry/internal/activity"
+	"github.com/rimexe0/telemetry/internal/silence"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -245,6 +246,18 @@ func (fakeRepository) LatestPolicy(context.Context) (*store.PolicyVersion, error
 
 func (fakeRepository) SavePolicy(context.Context, policy.Config, string) (store.PolicyVersion, error) {
 	return store.PolicyVersion{}, nil
+}
+
+func (fakeRepository) CollectionEvidence(context.Context) (silence.Evidence, error) {
+	return silence.Evidence{}, nil
+}
+
+func (fakeRepository) SyncCollectionIncidents(context.Context, []silence.Finding, time.Time) ([]store.CollectionIncident, error) {
+	return nil, nil
+}
+
+func (fakeRepository) ListCollectionIncidents(context.Context, time.Time, int) ([]store.CollectionIncident, error) {
+	return []store.CollectionIncident{}, nil
 }
 
 func (fakeRepository) ActivityRecords(context.Context, time.Time, time.Time) ([]activity.Record, map[string]time.Time, error) {

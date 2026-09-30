@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/rimexe0/telemetry/internal/awserver"
@@ -31,7 +32,52 @@ type Platform interface {
 	CanReadTitles(prompt bool) bool
 }
 
+// Health is what the watchers report about themselves, for the collector's
+// status record. It is safe for concurrent use.
+type Health struct {
+	mu            sync.Mutex
+	titles        bool
+	lastWindow    time.Time
+	lastError     string
+	lastErrorTime time.Time
+}
+
+type HealthSnapshot struct {
+	TitlesReadable bool       `json:"titles_readable"`
+	LastWindowAt   *time.Time `json:"last_window_sample_at,omitempty"`
+	LastError      string     `json:"last_sampling_error,omitempty"`
+	LastErrorAt    *time.Time `json:"last_sampling_error_at,omitempty"`
+}
+
+func (h *Health) Snapshot() HealthSnapshot {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	snapshot := HealthSnapshot{TitlesReadable: h.titles, LastError: h.lastError}
+	if !h.lastWindow.IsZero() {
+		at := h.lastWindow.UTC()
+		snapshot.LastWindowAt = &at
+	}
+	if !h.lastErrorTime.IsZero() {
+		at := h.lastErrorTime.UTC()
+		snapshot.LastErrorAt = &at
+	}
+	return snapshot
+}
+
+func (h *Health) record(titles bool, windowOK bool, err error, now time.Time) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.titles = titles
+	if windowOK {
+		h.lastWindow = now
+	}
+	if err != nil {
+		h.lastError, h.lastErrorTime = err.Error(), now
+	}
+}
+
 type Options struct {
+	Health       *Health
 	Hostname     string
 	WindowPoll   time.Duration
 	AFKPoll      time.Duration
@@ -54,6 +100,9 @@ func (o *Options) defaults() {
 	}
 	if o.Now == nil {
 		o.Now = time.Now
+	}
+	if o.Health == nil {
+		o.Health = &Health{}
 	}
 	if o.Logf == nil {
 		o.Logf = log.Printf
@@ -99,27 +148,35 @@ func Run(ctx context.Context, store *awserver.Store, platform Platform, options 
 		case <-ctx.Done():
 			return nil
 		case <-window.C:
-			report(sampleWindow(ctx, store, platform, options))
+			sampled, err := sampleWindow(ctx, store, platform, options)
+			report(err)
 			if !titles && platform.CanReadTitles(false) {
 				titles = true
 				options.Logf("window titles are readable now")
 			}
+			options.Health.record(titles, sampled, err, options.Now())
 		case <-afkTicker.C:
-			report(afk.sample(ctx))
+			err := afk.sample(ctx)
+			report(err)
+			if err != nil {
+				options.Health.record(titles, false, err, options.Now())
+			}
 		}
 	}
 }
 
-func sampleWindow(ctx context.Context, store *awserver.Store, platform Platform, options Options) error {
+// sampleWindow reports whether a window was recorded.
+func sampleWindow(ctx context.Context, store *awserver.Store, platform Platform, options Options) (bool, error) {
 	window, ok, err := platform.ActiveWindow()
 	if err != nil || !ok {
-		return err
+		return false, err
 	}
 	data := map[string]string{"app": window.App, "title": window.Title}
 	if window.BundleID != "" {
 		data["bundle_id"] = window.BundleID
 	}
-	return heartbeat(ctx, store, options.WindowBucket, options.Now(), 0, data, (options.WindowPoll + time.Second).Seconds())
+	err = heartbeat(ctx, store, options.WindowBucket, options.Now(), 0, data, (options.WindowPoll + time.Second).Seconds())
+	return err == nil, err
 }
 
 // afkWatcher follows aw-watcher-afk: heartbeats are dated at the last input,

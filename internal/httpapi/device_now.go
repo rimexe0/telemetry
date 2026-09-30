@@ -79,11 +79,25 @@ func (s *Server) deviceNow(writer http.ResponseWriter, request *http.Request) {
 			}
 		}
 	}
+	open := []store.CollectionIncident{}
+	incidents, err := s.repository.ListCollectionIncidents(request.Context(), now, 50)
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
+	for _, incident := range incidents {
+		if incident.EndedAt == nil {
+			open = append(open, incident)
+		}
+	}
 	writeJSON(writer, http.StatusOK, map[string]any{
 		"generated_at": now,
-		"plan_exists":  facts.PlanExists,
-		"task":         task,
-		"decision":     policy.Evaluate(config, version, facts, now),
+		// Open collection problems, so this device can tell the owner about
+		// another device that went quiet (#28).
+		"collection_incidents": open,
+		"plan_exists":          facts.PlanExists,
+		"task":                 task,
+		"decision":             policy.Evaluate(config, version, facts, now),
 		// Start in the past so a device whose clock runs slightly behind still
 		// finds a segment covering its own "now".
 		"timeline":   policy.Timeline(config, version, facts, now.Add(-10*time.Minute), now.Add(12*time.Hour)),

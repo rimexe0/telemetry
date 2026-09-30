@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/rimexe0/telemetry/internal/activity"
+	"github.com/rimexe0/telemetry/internal/silence"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -605,6 +606,18 @@ func (f *fakeRepository) SavePolicy(_ context.Context, config policy.Config, not
 	version := store.PolicyVersion{ID: int64(len(f.policies) + 1), Config: config, Note: note, CreatedAt: time.Now()}
 	f.policies = append(f.policies, version)
 	return version, nil
+}
+
+func (f *fakeRepository) CollectionEvidence(context.Context) (silence.Evidence, error) {
+	return silence.Evidence{}, nil
+}
+
+func (f *fakeRepository) SyncCollectionIncidents(context.Context, []silence.Finding, time.Time) ([]store.CollectionIncident, error) {
+	return nil, nil
+}
+
+func (f *fakeRepository) ListCollectionIncidents(context.Context, time.Time, int) ([]store.CollectionIncident, error) {
+	return []store.CollectionIncident{}, nil
 }
 
 func (f *fakeRepository) ActivityRecords(context.Context, time.Time, time.Time) ([]activity.Record, map[string]time.Time, error) {

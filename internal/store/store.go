@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/rimexe0/telemetry/internal/activity"
+	"github.com/rimexe0/telemetry/internal/silence"
 	"time"
 
 	"github.com/rimexe0/telemetry/internal/model"
@@ -99,6 +100,9 @@ type Repository interface {
 	SavePolicy(context.Context, policy.Config, string) (PolicyVersion, error)
 	AndroidAppUsage(context.Context, time.Time, int) ([]AppUsageSuggestion, error)
 	ActivityRecords(context.Context, time.Time, time.Time) ([]activity.Record, map[string]time.Time, error)
+	CollectionEvidence(context.Context) (silence.Evidence, error)
+	SyncCollectionIncidents(context.Context, []silence.Finding, time.Time) ([]CollectionIncident, error)
+	ListCollectionIncidents(context.Context, time.Time, int) ([]CollectionIncident, error)
 	StartExecutionSession(context.Context, ExecutionSessionInput) (ExecutionSession, error)
 	TransitionExecutionSession(context.Context, int64, ExecutionEventInput) (ExecutionSession, error)
 	ReturnToPrimary(context.Context, int64, ReturnToPrimaryInput) (ExecutionReturn, error)

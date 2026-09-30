@@ -27,6 +27,7 @@ object PolicyWatch {
     fun check(context: Context) {
         NowCache.refresh(context)
         val entry = NowCache.read(context)
+        IncidentWatch.check(context, entry?.json)
         val decision = entry?.let { runCatching { BlockPolicy.at(it.json, Instant.now()) }.getOrNull() }
         val bypassed = decision?.active == true && !PolicyEvents.blockingEnabled(context)
         val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
