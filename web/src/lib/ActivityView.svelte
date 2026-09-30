@@ -83,7 +83,7 @@
     <div class="devices">
       {#each summary.devices as device (device.device)}
         <div class="device">
-          <h3>{deviceName(device.device)} <span class="muted small">{formatMinutes(device.active_minutes)} active{#if device.no_data_minutes >= 15} · no data for {formatMinutes(device.no_data_minutes)}{/if}</span></h3>
+          <h3>{deviceName(device.device)} <span class="muted small">{`${formatMinutes(device.active_minutes)} active${device.no_data_minutes >= 15 ? ` · no data for ${formatMinutes(device.no_data_minutes)}` : ''}`}</span></h3>
           {#if (device.labels ?? []).length}
             <ul class="bars">
               {#each device.labels ?? [] as item (item.name)}

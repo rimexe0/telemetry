@@ -58,6 +58,10 @@ function fixtureExecution() {
   const proposals: Record<string, any>[] = [];
   const rules: Record<string, any>[] = [];
   let eventId = 0;
+  // Invented labels and usage for the Activity view.
+  const labels: Record<string, any>[] = [{ id: 1, kind: 'app', match: 'com.twitter.android', label: 'distraction', created_at: created }];
+  const labelProposals: Record<string, any>[] = [{ id: 1, status: 'pending', content_hash: 'fixture-label-1', created_at: created, reason: 'Fixture: owner said these are doomscrolling',
+    changes: [{ action: 'set', kind: 'site', match: 'youtube.com', label: 'distraction' }, { action: 'set', kind: 'app', match: 'T3 Code', label: 'work' }] }];
   const terminal = new Set(['completed', 'abandoned']);
   const nextState: Record<string, string> = {
     waiting_external: 'waiting_external', switched_out: 'interrupted', paused: 'interrupted', interrupted: 'interrupted',
@@ -77,6 +81,33 @@ function fixtureExecution() {
         if (!rule) return [404, { error: { detail: 'not found' } }];
         rule.disabled_at ??= new Date().toISOString();
         return [200, rule];
+      }
+      if (path === '/activity/summary') {
+        const tagged = (name: string) => labels.find(label => label.match === name)?.label ?? 'unlabeled';
+        const apps = (rows: [string, number][]) => rows.map(([name, minutes]) => ({ name, minutes, sessions: 3, label: tagged(name) }));
+        return [200, { from: created, to: created, timezone: 'Europe/Istanbul', no_data: [], devices: [
+          { device: 'mac', active_minutes: 312, afk_unknown_minutes: 20, no_data_minutes: 480, apps: apps([['Helium', 128], ['osu!', 77], ['T3 Code', 64], ['OBS Studio', 8]]),
+            sites: [{ name: 'youtube.com', app: 'Helium', minutes: 46, sessions: 9, label: tagged('youtube.com') }, { name: 'chatgpt.com', app: 'Helium', minutes: 22, sessions: 4, label: 'unlabeled' }],
+            labels: labels.length > 1 ? [{ name: 'distraction', minutes: 123, sessions: 9 }, { name: 'work', minutes: 64, sessions: 3 }, { name: 'unlabeled', minutes: 125, sessions: 20 }] : [{ name: 'unlabeled', minutes: 312, sessions: 30 }] },
+          { device: 'phone', active_minutes: 276, no_data_minutes: 28, apps: apps([['com.twitter.android', 60], ['com.t3tools.t3code', 37], ['com.openai.chatgpt', 35]]),
+            labels: [{ name: 'distraction', minutes: 60, sessions: 7 }, { name: 'unlabeled', minutes: 216, sessions: 90 }] }
+        ] }];
+      }
+      if (path === '/activity-labels') return [200, { labels: labels.filter(label => !label.removed_at), proposals: labelProposals }];
+      const labelDecision = path.match(/^\/activity-label-proposals\/(\d+)\/(accept|reject)$/);
+      if (labelDecision && method === 'POST') {
+        const proposal = labelProposals.find(row => row.id === Number(labelDecision[1]));
+        if (!proposal || proposal.status !== 'pending') return [409, { error: { detail: 'already decided' } }];
+        if (body.content_hash !== proposal.content_hash) return [409, { error: { detail: 'content_hash does not match this proposal' } }];
+        proposal.status = labelDecision[2] === 'accept' ? 'accepted' : 'rejected';
+        if (proposal.status === 'accepted') for (const change of proposal.changes) labels.push({ id: labels.length + 1, ...change, created_at: created });
+        return [200, proposal];
+      }
+      const labelRemove = path.match(/^\/activity-labels\/(\d+)$/);
+      if (labelRemove && method === 'DELETE') {
+        const label = labels.find(row => row.id === Number(labelRemove[1]));
+        if (label) label.removed_at = created;
+        return [200, { removed: Number(labelRemove[1]) }];
       }
       if (path === '/planning/settings') return [200, { daily_plan_gate_enabled: true, enforcement_active: false }];
       if (path.startsWith('/activities')) return [200, { activities }];
@@ -161,7 +192,7 @@ function fixtureAPI(): Plugin {
           return;
         }
         const path = (request.url ?? '/').split('?')[0];
-        if (path.startsWith('/execution') || path.startsWith('/plans') || path.startsWith('/activities') || path.startsWith('/context-rules') || path === '/planning/settings') {
+        if (path.startsWith('/execution') || path.startsWith('/plans') || path.startsWith('/activities') || path.startsWith('/activity') || path.startsWith('/context-rules') || path === '/planning/settings') {
           let raw = '';
           request.on('data', chunk => raw += chunk);
           request.on('end', () => {

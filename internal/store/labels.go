@@ -37,6 +37,9 @@ type LabelProposal struct {
 
 const maxLabelChanges = 50
 
+// ErrInvalidLabelProposal reports a proposal that cannot be stored.
+var ErrInvalidLabelProposal = errors.New("invalid label proposal")
+
 func labelProposalHash(changes []activity.LabelChange, reason string) (string, error) {
 	encoded, err := json.Marshal(struct {
 		Changes []activity.LabelChange `json:"changes"`
@@ -53,19 +56,19 @@ func labelProposalHash(changes []activity.LabelChange, reason string) (string, e
 func (p *Postgres) CreateLabelProposal(ctx context.Context, changes []activity.LabelChange, reason string) (LabelProposal, error) {
 	reason = strings.TrimSpace(reason)
 	if len(changes) == 0 || len(changes) > maxLabelChanges {
-		return LabelProposal{}, fmt.Errorf("%w: propose 1 to %d changes", ErrInvalidProposal, maxLabelChanges)
+		return LabelProposal{}, fmt.Errorf("%w: propose 1 to %d changes", ErrInvalidLabelProposal, maxLabelChanges)
 	}
 	if reason == "" || len(reason) > 1000 {
-		return LabelProposal{}, fmt.Errorf("%w: reason must be 1 to 1000 characters", ErrInvalidProposal)
+		return LabelProposal{}, fmt.Errorf("%w: reason must be 1 to 1000 characters", ErrInvalidLabelProposal)
 	}
 	seen := map[string]bool{}
 	for i := range changes {
 		if err := changes[i].Normalize(); err != nil {
-			return LabelProposal{}, fmt.Errorf("%w: change %d: %v", ErrInvalidProposal, i+1, err)
+			return LabelProposal{}, fmt.Errorf("%w: change %d: %v", ErrInvalidLabelProposal, i+1, err)
 		}
 		key := changes[i].Kind + "\x00" + strings.ToLower(changes[i].Match)
 		if seen[key] {
-			return LabelProposal{}, fmt.Errorf("%w: %s %q appears twice", ErrInvalidProposal, changes[i].Kind, changes[i].Match)
+			return LabelProposal{}, fmt.Errorf("%w: %s %q appears twice", ErrInvalidLabelProposal, changes[i].Kind, changes[i].Match)
 		}
 		seen[key] = true
 	}
