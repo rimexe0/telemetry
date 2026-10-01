@@ -1,9 +1,8 @@
 // Asks the local Telemetry collector whether a site is blocked right now and
-// replaces blocked tabs with the reason. The collector follows the approved
-// plan, offline too. If it cannot be reached, nothing is blocked.
+// tells each page's cover script. The collector follows the approved plan,
+// offline too. If it cannot be reached, nothing is blocked.
 const COLLECTOR = "http://127.0.0.1:5600/api/telemetry/site?host=";
 const STATUS = "http://127.0.0.1:5600/api/telemetry/status";
-const BLOCKED_PAGE = chrome.runtime.getURL("blocked.html");
 
 async function decision(host) {
   try {
@@ -14,22 +13,25 @@ async function decision(host) {
   }
 }
 
-async function check(tabId, url) {
-  if (!url || !/^https?:/.test(url)) return;
-  const host = new URL(url).hostname;
-  const result = await decision(host);
-  if (!result || !result.blocked) return;
-  const params = new URLSearchParams({ host, mode: result.mode || "", reason: result.reason || "" });
-  chrome.tabs.update(tabId, { url: `${BLOCKED_PAGE}?${params}` });
-}
+// The cover script asks when a page starts loading.
+chrome.runtime.onMessage.addListener((message, sender, reply) => {
+  if (message.type !== "check") return false;
+  decision(message.host).then(reply);
+  return true;
+});
 
-chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
-  if (change.url || change.status === "loading") check(tabId, change.url || tab.url);
-});
-chrome.tabs.onActivated.addListener(async ({ tabId }) => {
-  const tab = await chrome.tabs.get(tabId);
-  check(tabId, tab.url);
-});
+// Open tabs follow a block starting or ending without being reloaded.
+async function refreshTabs() {
+  for (const tab of await chrome.tabs.query({ url: ["http://*/*", "https://*/*"] })) {
+    const result = await decision(new URL(tab.url).hostname);
+    try {
+      await chrome.tabs.sendMessage(tab.id, { type: "decision", decision: result });
+    } catch {
+      // Tabs opened before the extension loaded have no cover script yet.
+      if (result && result.blocked) chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["cover.js"] }).catch(() => {});
+    }
+  }
+}
 
 // The badge shows whether sites are being closed right now.
 async function badge() {
@@ -45,10 +47,10 @@ async function badge() {
   }
 }
 
-// A work block can start while a site is already open.
 chrome.alarms.create("recheck", { periodInMinutes: 1 });
-chrome.alarms.onAlarm.addListener(async () => {
+chrome.alarms.onAlarm.addListener(() => {
   badge();
-  for (const tab of await chrome.tabs.query({})) check(tab.id, tab.url);
+  refreshTabs();
 });
 badge();
+refreshTabs();

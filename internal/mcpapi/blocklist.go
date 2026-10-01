@@ -18,7 +18,8 @@ const approvalRule = "Before calling this, show the owner exactly what will chan
 	"Every applied change is logged with what it replaced; recent_changes lists them and revert_change undoes one."
 
 const blocklistNotes = "Blocking follows the owner's labels: label \"distraction\" is blocked while a plan work block or execution session is open (or the daily-plan gate applies); \"essential\" is never blocked; other labels only name time. " +
-	"Enforcement today: Android apps on the phone. Mac apps and websites are recorded for the Mac and browser blockers that are not built yet."
+	"Enforcement: Android apps on the phone (block screen, or suspended when root is enabled there); Mac apps are hidden by the Telemetry Desktop collector with a short notice; websites are covered by the Telemetry browser extension in Helium. " +
+	"Blocking happens only during a work block (a plan block tied to a task) or an execution session, or under the daily-plan gate; at other times nothing is blocked."
 
 type BlocklistInput struct{}
 
@@ -109,10 +110,10 @@ func addChangeTools(server *mcp.Server, repository store.Repository) {
 				result = append(result, "phone app "+value)
 			}
 			for _, value := range group.MacApps {
-				result = append(result, "Mac app "+value+" (not enforced yet)")
+				result = append(result, "Mac app "+value)
 			}
 			for _, value := range group.Domains {
-				result = append(result, "site "+value+" (not enforced yet)")
+				result = append(result, "site "+value)
 			}
 			return result
 		}
