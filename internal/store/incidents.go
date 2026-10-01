@@ -105,10 +105,34 @@ func (p *Postgres) SyncCollectionIncidents(ctx context.Context, findings []silen
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+	// Read open incidents first: inserting a held finding again would be
+	// rejected but still consume an id.
+	rows, err := tx.Query(ctx, `SELECT id, device, kind FROM collection_incidents WHERE ended_at IS NULL`)
+	if err != nil {
+		return nil, err
+	}
+	open := map[string]int64{}
+	for rows.Next() {
+		var id int64
+		var device, kind string
+		if err := rows.Scan(&id, &device, &kind); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		open[device+"\x00"+kind] = id
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	holding := map[string]bool{}
 	opened := []CollectionIncident{}
 	for _, finding := range findings {
-		holding[finding.Device+"\x00"+finding.Kind] = true
+		key := finding.Device + "\x00" + finding.Kind
+		holding[key] = true
+		if _, ok := open[key]; ok {
+			continue
+		}
 		detail, err := json.Marshal(finding.Detail)
 		if err != nil {
 			return nil, err
@@ -127,25 +151,11 @@ func (p *Postgres) SyncCollectionIncidents(ctx context.Context, findings []silen
 		}
 		opened = append(opened, incident)
 	}
-	rows, err := tx.Query(ctx, `SELECT id, device, kind FROM collection_incidents WHERE ended_at IS NULL`)
-	if err != nil {
-		return nil, err
-	}
 	closing := []int64{}
-	for rows.Next() {
-		var id int64
-		var device, kind string
-		if err := rows.Scan(&id, &device, &kind); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		if !holding[device+"\x00"+kind] {
+	for key, id := range open {
+		if !holding[key] {
 			closing = append(closing, id)
 		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
 	}
 	if len(closing) > 0 {
 		if _, err := tx.Exec(ctx, `UPDATE collection_incidents SET ended_at = $1 WHERE id = ANY($2)`, now, closing); err != nil {

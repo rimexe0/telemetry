@@ -56,6 +56,19 @@ func TestPostgresIncidentsOpenOnceAndClose(t *testing.T) {
 	if err != nil || len(incidents) != 1 || incidents[0].EndedAt == nil || incidents[0].Detail["message"] != "quiet" {
 		t.Fatalf("incidents = %+v, %v", incidents, err)
 	}
+	// A finding held for many checks must not use up ids.
+	for minute := 3; minute < 10; minute++ {
+		if _, err := database.SyncCollectionIncidents(ctx, []silence.Finding{finding}, now.Add(time.Duration(minute)*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := database.SyncCollectionIncidents(ctx, nil, now.Add(10*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	next, err := database.SyncCollectionIncidents(ctx, []silence.Finding{finding}, now.Add(11*time.Minute))
+	if err != nil || len(next) != 1 || next[0].ID != 3 {
+		t.Fatalf("next incident = %+v, %v (ids must not jump)", next, err)
+	}
 }
 
 func TestPostgresCollectionEvidenceAndActivityRecords(t *testing.T) {
