@@ -114,6 +114,7 @@ class SettingsActivity : ComponentActivity() {
     private var serverToken by mutableStateOf("")
     private var limits by mutableStateOf(listOf<String>())
     private var advancedOpen by mutableStateOf(false)
+    private var statusOpen by mutableStateOf(false)
 
     private fun notice(text: String) {
         lifecycleScope.launch {
@@ -202,7 +203,10 @@ class SettingsActivity : ComponentActivity() {
                     Note("Blocking follows your policy. Tell the assistant what is a distraction, or choose apps in the planner.")
                 }
                 Section("Collection") {
-                    Note(freshnessStatus)
+                    // The last cycle's report is long; its first lines say whether it ran and uploaded.
+                    val lines = freshnessStatus.lines()
+                    Note(if (statusOpen) freshnessStatus else lines.take(4).joinToString("\n"))
+                    if (lines.size > 4) Item(if (statusOpen) "Hide the full report" else "Show the full report", onClick = { statusOpen = !statusOpen })
                     Item("Start fresh collection", "Frequent updates with a visible notification.", onClick = ::requestFastCollection)
                     Item("Stop fresh collection", "Android's 15-minute fallback keeps running.", onClick = {
                         stopService(Intent(this@SettingsActivity, TelemetryCollectionService::class.java))
