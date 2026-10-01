@@ -25,8 +25,8 @@ type Credentials struct {
 	Secret   string
 }
 
-// Blocker covers apps the approved policy blocks right now with the reason,
-// as the phone does. It follows the server's decision timeline and keeps
+// Blocker hides apps the approved policy blocks right now and shows the
+// reason in a small notice; it never covers the screen or quits an app. It follows the server's decision timeline and keeps
 // following the cached one offline; without a current timeline it blocks
 // nothing.
 type Blocker struct {
@@ -170,20 +170,16 @@ func (b *Blocker) enforce(ctx context.Context, host Host, window desktop.Window,
 	decision := DecisionAt(b.timeline, now)
 	b.mu.Unlock()
 	if window.BundleID == ownBundleID {
-		// The block screen itself is in front.
 		return
 	}
 	if decision == nil || !Blocks(*decision, window) {
 		b.mu.Lock()
-		showing := b.blocking != ""
 		b.blocking = ""
 		b.mu.Unlock()
-		if showing {
-			desktop.HideBlock()
-		}
 		return
 	}
-	desktop.ShowBlock(ModeLabel(decision.Mode), decision.Reason, window.PID)
+	// Hidden, not quit: the app keeps its state for after the block.
+	desktop.BlockApp(window.App+" is closed during "+strings.ToLower(ModeLabel(decision.Mode)), decision.Reason, window.PID)
 	key := fmt.Sprintf("block:%s:%d", window.App, now.Unix()/60)
 	b.mu.Lock()
 	b.blocking = window.App

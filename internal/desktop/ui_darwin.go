@@ -8,82 +8,81 @@ package desktop
 #import <AppKit/AppKit.h>
 #include <stdlib.h>
 
-// TDBlockScreen is the full-screen reason shown over a blocked app.
-@interface TDBlockScreen : NSObject
-@property (strong) NSWindow *window;
-@property (strong) NSTextField *mode;
+// TDBlockNotice hides a blocked app and shows its reason in a small card
+// that takes no focus and disappears by itself, so the owner can switch to
+// anything else at once. The app is hidden, never quit.
+@interface TDBlockNotice : NSObject
+@property (strong) NSPanel *panel;
+@property (strong) NSTextField *title;
 @property (strong) NSTextField *reason;
-@property pid_t pid;
-- (void)goBack:(id)sender;
+@property (strong) NSTimer *timer;
 @end
 
-@implementation TDBlockScreen
+@implementation TDBlockNotice
 - (NSTextField *)label:(CGFloat)size color:(NSColor *)color bold:(BOOL)bold {
 	NSTextField *field = [NSTextField wrappingLabelWithString:@""];
 	field.font = bold ? [NSFont boldSystemFontOfSize:size] : [NSFont systemFontOfSize:size];
 	field.textColor = color;
-	field.alignment = NSTextAlignmentLeft;
 	return field;
 }
 
 - (void)build {
-	NSRect frame = NSScreen.mainScreen.frame;
-	self.window = [[NSWindow alloc] initWithContentRect:frame styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
-	self.window.level = NSStatusWindowLevel + 1;
-	self.window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary | NSWindowCollectionBehaviorStationary;
-	self.window.backgroundColor = [NSColor colorWithRed:17/255.0 green:18/255.0 blue:19/255.0 alpha:1];
-	self.window.releasedWhenClosed = NO;
+	self.panel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, 440, 96)
+		styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel backing:NSBackingStoreBuffered defer:NO];
+	self.panel.level = NSStatusWindowLevel;
+	self.panel.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
+	self.panel.opaque = NO;
+	self.panel.backgroundColor = NSColor.clearColor;
+	self.panel.hasShadow = YES;
+	self.panel.hidesOnDeactivate = NO;
+	self.panel.ignoresMouseEvents = YES;
 
-	NSColor *muted = [NSColor colorWithRed:170/255.0 green:169/255.0 blue:164/255.0 alpha:1];
-	self.mode = [self label:15 color:muted bold:YES];
-	self.reason = [self label:30 color:[NSColor colorWithRed:238/255.0 green:238/255.0 blue:235/255.0 alpha:1] bold:NO];
-	NSTextField *closed = [self label:16 color:muted bold:NO];
-	closed.stringValue = @"This app is closed right now.";
-	NSButton *back = [NSButton buttonWithTitle:@"Go back" target:self action:@selector(goBack:)];
-	back.keyEquivalent = @"\r";
+	NSView *card = [NSView new];
+	card.wantsLayer = YES;
+	card.layer.backgroundColor = [NSColor colorWithRed:17/255.0 green:18/255.0 blue:19/255.0 alpha:0.96].CGColor;
+	card.layer.cornerRadius = 12;
+	self.panel.contentView = card;
 
-	NSStackView *stack = [NSStackView stackViewWithViews:@[self.mode, self.reason, closed, back]];
+	self.title = [self label:13 color:[NSColor colorWithRed:170/255.0 green:169/255.0 blue:164/255.0 alpha:1] bold:YES];
+	self.reason = [self label:15 color:[NSColor colorWithRed:238/255.0 green:238/255.0 blue:235/255.0 alpha:1] bold:NO];
+	NSStackView *stack = [NSStackView stackViewWithViews:@[self.title, self.reason]];
 	stack.orientation = NSUserInterfaceLayoutOrientationVertical;
 	stack.alignment = NSLayoutAttributeLeading;
-	stack.spacing = 18;
+	stack.spacing = 6;
 	stack.translatesAutoresizingMaskIntoConstraints = NO;
-	NSView *content = self.window.contentView;
-	[content addSubview:stack];
+	[card addSubview:stack];
 	[NSLayoutConstraint activateConstraints:@[
-		[stack.centerYAnchor constraintEqualToAnchor:content.centerYAnchor],
-		[stack.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:frame.size.width * 0.18],
-		[stack.widthAnchor constraintLessThanOrEqualToConstant:frame.size.width * 0.6],
+		[stack.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:18],
+		[stack.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-18],
+		[stack.centerYAnchor constraintEqualToAnchor:card.centerYAnchor],
 	]];
 }
 
-- (void)showMode:(NSString *)mode reason:(NSString *)reason pid:(pid_t)pid {
-	if (self.window == nil) [self build];
-	self.mode.stringValue = mode.uppercaseString;
+- (void)blockApp:(NSString *)title reason:(NSString *)reason pid:(pid_t)pid {
+	[[NSRunningApplication runningApplicationWithProcessIdentifier:pid] hide];
+	if (self.panel == nil) [self build];
+	self.title.stringValue = title;
 	self.reason.stringValue = reason;
-	self.pid = pid;
-	[self.window setFrame:NSScreen.mainScreen.frame display:YES];
-	[self.window orderFrontRegardless];
-	[NSApp activateIgnoringOtherApps:YES];
-	[self.window makeKeyWindow];
+	NSRect screen = NSScreen.mainScreen.visibleFrame;
+	NSRect frame = self.panel.frame;
+	[self.panel setFrameOrigin:NSMakePoint(NSMidX(screen) - frame.size.width / 2, NSMaxY(screen) - frame.size.height - 16)];
+	[self.panel orderFrontRegardless];
+	[self.timer invalidate];
+	self.timer = [NSTimer scheduledTimerWithTimeInterval:6 repeats:NO block:^(NSTimer *timer) { [self hide]; }];
 }
 
 - (void)hide {
-	[self.window orderOut:nil];
-}
-
-// goBack hides the blocked app, which returns to whatever was behind it.
-- (void)goBack:(id)sender {
-	[[NSRunningApplication runningApplicationWithProcessIdentifier:self.pid] hide];
-	[self hide];
+	[self.timer invalidate];
+	[self.panel orderOut:nil];
 }
 @end
 
-static TDBlockScreen *td_screen;
+static TDBlockNotice *td_notice;
 
 static void td_ui_run(void) {
 	[NSApplication sharedApplication];
 	[NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
-	td_screen = [TDBlockScreen new];
+	td_notice = [TDBlockNotice new];
 	[NSApp run];
 }
 
@@ -96,14 +95,14 @@ static void td_ui_stop(void) {
 	});
 }
 
-static void td_block_show(char *mode, char *reason, int pid) {
-	NSString *modeText = [NSString stringWithUTF8String:mode];
+static void td_block_app(char *title, char *reason, int pid) {
+	NSString *titleText = [NSString stringWithUTF8String:title];
 	NSString *reasonText = [NSString stringWithUTF8String:reason];
-	dispatch_async(dispatch_get_main_queue(), ^{ [td_screen showMode:modeText reason:reasonText pid:(pid_t)pid]; });
+	dispatch_async(dispatch_get_main_queue(), ^{ [td_notice blockApp:titleText reason:reasonText pid:(pid_t)pid]; });
 }
 
 static void td_block_hide(void) {
-	dispatch_async(dispatch_get_main_queue(), ^{ [td_screen hide]; });
+	dispatch_async(dispatch_get_main_queue(), ^{ [td_notice hide]; });
 }
 */
 import "C"
@@ -111,7 +110,7 @@ import "C"
 import "unsafe"
 
 // RunMain runs work while the macOS app loop runs on the calling thread,
-// which must be the main thread (main locks it in init). The block screen
+// which must be the main thread (main locks it in init). The block notice
 // needs that loop.
 func RunMain(work func() error) error {
 	result := make(chan error, 1)
@@ -123,15 +122,17 @@ func RunMain(work func() error) error {
 	return <-result
 }
 
-// ShowBlock covers the screen with the reason; Go back hides the app pid.
-func ShowBlock(mode, reason string, pid int) {
-	cMode, cReason := C.CString(mode), C.CString(reason)
-	defer C.free(unsafe.Pointer(cMode))
+// BlockApp hides the app pid (it keeps running) and shows title and reason
+// in a small notice that disappears by itself.
+func BlockApp(title, reason string, pid int) {
+	cTitle, cReason := C.CString(title), C.CString(reason)
+	defer C.free(unsafe.Pointer(cTitle))
 	defer C.free(unsafe.Pointer(cReason))
-	C.td_block_show(cMode, cReason, C.int(pid))
+	C.td_block_app(cTitle, cReason, C.int(pid))
 }
 
+// HideBlock removes the notice early.
 func HideBlock() { C.td_block_hide() }
 
-// BlockScreenSupported reports whether ShowBlock does anything here.
+// BlockScreenSupported reports whether BlockApp does anything here.
 func BlockScreenSupported() bool { return true }
