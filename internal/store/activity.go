@@ -113,3 +113,16 @@ func (p *Postgres) CodingRecords(ctx context.Context, from time.Time) ([]activit
 	}
 	return records, rows.Err()
 }
+
+// PlannedBlocks gives a plan's blocks in the shape a plan review needs.
+func PlannedBlocks(plan *Plan) []activity.PlannedBlock {
+	blocks := []activity.PlannedBlock{}
+	if plan == nil {
+		return blocks
+	}
+	for _, block := range plan.Blocks {
+		blocks = append(blocks, activity.PlannedBlock{ID: block.ID, Title: block.Title, TaskID: block.ActivityID, Start: block.StartTime,
+			End: block.StartTime.Add(time.Duration(block.DurationMinutes) * time.Minute), State: block.State, Closes: block.ActivityID != nil || block.Focus})
+	}
+	return blocks
+}

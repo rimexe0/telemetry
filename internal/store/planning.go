@@ -97,13 +97,15 @@ type ActivityFilter struct {
 }
 
 type PlanBlock struct {
-	ID                    int64           `json:"id"`
-	ActivityID            *int64          `json:"activity_id,omitempty"`
-	SourceBlockID         *int64          `json:"source_block_id,omitempty"`
-	Title                 string          `json:"title"`
-	StartTime             time.Time       `json:"start_time"`
-	DurationMinutes       int             `json:"duration_minutes"`
-	Fixed                 bool            `json:"fixed"`
+	ID              int64     `json:"id"`
+	ActivityID      *int64    `json:"activity_id,omitempty"`
+	SourceBlockID   *int64    `json:"source_block_id,omitempty"`
+	Title           string    `json:"title"`
+	StartTime       time.Time `json:"start_time"`
+	DurationMinutes int       `json:"duration_minutes"`
+	Fixed           bool      `json:"fixed"`
+	// Focus closes distractions during the block even without an activity.
+	Focus                 bool            `json:"focus"`
 	State                 string          `json:"state"`
 	StateNote             string          `json:"state_note"`
 	ExplanationCode       string          `json:"explanation_code,omitempty"`
@@ -132,6 +134,7 @@ type PlanBlockSpec struct {
 	StartTime       time.Time `json:"start_time"`
 	DurationMinutes int       `json:"duration_minutes"`
 	Fixed           bool      `json:"fixed"`
+	Focus           bool      `json:"focus,omitempty"`
 }
 
 type PlanVersionSummary struct {
@@ -400,7 +403,7 @@ func (p *Postgres) planBlocksFromInput(ctx context.Context, input PlanInput) ([]
 		if spec.StartTime.IsZero() {
 			return nil, fmt.Errorf("block %d start_time is required", i+1)
 		}
-		blocks[i] = ProposedBlock{ActivityID: spec.ActivityID, Title: spec.Title, StartTime: spec.StartTime, DurationMinutes: spec.DurationMinutes, Fixed: spec.Fixed, State: "planned"}
+		blocks[i] = ProposedBlock{ActivityID: spec.ActivityID, Title: spec.Title, StartTime: spec.StartTime, DurationMinutes: spec.DurationMinutes, Fixed: spec.Fixed, Focus: spec.Focus, State: "planned"}
 	}
 	if err := p.resolveActivityTitles(ctx, blocks); err != nil {
 		return nil, err
@@ -495,12 +498,12 @@ func insertPlanVersion(ctx context.Context, tx pgx.Tx, planDate time.Time, note 
 	for i, spec := range specs {
 		block := PlanBlock{
 			ActivityID: spec.ActivityID, SourceBlockID: spec.SourceBlockID, Title: spec.Title, StartTime: spec.StartTime,
-			DurationMinutes: spec.DurationMinutes, Fixed: spec.Fixed, State: spec.State, Position: i,
+			DurationMinutes: spec.DurationMinutes, Fixed: spec.Fixed, Focus: spec.Focus, State: spec.State, Position: i,
 		}
 		err := tx.QueryRow(ctx, `
-			INSERT INTO plan_blocks (plan_version_id, activity_id, source_block_id, title, start_time, duration_minutes, fixed, state, state_note, position)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '', $9) RETURNING id`,
-			versionID, block.ActivityID, block.SourceBlockID, block.Title, block.StartTime, block.DurationMinutes, block.Fixed, block.State, block.Position).Scan(&block.ID)
+			INSERT INTO plan_blocks (plan_version_id, activity_id, source_block_id, title, start_time, duration_minutes, fixed, focus, state, state_note, position)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, '', $10) RETURNING id`,
+			versionID, block.ActivityID, block.SourceBlockID, block.Title, block.StartTime, block.DurationMinutes, block.Fixed, block.Focus, block.State, block.Position).Scan(&block.ID)
 		if err != nil {
 			return Plan{}, err
 		}
@@ -595,7 +598,7 @@ func (p *Postgres) SetPlanBlockState(ctx context.Context, planDate time.Time, bl
 
 func (p *Postgres) planBlocks(ctx context.Context, tx pgx.Tx, versionID int64) ([]PlanBlock, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT pb.id, pb.activity_id, pb.source_block_id, pb.title, pb.start_time, pb.duration_minutes, pb.fixed,
+		SELECT pb.id, pb.activity_id, pb.source_block_id, pb.title, pb.start_time, pb.duration_minutes, pb.fixed, pb.focus,
 			pb.state, pb.state_note, pb.position,
 			COALESCE(event.explanation_code, ''),
 			COALESCE(event.note, pb.state_note),
@@ -619,7 +622,7 @@ func (p *Postgres) planBlocks(ctx context.Context, tx pgx.Tx, versionID int64) (
 		var block PlanBlock
 		var provenance []byte
 		if err := rows.Scan(&block.ID, &block.ActivityID, &block.SourceBlockID, &block.Title, &block.StartTime,
-			&block.DurationMinutes, &block.Fixed, &block.State, &block.StateNote, &block.Position,
+			&block.DurationMinutes, &block.Fixed, &block.Focus, &block.State, &block.StateNote, &block.Position,
 			&block.ExplanationCode, &block.ExplanationNote, &provenance, &block.LastChangedAt); err != nil {
 			return nil, err
 		}

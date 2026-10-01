@@ -92,6 +92,7 @@ func New(repository store.Repository, config Config) (*Server, error) {
 	server.mux.HandleFunc("GET /v1/policy/timeline", server.policyTimeline)
 	server.mux.HandleFunc("GET /v1/policy/suggestions", server.policySuggestions)
 	server.mux.HandleFunc("GET /v1/device/now", server.deviceNow)
+	server.mux.HandleFunc("GET /v1/device/insights", server.deviceInsights)
 	server.mux.HandleFunc("POST /v1/device/panel-session", server.devicePanelSession)
 	server.mux.HandleFunc("POST /v1/context-rules/{id}/disable", server.disableContextRule)
 	server.mux.HandleFunc("GET /v1/plans/{date}/replan-proposals/{id}", server.replanProposal)

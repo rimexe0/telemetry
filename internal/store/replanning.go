@@ -47,6 +47,7 @@ type ProposedBlock struct {
 	StartTime       time.Time `json:"start_time"`
 	DurationMinutes int       `json:"duration_minutes"`
 	Fixed           bool      `json:"fixed"`
+	Focus           bool      `json:"focus,omitempty"`
 	State           string    `json:"state"`
 }
 
@@ -148,7 +149,7 @@ func carried(block PlanBlock) ProposedBlock {
 	id := block.ID
 	return ProposedBlock{
 		SourceBlockID: &id, ActivityID: block.ActivityID, Title: block.Title,
-		StartTime: block.StartTime, DurationMinutes: block.DurationMinutes, Fixed: block.Fixed, State: block.State,
+		StartTime: block.StartTime, DurationMinutes: block.DurationMinutes, Fixed: block.Fixed, Focus: block.Focus, State: block.State,
 	}
 }
 
@@ -387,6 +388,10 @@ func ProposalContentHash(planDate string, baseVersionID int64, plan ProposedPlan
 			"source_block_id": block.SourceBlockID, "activity_id": block.ActivityID, "title": block.Title,
 			"start_time": block.StartTime.UTC().Format(time.RFC3339Nano), "duration_minutes": block.DurationMinutes,
 			"fixed": block.Fixed, "state": block.State,
+		}
+		// Only present when set, so hashes of earlier proposals stay valid.
+		if block.Focus {
+			blocks[i]["focus"] = true
 		}
 	}
 	payload, err := json.Marshal(map[string]any{"plan_date": planDate, "base_plan_version_id": baseVersionID, "note": plan.Note, "blocks": blocks})

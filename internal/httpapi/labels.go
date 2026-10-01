@@ -137,10 +137,72 @@ func (s *Server) activitySummary(writer http.ResponseWriter, request *http.Reque
 	for device, last := range lastSeen {
 		result.LastRecord[device] = last
 	}
+	plan, err := s.repository.LatestPlan(request.Context(), time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
+	coding, err := s.repository.CodingRecords(request.Context(), from)
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
+	summaryLabels := store.LabelsForSummary(labels)
 	writeJSON(writer, http.StatusOK, map[string]any{
 		"from": from, "to": to, "timezone": location.String(),
-		"devices": activity.Summarize(result, 10, store.LabelsForSummary(labels)),
-		"no_data": result.Gaps,
+		"devices":     activity.Summarize(result, 10, summaryLabels),
+		"no_data":     result.Gaps,
+		"plan_exists": plan != nil,
+		"plan_review": activity.ReviewPlan(store.PlannedBlocks(plan), result, coding, summaryLabels, from, to, 5),
+		"insights":    activity.Insights(result, activity.CodingThreads(coding, from, to), summaryLabels),
+	})
+}
+
+// deviceInsights gives a paired device a few plain facts about today, for
+// its home screen.
+func (s *Server) deviceInsights(writer http.ResponseWriter, request *http.Request) {
+	if !s.pairedDeviceAuthorized(request) && !s.ownerAuthorized(request) {
+		writeError(writer, http.StatusUnauthorized, "unauthorized", "a paired device credential is required")
+		return
+	}
+	ctx := request.Context()
+	config := policy.Config{}
+	stored, err := s.repository.LatestPolicy(ctx)
+	if err == nil && stored != nil {
+		config = stored.Config
+	}
+	if err == nil {
+		err = config.Normalize()
+	}
+	var location *time.Location
+	if err == nil {
+		location, err = time.LoadLocation(config.Timezone)
+	}
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
+	now := time.Now().UTC()
+	day := now.In(location)
+	from := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, location).UTC()
+	records, _, err := s.repository.ActivityRecords(ctx, from, now)
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
+	coding, err := s.repository.CodingRecords(ctx, from)
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
+	labels, err := s.repository.ListActivityLabels(ctx)
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"date": day.Format("2006-01-02"), "generated_at": now,
+		"insights": activity.Insights(activity.Build(records, from, now), activity.CodingThreads(coding, from, now), store.LabelsForSummary(labels)),
 	})
 }
 

@@ -141,8 +141,11 @@ func TestRecentChangesOutputValidates(t *testing.T) {
 
 type planningRepository struct {
 	toolsRepository
-	date time.Time
-	plan store.PlanInput
+	date     time.Time
+	plan     store.PlanInput
+	conflict error
+	stored   *store.Plan
+	records  []activity.Record
 }
 
 func (r *planningRepository) ApplyDayPlan(_ context.Context, date time.Time, input store.PlanInput, _ string) (store.AgentChange, store.Plan, error) {
@@ -153,6 +156,82 @@ func (r *planningRepository) ApplyDayPlan(_ context.Context, date time.Time, inp
 	}
 	return store.AgentChange{ID: 3, Kind: store.AgentChangePlan, Changes: json.RawMessage(`{}`), Previous: json.RawMessage(`{}`)},
 		store.Plan{PlanDate: date.Format("2006-01-02"), VersionID: 9, Blocks: blocks}, nil
+}
+
+func (r *planningRepository) AddPlanBlock(_ context.Context, date time.Time, spec store.PlanBlockSpec, _ string) (store.AgentChange, store.Plan, error) {
+	if r.conflict != nil {
+		return store.AgentChange{}, store.Plan{}, r.conflict
+	}
+	r.date, r.plan = date, store.PlanInput{Blocks: []store.PlanBlockSpec{spec}}
+	return store.AgentChange{ID: 5, Kind: store.AgentChangePlan, Changes: json.RawMessage(`{}`), Previous: json.RawMessage(`{}`)},
+		store.Plan{PlanDate: date.Format("2006-01-02"), VersionID: 10, Blocks: []store.PlanBlock{{ID: 7, Title: spec.Title, StartTime: spec.StartTime,
+			DurationMinutes: spec.DurationMinutes, Focus: spec.Focus, State: "planned"}}}, nil
+}
+
+func TestBlockNowAddsAFocusBlockStartingNow(t *testing.T) {
+	repository := &planningRepository{}
+	// 22:30:40 UTC on Sep 30 is 01:30 on Oct 1 in Istanbul.
+	session := connectPlanning(t, repository, time.Date(2026, 9, 30, 22, 30, 40, 0, time.UTC))
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "block_now", Arguments: map[string]any{
+		"minutes": 30, "reason": "block for 30 minutes"}})
+	if err != nil || result.IsError {
+		t.Fatalf("block_now = %+v, %v", result, err)
+	}
+	spec := repository.plan.Blocks[0]
+	if repository.date.Format("2006-01-02") != "2026-10-01" || !spec.Focus || spec.ActivityID != nil || spec.Title != "Focus" ||
+		!spec.StartTime.Equal(time.Date(2026, 9, 30, 22, 30, 0, 0, time.UTC)) || spec.DurationMinutes != 30 {
+		t.Fatalf("date %s spec %+v", repository.date, spec)
+	}
+	encoded, _ := json.Marshal(result.StructuredContent)
+	var output BlockNowOutput
+	json.Unmarshal(encoded, &output)
+	if output.Change.ID != 5 || output.Block.Start != "01:30" || output.Block.End != "02:00" || !output.Block.Closes {
+		t.Fatalf("output = %+v", output)
+	}
+
+	repository.conflict = &store.PlanConflictError{Title: "Dentist", Start: time.Date(2026, 9, 30, 22, 45, 0, 0, time.UTC), End: time.Date(2026, 9, 30, 23, 15, 0, 0, time.UTC)}
+	refused, _ := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "block_now", Arguments: map[string]any{"minutes": 30, "reason": "x"}})
+	text, _ := json.Marshal(refused.Content)
+	if !refused.IsError || !strings.Contains(string(text), "Dentist") || !strings.Contains(string(text), "01:45 to 02:15") {
+		t.Fatalf("an overlap must be refused with the block's local time: %s", text)
+	}
+}
+
+func (r *planningRepository) LatestPlan(context.Context, time.Time) (*store.Plan, error) {
+	return r.stored, nil
+}
+
+func (r *planningRepository) ActivityRecords(context.Context, time.Time, time.Time) ([]activity.Record, map[string]time.Time, error) {
+	return r.records, nil, nil
+}
+
+func TestPlanReviewSetsRecordedActivityAgainstBlocks(t *testing.T) {
+	// 09:00 UTC is 12:00 in Istanbul; the day starts at 21:00 UTC the day before.
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 1, hour, minute, 0, 0, time.UTC) }
+	end := at(8, 30)
+	repository := &planningRepository{
+		stored: &store.Plan{VersionID: 2, Blocks: []store.PlanBlock{
+			{ID: 1, Title: "Focus", StartTime: at(8, 0), DurationMinutes: 45, Focus: true, State: "planned"},
+			{ID: 2, Title: "Dinner", StartTime: at(16, 0), DurationMinutes: 30, State: "planned"},
+		}},
+		records: []activity.Record{{Source: "android:phone:usage", Device: "phone", Kind: "usage", Start: at(8, 10), End: &end,
+			Payload: json.RawMessage(`{"package_name":"com.twitter.android","event_type":"activity_resumed"}`)}},
+	}
+	session := connectPlanning(t, repository, at(9, 0))
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "plan_review", Arguments: map[string]any{}})
+	if err != nil || result.IsError {
+		t.Fatalf("plan_review = %+v, %v", result, err)
+	}
+	encoded, _ := json.Marshal(result.StructuredContent)
+	var output PlanReviewOutput
+	json.Unmarshal(encoded, &output)
+	if !output.PlanExists || len(output.Blocks) != 2 || output.Blocks[0].Status != "past" || !output.Blocks[0].Closes ||
+		output.Blocks[0].Observed == nil || output.Blocks[0].Observed.Minutes != 45 || output.Blocks[1].Status != "upcoming" || output.Blocks[1].Observed != nil {
+		t.Fatalf("output = %s", encoded)
+	}
+	if output.Outside.Minutes != 12*60-45 || len(output.Insights) == 0 {
+		t.Fatalf("outside = %+v insights = %+v", output.Outside, output.Insights)
+	}
 }
 
 func TestSetDayPlanUsesTheOwnersLocalTime(t *testing.T) {

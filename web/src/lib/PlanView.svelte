@@ -25,7 +25,7 @@
   export let onupdateactivity: (activity: Activity) => Promise<void> = async () => {};
   export let onupdatesettings: (enabled: boolean) => Promise<void> = async () => {};
 
-  type Draft = { key: number; activityId?: number; title: string; hhmm: string; duration: number; fixed: boolean };
+  type Draft = { key: number; activityId?: number; title: string; hhmm: string; duration: number; fixed: boolean; focus: boolean };
   type ActivityDraft = { title: string; notes: string; next_action: string; resume_marker: string; status: Activity['status']; activity_state: Activity['activity_state']; priority: number; deadline: string; effort: string };
   let editing = false;
   let draft: Draft[] = [];
@@ -60,7 +60,8 @@
     title: block.activity_id ? '' : block.title,
     hhmm: clockLabel(block.start_time),
     duration: block.duration_minutes,
-    fixed: block.fixed
+    fixed: block.fixed,
+    focus: block.focus ?? false
   });
 
   const startEditing = () => {
@@ -75,7 +76,7 @@
     const hhmm = last
       ? toBlockLocalTime(new Date(`${day}T${last.hhmm}:00+03:00`).getTime() + last.duration * 60_000).toISOString().slice(11, 16)
       : '09:00';
-    draft = [...draft, { key: Date.now(), activityId: undefined, title: '', hhmm, duration: 30, fixed: false }];
+    draft = [...draft, { key: Date.now(), activityId: undefined, title: '', hhmm, duration: 30, fixed: false, focus: false }];
   };
 
   const draftsValid = () => draft.every(row => /^([01]\d|2[0-3]):[0-5]\d$/.test(row.hhmm) && row.duration >= 1 && (row.activityId || row.title.trim()));
@@ -87,7 +88,8 @@
       title: row.activityId ? undefined : row.title.trim(),
       start_time: `${day}T${row.hhmm}:00+03:00`,
       duration_minutes: row.duration,
-      fixed: row.fixed
+      fixed: row.fixed,
+      focus: row.focus
     }))
   });
 
@@ -250,6 +252,7 @@
             <strong>{block.title}</strong>
             {#if block.activity_id && activityById.get(block.activity_id)?.activity_state}<span class="tag">{activityStateLabel[activityById.get(block.activity_id)!.activity_state]}</span>{/if}
             {#if block.fixed}<span class="tag">fixed</span>{/if}
+            {#if block.focus}<span class="tag">focus</span>{/if}
             <span class="tag state">{stateLabel[block.state]}</span>
           </div>
           {#if block.activity_id && activityById.get(block.activity_id)?.next_action}<p class="next"><span class="muted">Next / resume:</span> {activityById.get(block.activity_id)?.next_action}</p>{/if}
@@ -335,6 +338,7 @@
           {#if !row.activityId}<input class="title" type="text" placeholder="What is this block?" bind:value={row.title} />{/if}
           <input class="duration" type="number" min="1" max="1440" bind:value={row.duration} title="Minutes" />
           <label class="fixed"><input type="checkbox" bind:checked={row.fixed} /> fixed</label>
+          {#if !row.activityId}<label class="fixed" title="Close distractions during this block"><input type="checkbox" bind:checked={row.focus} /> focus</label>{/if}
           <button class="quiet-button" on:click={() => draft = draft.filter((_, i) => i !== index)} aria-label="Remove block">✕</button>
         </div>
       {/each}

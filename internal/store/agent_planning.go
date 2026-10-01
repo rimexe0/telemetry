@@ -193,7 +193,7 @@ func (p *Postgres) latestPlanTx(ctx context.Context, tx pgx.Tx, planDate time.Ti
 	}
 	for _, block := range blocks {
 		before.Blocks = append(before.Blocks, ProposedBlock{ActivityID: block.ActivityID, SourceBlockID: block.SourceBlockID, Title: block.Title,
-			StartTime: block.StartTime, DurationMinutes: block.DurationMinutes, Fixed: block.Fixed, State: block.State})
+			StartTime: block.StartTime, DurationMinutes: block.DurationMinutes, Fixed: block.Fixed, Focus: block.Focus, State: block.State})
 	}
 	return before, nil
 }
@@ -222,6 +222,77 @@ func (p *Postgres) ApplyDayPlan(ctx context.Context, planDate time.Time, input P
 		return AgentChange{}, Plan{}, err
 	}
 	plan, err := insertPlanVersion(ctx, tx, planDate, strings.TrimSpace(input.Note), blocks)
+	if err != nil {
+		return AgentChange{}, Plan{}, err
+	}
+	change, err := insertAgentChange(ctx, tx, AgentChangePlan, plan, before, reason, nil, nil)
+	if err != nil {
+		return AgentChange{}, Plan{}, err
+	}
+	return change, plan, tx.Commit(ctx)
+}
+
+// PlanConflictError reports the planned block a new block would overlap.
+type PlanConflictError struct {
+	Title string
+	Start time.Time
+	End   time.Time
+}
+
+func (e *PlanConflictError) Error() string {
+	return fmt.Sprintf("overlaps the planned block %q (%s to %s)", e.Title, e.Start.UTC().Format(time.RFC3339), e.End.UTC().Format(time.RFC3339))
+}
+
+// AddPlanBlock adds one block to the date's plan and keeps every other block
+// as it is, in a new plan version. It refuses a block that overlaps an
+// unfinished block instead of moving anything.
+func (p *Postgres) AddPlanBlock(ctx context.Context, planDate time.Time, spec PlanBlockSpec, reason string) (AgentChange, Plan, error) {
+	reason, err := validReason(reason)
+	if err != nil {
+		return AgentChange{}, Plan{}, err
+	}
+	added, err := p.planBlocksFromInput(ctx, PlanInput{Blocks: []PlanBlockSpec{spec}})
+	if err != nil {
+		return AgentChange{}, Plan{}, fmt.Errorf("%w: %v", ErrInvalidAgentChange, err)
+	}
+	block := added[0]
+	end := block.StartTime.Add(time.Duration(block.DurationMinutes) * time.Minute)
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return AgentChange{}, Plan{}, err
+	}
+	defer tx.Rollback(ctx)
+	if err := lockPlanDate(ctx, tx, planDate); err != nil {
+		return AgentChange{}, Plan{}, err
+	}
+	before, err := p.latestPlanTx(ctx, tx, planDate)
+	if err != nil {
+		return AgentChange{}, Plan{}, err
+	}
+	blocks := []ProposedBlock{}
+	if before.VersionID != 0 {
+		current, err := p.planBlocks(ctx, tx, before.VersionID)
+		if err != nil {
+			return AgentChange{}, Plan{}, err
+		}
+		for _, existing := range current {
+			existingEnd := existing.StartTime.Add(time.Duration(existing.DurationMinutes) * time.Minute)
+			finished := existing.State == "done" || existing.State == "skipped" || existing.State == "switched"
+			if !finished && block.StartTime.Before(existingEnd) && existing.StartTime.Before(end) {
+				return AgentChange{}, Plan{}, &PlanConflictError{Title: existing.Title, Start: existing.StartTime, End: existingEnd}
+			}
+			blocks = append(blocks, carried(existing))
+		}
+	}
+	position := len(blocks)
+	for i, existing := range blocks {
+		if block.StartTime.Before(existing.StartTime) {
+			position = i
+			break
+		}
+	}
+	blocks = append(blocks[:position], append([]ProposedBlock{block}, blocks[position:]...)...)
+	plan, err := insertPlanVersion(ctx, tx, planDate, before.Note, blocks)
 	if err != nil {
 		return AgentChange{}, Plan{}, err
 	}

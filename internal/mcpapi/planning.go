@@ -9,11 +9,12 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/rimexe0/telemetry/internal/activity"
 	"github.com/rimexe0/telemetry/internal/store"
 )
 
 const planningNotes = "Tasks (the task pool) are what the owner wants to get done; a day plan is a list of time blocks, each optionally tied to a task. " +
-	"Work blocks tied to a task are when distractions are blocked. Times are the owner's local time. " +
+	"Distractions are closed during blocks tied to a task and during focus blocks. Times are the owner's local time. " +
 	"Draft the plan from the owner's rough description and the task pool, show it, and apply it only after they approve it in the conversation. " +
 	"Every applied change is logged; recent_changes lists it and revert_change undoes it."
 
@@ -89,6 +90,7 @@ type BlockOutput struct {
 	End       string `json:"end" jsonschema:"local HH:MM"`
 	Minutes   int    `json:"minutes"`
 	Fixed     bool   `json:"fixed"`
+	Closes    bool   `json:"closes_distractions" jsonschema:"distractions are closed during this block"`
 	State     string `json:"state"`
 	StateNote string `json:"state_note,omitempty"`
 }
@@ -103,12 +105,49 @@ type DayPlanOutput struct {
 	Notes     string        `json:"notes"`
 }
 
+type PlanReviewInput struct {
+	Date  string `json:"date,omitempty" jsonschema:"YYYY-MM-DD in the owner's time zone; default today"`
+	Limit int    `json:"limit,omitempty" jsonschema:"apps and sites listed per device and block, 1 through 20; default 5"`
+}
+
+type PlanReviewOutput struct {
+	Date       string                 `json:"date"`
+	Timezone   string                 `json:"timezone"`
+	From       time.Time              `json:"from"`
+	To         time.Time              `json:"to"`
+	PlanExists bool                   `json:"plan_exists"`
+	Blocks     []activity.BlockReview `json:"blocks"`
+	Outside    activity.Observed      `json:"outside_blocks"`
+	Insights   []activity.Insight     `json:"insights"`
+	Notes      string                 `json:"notes"`
+}
+
+const planReviewNotes = "This puts recorded activity next to each planned block; it does not judge whether the plan was followed. " +
+	"Nothing links a task to particular apps yet, so read the apps, sites and coding threads against the block's title yourself and say when you are unsure. " +
+	"distraction_minutes is active time on things the owner labelled \"distraction\". no_data_minutes is missing data, never rest or focus. " +
+	"Agent minutes are agent runtime, not the owner's attention. Blocks are observed up to now; upcoming blocks have nothing observed."
+
 type PlanBlockInput struct {
 	Title   string `json:"title,omitempty" jsonschema:"block title; defaults to the task's title"`
 	TaskID  *int64 `json:"task_id,omitempty" jsonschema:"task this block works on; makes it a work block"`
 	Start   string `json:"start" jsonschema:"local HH:MM on the plan date"`
 	Minutes int    `json:"minutes" jsonschema:"1 to 1440"`
 	Fixed   bool   `json:"fixed,omitempty" jsonschema:"cannot be moved, such as an appointment"`
+	Focus   bool   `json:"focus,omitempty" jsonschema:"close distractions during this block even though it has no task"`
+}
+
+type BlockNowInput struct {
+	Minutes int    `json:"minutes" jsonschema:"how long from now, 1 to 1440"`
+	TaskID  *int64 `json:"task_id,omitempty" jsonschema:"task to work on; optional"`
+	Title   string `json:"title,omitempty" jsonschema:"what the owner is doing; defaults to the task's title, or Focus"`
+	Reason  string `json:"reason" jsonschema:"the owner's request, in their words where possible"`
+}
+
+type BlockNowOutput struct {
+	Change ChangeOutput  `json:"change"`
+	Block  BlockOutput   `json:"block"`
+	Plan   DayPlanOutput `json:"plan"`
+	Notes  string        `json:"notes"`
 }
 
 type SetDayPlanInput struct {
@@ -149,7 +188,7 @@ func dayPlanOutput(plan *store.Plan, date time.Time, location *time.Location) Da
 		start := block.StartTime.In(location)
 		output.Blocks = append(output.Blocks, BlockOutput{ID: block.ID, TaskID: block.ActivityID, Title: block.Title, Start: start.Format("15:04"),
 			End: start.Add(time.Duration(block.DurationMinutes) * time.Minute).Format("15:04"), Minutes: block.DurationMinutes,
-			Fixed: block.Fixed, State: block.State, StateNote: block.StateNote})
+			Fixed: block.Fixed, Closes: block.ActivityID != nil || block.Focus, State: block.State, StateNote: block.StateNote})
 	}
 	return output
 }
@@ -229,6 +268,48 @@ func addPlanningTools(server *mcp.Server, repository store.Repository, now func(
 		return nil, dayPlanOutput(plan, date, location), nil
 	})
 	mcp.AddTool(server, &mcp.Tool{
+		Name: "plan_review",
+		Description: "The day's plan against what was recorded: for each planned block the active minutes per device, top apps and sites, minutes on distractions, coding threads and missing data, " +
+			"plus the time outside any block and a few plain facts about the day. " + planReviewNotes,
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input PlanReviewInput) (*mcp.CallToolResult, PlanReviewOutput, error) {
+		limit := input.Limit
+		if limit == 0 {
+			limit = 5
+		}
+		if limit < 1 || limit > 20 {
+			return nil, PlanReviewOutput{}, errors.New("limit must be between 1 and 20")
+		}
+		from, to, location, err := activityRange(ctx, repository, ActivityRangeInput{Date: input.Date}, now())
+		if err != nil {
+			return nil, PlanReviewOutput{}, err
+		}
+		date, _, err := planDate(ctx, repository, input.Date, now())
+		if err != nil {
+			return nil, PlanReviewOutput{}, err
+		}
+		plan, err := repository.LatestPlan(ctx, date)
+		if err != nil {
+			return nil, PlanReviewOutput{}, err
+		}
+		records, _, err := repository.ActivityRecords(ctx, from, to)
+		if err != nil {
+			return nil, PlanReviewOutput{}, err
+		}
+		coding, err := repository.CodingRecords(ctx, from)
+		if err != nil {
+			return nil, PlanReviewOutput{}, err
+		}
+		stored, err := repository.ListActivityLabels(ctx)
+		if err != nil {
+			return nil, PlanReviewOutput{}, err
+		}
+		labels := store.LabelsForSummary(stored)
+		result := activity.Build(records, from, to)
+		review := activity.ReviewPlan(store.PlannedBlocks(plan), result, coding, labels, from, to, limit)
+		return nil, PlanReviewOutput{Date: date.Format("2006-01-02"), Timezone: location.String(), From: from, To: to, PlanExists: plan != nil,
+			Blocks: review.Blocks, Outside: review.Outside, Insights: activity.Insights(result, activity.CodingThreads(coding, from, to), labels), Notes: planReviewNotes}, nil
+	})
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "set_day_plan",
 		Description: "Write a day's whole plan as time blocks; it replaces the current version and earlier versions are kept. " + approvalRule,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input SetDayPlanInput) (*mcp.CallToolResult, SetDayPlanOutput, error) {
@@ -244,7 +325,7 @@ func addPlanningTools(server *mcp.Server, repository store.Repository, now func(
 			}
 			start := time.Date(date.Year(), date.Month(), date.Day(), clock.Hour(), clock.Minute(), 0, 0, location)
 			plan.Blocks = append(plan.Blocks, store.PlanBlockSpec{ActivityID: block.TaskID, Title: block.Title, StartTime: start.UTC(),
-				DurationMinutes: block.Minutes, Fixed: block.Fixed})
+				DurationMinutes: block.Minutes, Fixed: block.Fixed, Focus: block.Focus})
 		}
 		change, saved, err := repository.ApplyDayPlan(ctx, date, plan, input.Reason)
 		if err != nil {
@@ -253,6 +334,43 @@ func addPlanningTools(server *mcp.Server, repository store.Repository, now func(
 		output := SetDayPlanOutput{Plan: dayPlanOutput(&saved, date, location)}
 		if output.Change, err = changeOutput(change); err != nil {
 			return nil, SetDayPlanOutput{}, err
+		}
+		return nil, output, nil
+	})
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "block_now",
+		Description: "Close the owner's distractions from now for a number of minutes, by adding one block to today's plan; the rest of the plan stays as it is. " +
+			"A task is optional. It refuses to overlap an unfinished planned block. Devices follow within about a minute. " +
+			"To end it early, revert_change with the returned change id. " +
+			"The owner asking for it in this conversation (\"block for 30 minutes\") is the approval; it is logged like every change, and recent_changes lists it.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input BlockNowInput) (*mcp.CallToolResult, BlockNowOutput, error) {
+		start := now().UTC().Truncate(time.Minute)
+		date, location, err := planDate(ctx, repository, "", start)
+		if err != nil {
+			return nil, BlockNowOutput{}, err
+		}
+		title := strings.TrimSpace(input.Title)
+		if title == "" && input.TaskID == nil {
+			title = "Focus"
+		}
+		change, plan, err := repository.AddPlanBlock(ctx, date, store.PlanBlockSpec{ActivityID: input.TaskID, Title: title, StartTime: start,
+			DurationMinutes: input.Minutes, Focus: true}, input.Reason)
+		var conflict *store.PlanConflictError
+		if errors.As(err, &conflict) {
+			return nil, BlockNowOutput{}, fmt.Errorf("not added: it would overlap the planned block %q (%s to %s). Change that block with set_day_plan, or choose fewer minutes",
+				conflict.Title, conflict.Start.In(location).Format("15:04"), conflict.End.In(location).Format("15:04"))
+		}
+		if err != nil {
+			return nil, BlockNowOutput{}, err
+		}
+		output := BlockNowOutput{Plan: dayPlanOutput(&plan, date, location), Notes: "Devices fetch the plan about once a minute, so blocking starts within about a minute."}
+		for _, block := range output.Plan.Blocks {
+			if block.Start == start.In(location).Format("15:04") && block.Minutes == input.Minutes {
+				output.Block = block
+			}
+		}
+		if output.Change, err = changeOutput(change); err != nil {
+			return nil, BlockNowOutput{}, err
 		}
 		return nil, output, nil
 	})

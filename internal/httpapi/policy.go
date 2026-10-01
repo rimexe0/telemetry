@@ -147,7 +147,7 @@ func (s *Server) policyInputs(ctx context.Context, from, to time.Time) (policy.C
 		}
 		for _, block := range plan.Blocks {
 			kind := policy.BlockKindFree
-			if block.ActivityID != nil {
+			if block.ActivityID != nil || block.Focus {
 				kind = policy.BlockKindWork
 			}
 			facts.Blocks = append(facts.Blocks, policy.Block{ID: block.ID, Title: block.Title, Start: block.StartTime, End: blockEnd(block), Kind: kind, State: block.State})

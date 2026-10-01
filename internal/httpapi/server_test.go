@@ -612,6 +612,10 @@ func (f *fakeRepository) ApplyTaskChanges(context.Context, []store.TaskChange, s
 	return store.AgentChange{}, nil, nil
 }
 
+func (f *fakeRepository) AddPlanBlock(context.Context, time.Time, store.PlanBlockSpec, string) (store.AgentChange, store.Plan, error) {
+	return store.AgentChange{}, store.Plan{}, nil
+}
+
 func (f *fakeRepository) ApplyDayPlan(context.Context, time.Time, store.PlanInput, string) (store.AgentChange, store.Plan, error) {
 	return store.AgentChange{}, store.Plan{}, nil
 }

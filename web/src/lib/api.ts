@@ -214,6 +214,7 @@ export type PlanBlock = {
   start_time: string;
   duration_minutes: number;
   fixed: boolean;
+  focus?: boolean;
   state: 'planned' | 'active' | 'done' | 'skipped' | 'switched' | 'blocked' | 'unknown';
   state_note: string;
   explanation_code?: string;
@@ -229,6 +230,7 @@ export type PlanBlockSpec = {
   start_time: string;
   duration_minutes: number;
   fixed?: boolean;
+  focus?: boolean;
 };
 
 export type Plan = {
@@ -685,7 +687,13 @@ export type DeviceActivity = {
   sites?: ActivityUsage[] | null;
   labels: ActivityUsage[] | null;
 };
-export type ActivitySummary = { from: string; to: string; timezone: string; devices: DeviceActivity[]; no_data: { device: string; start: string; end: string }[] | null };
+export type ObservedActivity = { minutes: number; devices: DeviceActivity[]; distraction_minutes: number; coding?: { device: string; title: string; project?: string; messages_sent: number; agent_minutes: number }[] };
+export type BlockReview = { id: number; title: string; task_id?: number; start: string; end: string; state: string; closes_distractions: boolean; status: 'upcoming' | 'in_progress' | 'past'; observed?: ObservedActivity };
+export type Insight = { key: string; text: string; detail?: string };
+export type ActivitySummary = {
+  from: string; to: string; timezone: string; devices: DeviceActivity[]; no_data: { device: string; start: string; end: string }[] | null;
+  plan_exists?: boolean; plan_review?: { blocks: BlockReview[]; outside_blocks: ObservedActivity }; insights?: Insight[];
+};
 
 export async function getActivitySummary(date?: string): Promise<ActivitySummary> {
   return request<ActivitySummary>(`/v1/activity/summary${date ? `?date=${encodeURIComponent(date)}` : ''}`);

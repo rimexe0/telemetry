@@ -95,7 +95,25 @@ function fixtureExecution() {
             labels: labels.length > 1 ? [{ name: 'distraction', minutes: 123, sessions: 9 }, { name: 'work', minutes: 64, sessions: 3 }, { name: 'unlabeled', minutes: 125, sessions: 20 }] : [{ name: 'unlabeled', minutes: 312, sessions: 30 }] },
           { device: 'phone', active_minutes: 276, no_data_minutes: 28, apps: apps([['com.twitter.android', 60], ['com.t3tools.t3code', 37], ['com.openai.chatgpt', 35]]),
             labels: [{ name: 'distraction', minutes: 60, sessions: 7 }, { name: 'unlabeled', minutes: 216, sessions: 90 }] }
-        ] }];
+        ],
+        plan_exists: true,
+        insights: [
+          { key: 'distractions', text: '3h 3m on distractions today', detail: 'Mostly osu!: 1h 17m in 3 visits. That is 7 episodes of a 24-minute show.' },
+          { key: 'clean_run', text: 'Longest run without a distraction: 1h 4m', detail: 'Counted in active time on the Mac and phone.' },
+          { key: 'agents', text: 'Agents worked 2h 10m for you', detail: 'You sent 14 messages across 3 threads.' }
+        ],
+        plan_review: {
+          blocks: [
+            { id: 1, title: 'Telemetry', task_id: 1, start: '2026-10-01T06:00:00Z', end: '2026-10-01T07:30:00Z', state: 'planned', closes_distractions: true, status: 'past', observed: {
+              minutes: 90, distraction_minutes: 12, coding: [{ device: 'mac', title: 'Fix the collector', messages_sent: 4, agent_minutes: 31 }], devices: [
+                { device: 'mac', active_minutes: 71, no_data_minutes: 0, apps: apps([['T3 Code', 52], ['Helium', 19]]), sites: [{ name: 'youtube.com', app: 'Helium', minutes: 12, sessions: 2, label: 'distraction' }], labels: [] },
+                { device: 'phone', active_minutes: 4, no_data_minutes: 20, apps: apps([['com.whatsapp', 4]]), labels: [] }] } },
+            { id: 2, title: 'Shower', start: '2026-10-01T15:00:00Z', end: '2026-10-01T15:30:00Z', state: 'planned', closes_distractions: false, status: 'upcoming' }
+          ],
+          outside_blocks: { minutes: 600, distraction_minutes: 171, devices: [
+            { device: 'mac', active_minutes: 241, no_data_minutes: 480, apps: apps([['osu!', 77], ['Helium', 109]]), sites: [{ name: 'youtube.com', app: 'Helium', minutes: 34, sessions: 7, label: 'distraction' }], labels: [] },
+            { device: 'phone', active_minutes: 272, no_data_minutes: 8, apps: apps([['com.twitter.android', 60]]), labels: [] }] }
+        } }];
       }
       if (path === '/activity-labels') return [200, { labels: labels.filter(label => !label.removed_at), proposals: labelProposals }];
       const labelDecision = path.match(/^\/activity-label-proposals\/(\d+)\/(accept|reject)$/);

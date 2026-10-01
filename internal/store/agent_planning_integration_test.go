@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -60,5 +61,46 @@ func TestPostgresAgentTasksAndPlansApplyAndRevert(t *testing.T) {
 	versions, _ := database.ListPlanVersions(ctx, date)
 	if len(versions) != 4 {
 		t.Fatalf("every version must be kept: %d", len(versions))
+	}
+}
+
+func TestPostgresAddPlanBlockKeepsThePlanAndRefusesOverlap(t *testing.T) {
+	ctx, database := openCleanIntegration(t)
+	date := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 1, hour, minute, 0, 0, time.UTC) }
+	if _, _, err := database.ApplyDayPlan(ctx, date, PlanInput{Note: "day", Blocks: []PlanBlockSpec{
+		{Title: "Dentist", StartTime: at(9, 0), DurationMinutes: 60, Fixed: true},
+		{Title: "Lunch", StartTime: at(12, 0), DurationMinutes: 30},
+	}}, "plan"); err != nil {
+		t.Fatal(err)
+	}
+	change, plan, err := database.AddPlanBlock(ctx, date, PlanBlockSpec{Title: "Focus", StartTime: at(10, 15), DurationMinutes: 45, Focus: true}, "block for 45 minutes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Blocks) != 3 || plan.Note != "day" || plan.Blocks[1].Title != "Focus" || !plan.Blocks[1].Focus || !plan.Blocks[0].Fixed || plan.Blocks[0].SourceBlockID == nil {
+		t.Fatalf("plan = %+v", plan)
+	}
+	latest, _ := database.LatestPlan(ctx, date)
+	if !latest.Blocks[1].Focus || latest.Blocks[0].Focus {
+		t.Fatalf("focus must be stored on the new block only: %+v", latest.Blocks)
+	}
+	var conflict *PlanConflictError
+	if _, _, err := database.AddPlanBlock(ctx, date, PlanBlockSpec{Title: "Focus", StartTime: at(11, 45), DurationMinutes: 30, Focus: true}, "again"); !errors.As(err, &conflict) || conflict.Title != "Lunch" {
+		t.Fatalf("overlap with Lunch must be refused: %v", err)
+	}
+	// A block that only touches its neighbours is fine, and so is a day with no plan.
+	if _, _, err := database.AddPlanBlock(ctx, date, PlanBlockSpec{Title: "Focus", StartTime: at(11, 0), DurationMinutes: 60, Focus: true}, "touching"); err != nil {
+		t.Fatal(err)
+	}
+	if _, fresh, err := database.AddPlanBlock(ctx, date.AddDate(0, 0, 1), PlanBlockSpec{Title: "Focus", StartTime: at(30, 0), DurationMinutes: 10, Focus: true}, "empty day"); err != nil || len(fresh.Blocks) != 1 {
+		t.Fatalf("empty day = %+v, %v", fresh, err)
+	}
+	if _, err := database.RevertAgentChange(ctx, change.ID); err != nil {
+		t.Fatal(err)
+	}
+	latest, _ = database.LatestPlan(ctx, date)
+	if len(latest.Blocks) != 2 || latest.Blocks[0].Title != "Dentist" || latest.Blocks[1].Title != "Lunch" {
+		t.Fatalf("revert must restore the plan before the block: %+v", latest.Blocks)
 	}
 }

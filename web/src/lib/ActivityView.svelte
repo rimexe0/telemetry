@@ -1,7 +1,8 @@
 <script lang="ts">
   import DayPicker from './DayPicker.svelte';
   import { decideLabelProposal, getActivityLabels, getActivitySummary, removeActivityLabel, type ActivityLabel, type ActivitySummary, type LabelProposal } from './api';
-  import { describeChange, deviceName, formatMinutes } from './activity';
+  import { describeChange, deviceName, formatMinutes, observedLine, observedTop } from './activity';
+  import { clockLabel } from './plan';
 
   export let date = '';
 
@@ -80,6 +81,30 @@
 
   {#if loading && !summary}<p class="muted">Loading…</p>{/if}
   {#if summary}
+    {#if (summary.insights ?? []).length}
+      <ul class="insights">
+        {#each summary.insights ?? [] as insight (insight.key)}<li><strong>{insight.text}</strong>{#if insight.detail}<span class="muted small">{insight.detail}</span>{/if}</li>{/each}
+      </ul>
+    {/if}
+    {#if summary.plan_review}
+      <h3>Plan and what happened</h3>
+      <ul class="review">
+        {#each summary.plan_review.blocks as block (block.id)}
+          <li>
+            <span class="when">{clockLabel(block.start)}–{clockLabel(block.end)}</span>
+            <span class="what"><strong>{block.title}</strong>{#if block.closes_distractions}<span class="tag">closes distractions</span>{/if}{#if block.status !== 'past'}<span class="tag">{block.status === 'upcoming' ? 'upcoming' : 'now'}</span>{/if}
+              {#if block.observed}<span class="muted small">{observedTop(block.observed)}{#each block.observed.coding ?? [] as thread}{` · agent on “${thread.title}” ${formatMinutes(thread.agent_minutes)}`}{/each}</span>{/if}
+            </span>
+            <span class="value">{block.observed ? observedLine(block.observed) : ''}</span>
+          </li>
+        {:else}<li class="muted">{summary.plan_exists ? 'The plan for this day has no blocks.' : 'No plan for this day.'}</li>{/each}
+        <li>
+          <span class="when"></span>
+          <span class="what"><strong>Outside any block</strong><span class="muted small">{observedTop(summary.plan_review.outside_blocks)}</span></span>
+          <span class="value">{observedLine(summary.plan_review.outside_blocks)}</span>
+        </li>
+      </ul>
+    {/if}
     <div class="devices">
       {#each summary.devices as device (device.device)}
         <div class="device">
@@ -122,6 +147,11 @@
   .bars .name { flex: 0 0 7rem; overflow: hidden; text-overflow: ellipsis; }
   .bars .unlabeled { color: var(--muted); }
   .bar { background: var(--text, currentColor); height: 8px; opacity: .55; }
+  .insights li { align-items: baseline; flex-wrap: wrap; }
+  .review .when { flex: 0 0 6.2rem; white-space: nowrap; }
+  .review .what { min-width: 0; }
+  .review .what .tag { margin-left: 6px; }
+  .review .what .small { display: block; }
   .proposal { border: 1px solid var(--line); margin: 8px 0; padding: 8px; }
   .proposal ul li { border: 0; padding: 1px 0; }
   .actions { display: flex; gap: 6px; }

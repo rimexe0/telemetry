@@ -104,6 +104,7 @@ type Repository interface {
 	CollectionEvidence(context.Context) (silence.Evidence, error)
 	ApplyTaskChanges(context.Context, []TaskChange, string) (AgentChange, []Activity, error)
 	ApplyDayPlan(context.Context, time.Time, PlanInput, string) (AgentChange, Plan, error)
+	AddPlanBlock(context.Context, time.Time, PlanBlockSpec, string) (AgentChange, Plan, error)
 	ApplyBlocklistChange(context.Context, []policy.BlocklistChange, string) (AgentChange, error)
 	ApplyLabelChanges(context.Context, []activity.LabelChange, string) (AgentChange, error)
 	ListAgentChanges(context.Context, int) ([]AgentChange, error)
