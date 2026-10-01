@@ -19,6 +19,8 @@ type Window struct {
 	App      string
 	BundleID string
 	Title    string
+	// PID identifies the app's process, for hiding it when it is blocked.
+	PID int
 }
 
 type Platform interface {

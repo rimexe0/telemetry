@@ -29,6 +29,9 @@ import (
 
 const collectorVersion = "telemetry-desktop/0.2.0"
 
+// The macOS block screen needs the app loop on the main thread.
+func init() { runtime.LockOSThread() }
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -38,6 +41,8 @@ func main() {
 		if err := run(os.Args[2:]); err != nil {
 			log.Fatal(err)
 		}
+	case "login":
+		login(os.Args[2:])
 	case "permissions":
 		permissions()
 	case "diagnose":
@@ -48,7 +53,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: telemetry-desktop <run|permissions|diagnose> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: telemetry-desktop <run|login|permissions|diagnose> [flags]")
 	os.Exit(2)
 }
 
@@ -65,17 +70,39 @@ func permissions() {
 	fmt.Println("Allow telemetry-desktop in System Settings > Privacy & Security > Accessibility.")
 }
 
+// login pairs this computer with Telemetry. The owner approves it once in the
+// panel; the saved credential then reads blocking decisions and uploads.
+func login(arguments []string) {
+	flags := flag.NewFlagSet("login", flag.ExitOnError)
+	server := flags.String("server", "https://server.example.ts.net:8443", "Telemetry HTTPS origin")
+	id := flags.String("device", "", "existing device ID to keep, for example mac-00000001")
+	name := flags.String("name", "", "device name shown in the panel")
+	path := flags.String("config", deviceauth.DefaultPath(), "owner-only device configuration")
+	flags.Parse(arguments)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+	config, err := (deviceauth.Client{}).Login(ctx, *path, *server, *id, *name, func(address string) {
+		fmt.Printf("Open this link and approve the device:\n%s\n", address)
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Connected %s. Credentials saved in %s\n", config.DeviceID, *path)
+}
+
 // defaultModules are the modules this system can run.
 func defaultModules() string {
 	if runtime.GOOS == "darwin" {
-		return "window,activitywatch-api,t3"
+		return "window,activitywatch-api,t3,blocker"
 	}
 	return "activitywatch-api,t3"
 }
 
-func buildModules(names, listen, t3Dir string) ([]collector.Module, error) {
+func buildModules(names, listen, t3Dir string, credentials *collector.Credentials) ([]collector.Module, error) {
 	modules := []collector.Module{}
 	seen := map[string]bool{}
+	var blocker *collector.Blocker
+	var api *collector.ActivityWatchAPI
 	for _, name := range strings.Split(names, ",") {
 		name = strings.TrimSpace(name)
 		if name == "" || seen[name] {
@@ -86,12 +113,20 @@ func buildModules(names, listen, t3Dir string) ([]collector.Module, error) {
 		case "window":
 			modules = append(modules, &collector.Window{})
 		case "activitywatch-api":
-			modules = append(modules, &collector.ActivityWatchAPI{Listen: listen, Version: collectorVersion})
+			api = &collector.ActivityWatchAPI{Listen: listen, Version: collectorVersion}
+			modules = append(modules, api)
 		case "t3":
 			modules = append(modules, &collector.T3{Dir: t3Dir})
+		case "blocker":
+			blocker = &collector.Blocker{Credentials: credentials}
+			modules = append(modules, blocker)
 		default:
-			return nil, fmt.Errorf("unknown module %q (known: window, activitywatch-api, t3)", name)
+			return nil, fmt.Errorf("unknown module %q (known: window, activitywatch-api, t3, blocker)", name)
 		}
+	}
+	// The browser extension asks the local API; the blocker answers.
+	if api != nil && blocker != nil {
+		api.Site = blocker.SiteDecision
 	}
 	if len(modules) == 0 {
 		return nil, errors.New("-modules must name at least one module")
@@ -101,7 +136,7 @@ func buildModules(names, listen, t3Dir string) ([]collector.Module, error) {
 
 func run(arguments []string) error {
 	flags := flag.NewFlagSet("run", flag.ExitOnError)
-	moduleNames := flags.String("modules", defaultModules(), "comma-separated modules to run: window, activitywatch-api, t3")
+	moduleNames := flags.String("modules", defaultModules(), "comma-separated modules to run: window, activitywatch-api, t3, blocker")
 	listen := flags.String("listen", "127.0.0.1:5600", "loopback address for the activitywatch-api module")
 	home, _ := os.UserHomeDir()
 	t3Dir := flags.String("t3-dir", filepath.Join(home, ".t3", "userdata"), "T3 Code userdata directory for the t3 module")
@@ -128,7 +163,11 @@ func run(arguments []string) error {
 		}
 		*hostname = name
 	}
-	modules, err := buildModules(*moduleNames, *listen, *t3Dir)
+	var credentials *collector.Credentials
+	if client != nil && client.DeviceID != "" {
+		credentials = &collector.Credentials{BaseURL: client.BaseURL, DeviceID: client.DeviceID, Secret: client.Token}
+	}
+	modules, err := buildModules(*moduleNames, *listen, *t3Dir, credentials)
 	if err != nil {
 		return err
 	}
@@ -176,47 +215,49 @@ func run(arguments []string) error {
 	}); err != nil {
 		log.Printf("sleep announcements unavailable: %v", err)
 	}
-	statusTicker := time.NewTicker(time.Minute)
-	defer statusTicker.Stop()
+	return desktop.RunMain(func() error {
+		statusTicker := time.NewTicker(time.Minute)
+		defer statusTicker.Stop()
 
-	ticker := time.NewTicker(*deliverEvery)
-	defer ticker.Stop()
-	var lastProblem string
-	for {
-		select {
-		case err := <-errs:
-			return err
-		case <-ctx.Done():
-			stopModules()
-			shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			// Keep the latest state of open events before exiting.
-			err := store.Flush(shutdown)
-			if statusErr := status.report(shutdown, stateStopping, true); statusErr != nil {
-				log.Printf("status stopping: %v", statusErr)
-			}
-			return err
-		case <-statusTicker.C:
-			if err := status.report(ctx, stateRunning, false); err != nil {
-				log.Printf("status: %v", err)
-			}
-		case <-ticker.C:
-			problem := ""
-			if err := store.Flush(ctx); err != nil {
-				problem = "flush: " + err.Error()
-			} else if client != nil {
-				problem = deliver(ctx, localQueue, *client, *deviceID)
-			}
-			if problem != lastProblem {
-				if problem == "" {
-					log.Printf("delivery recovered")
-				} else {
-					log.Printf("%s", problem)
+		ticker := time.NewTicker(*deliverEvery)
+		defer ticker.Stop()
+		var lastProblem string
+		for {
+			select {
+			case err := <-errs:
+				return err
+			case <-ctx.Done():
+				stopModules()
+				shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				// Keep the latest state of open events before exiting.
+				err := store.Flush(shutdown)
+				if statusErr := status.report(shutdown, stateStopping, true); statusErr != nil {
+					log.Printf("status stopping: %v", statusErr)
 				}
-				lastProblem = problem
+				return err
+			case <-statusTicker.C:
+				if err := status.report(ctx, stateRunning, false); err != nil {
+					log.Printf("status: %v", err)
+				}
+			case <-ticker.C:
+				problem := ""
+				if err := store.Flush(ctx); err != nil {
+					problem = "flush: " + err.Error()
+				} else if client != nil {
+					problem = deliver(ctx, localQueue, *client, *deviceID)
+				}
+				if problem != lastProblem {
+					if problem == "" {
+						log.Printf("delivery recovered")
+					} else {
+						log.Printf("%s", problem)
+					}
+					lastProblem = problem
+				}
 			}
 		}
-	}
+	})
 }
 
 func deliver(ctx context.Context, localQueue *queue.Queue, client ingest.Client, deviceID string) string {

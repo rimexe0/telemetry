@@ -18,6 +18,17 @@ type Handler struct {
 	Store    *Store
 	Hostname string
 	Version  string
+	// Site, when set, answers whether a website is blocked right now, for
+	// the Telemetry browser extension.
+	Site func(host string) SiteDecision
+}
+
+// SiteDecision is what the browser extension needs to block a site.
+type SiteDecision struct {
+	Host    string `json:"host"`
+	Blocked bool   `json:"blocked"`
+	Mode    string `json:"mode,omitempty"`
+	Reason  string `json:"reason,omitempty"`
 }
 
 func (h Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
@@ -35,6 +46,15 @@ func (h Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			writer.WriteHeader(http.StatusNoContent)
 			return
 		}
+	}
+	if request.URL.Path == "/api/telemetry/site" && request.Method == http.MethodGet {
+		host := strings.ToLower(strings.TrimSpace(request.URL.Query().Get("host")))
+		decision := SiteDecision{Host: host}
+		if h.Site != nil && host != "" {
+			decision = h.Site(host)
+		}
+		writeJSON(writer, http.StatusOK, decision)
+		return
 	}
 	path, ok := strings.CutPrefix(request.URL.EscapedPath(), "/api/0/")
 	if !ok {

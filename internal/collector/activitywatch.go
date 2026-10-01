@@ -16,6 +16,8 @@ import (
 type ActivityWatchAPI struct {
 	Listen  string
 	Version string
+	// Site answers the browser extension's site checks when the blocker runs.
+	Site func(host string) awserver.SiteDecision
 }
 
 func (*ActivityWatchAPI) Name() string { return "activitywatch-api" }
@@ -33,7 +35,7 @@ func (a *ActivityWatchAPI) Run(ctx context.Context, host Host) error {
 		return fmt.Errorf("listen %s (is aw-server still running?): %w", a.Listen, err)
 	}
 	server := &http.Server{
-		Handler:           awserver.Handler{Store: host.Store, Hostname: host.Hostname, Version: a.Version},
+		Handler:           awserver.Handler{Store: host.Store, Hostname: host.Hostname, Version: a.Version, Site: a.Site},
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 	}

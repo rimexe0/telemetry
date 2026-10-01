@@ -13,6 +13,7 @@ typedef struct {
 	char *app;
 	char *bundle;
 	char *title;
+	int pid;
 	int ok;
 } td_window;
 
@@ -94,6 +95,7 @@ static td_window td_active(void) {
 		result.app = td_copy(application.localizedName);
 		result.bundle = td_copy(application.bundleIdentifier);
 		if (trusted) result.title = td_title(pid, &error);
+		result.pid = pid;
 		result.ok = 1;
 		return result;
 	}
@@ -147,7 +149,7 @@ func (darwin) ActiveWindow() (Window, bool, error) {
 	if result.ok == 0 {
 		return Window{}, false, nil
 	}
-	return Window{App: goString(result.app), BundleID: goString(result.bundle), Title: goString(result.title)}, true, nil
+	return Window{App: goString(result.app), BundleID: goString(result.bundle), Title: goString(result.title), PID: int(result.pid)}, true, nil
 }
 
 // Diagnose describes what the Accessibility calls return right now.
