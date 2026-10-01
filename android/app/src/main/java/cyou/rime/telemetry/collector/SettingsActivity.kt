@@ -191,6 +191,23 @@ class SettingsActivity : ComponentActivity() {
             setOnCheckedChangeListener { _, checked -> PolicyStore(this@SettingsActivity).captureNotifications = checked }
         }
         content.addView(notificationSwitch)
+        val suspendStatus = TextView(this).apply { text = AppSuspender.lastError(this@SettingsActivity).orEmpty() }
+        content.addView(Switch(this).apply {
+            text = "Gray out blocked apps (needs root)"
+            isChecked = AppSuspender.enabled(this@SettingsActivity)
+            setOnCheckedChangeListener { view, checked ->
+                // Root may ask for permission, so this runs off the main thread.
+                Thread {
+                    val ok = AppSuspender.setEnabled(this@SettingsActivity, checked)
+                    runOnUiThread {
+                        if (!ok) view.isChecked = false
+                        suspendStatus.text = AppSuspender.lastError(this@SettingsActivity)
+                            ?: if (checked) "Blocked apps are suspended during blocks; the block screen stays as the fallback." else "Suspension is off; the block screen applies."
+                    }
+                }.start()
+            }
+        })
+        content.addView(suspendStatus)
         content.addView(Button(this).apply {
             text = "Open notification access settings"
             setOnClickListener { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
