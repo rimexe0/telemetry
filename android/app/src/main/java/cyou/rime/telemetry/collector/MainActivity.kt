@@ -268,7 +268,9 @@ private fun Plan(day: DayView, onPlanner: () -> Unit) {
                     Text("${time(block.start)}–${time(block.end)}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(end = 12.dp))
                     Text(block.title, fontWeight = if (current) FontWeight.Bold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                    if (block.status != "upcoming") Text(DayModel.clock(block.inPlanMinutes), modifier = Modifier.padding(start = 12.dp))
+                    // Dim when the task has no rules: the number is then only time off distractions.
+                    if (block.status != "upcoming") Text(DayModel.clock(block.inPlanMinutes), modifier = Modifier.padding(start = 12.dp),
+                        color = if (block.tracked) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }

@@ -20,18 +20,23 @@ const (
 	ContextSignalDomain      = "domain"
 	ContextSignalURLPrefix   = "url_prefix"
 	ContextSignalWorkspaceID = "workspace_id"
+	// ContextSignalApp names a Mac app or an Android package. It says what a
+	// task is done in; it is used to tell time on a planned task from other
+	// time, not to tell projects apart.
+	ContextSignalApp = "app"
 
 	maxContextRules = 500
 )
 
 var (
 	ErrInvalidContextRule = errors.New("invalid activity context rule")
-	contextSignals        = map[string]struct{}{ContextSignalPathPrefix: {}, ContextSignalDomain: {}, ContextSignalURLPrefix: {}, ContextSignalWorkspaceID: {}}
+	contextSignals        = map[string]struct{}{ContextSignalPathPrefix: {}, ContextSignalDomain: {}, ContextSignalURLPrefix: {}, ContextSignalWorkspaceID: {}, ContextSignalApp: {}}
 )
 
-// ActivityContextRule is an explicit owner mapping from a strong context
-// signal to an activity. Application names are deliberately not a signal:
-// multi-purpose tools say nothing about the project by themselves.
+// ActivityContextRule is an explicit owner mapping from a context signal to an
+// activity. An application name says nothing about the project by itself, so
+// alignment between projects ignores app rules; the day view uses them to see
+// whether time in a planned block went to the block's task.
 type ActivityContextRule struct {
 	ID         int64      `json:"id"`
 	ActivityID int64      `json:"activity_id"`
@@ -222,7 +227,7 @@ func normaliseContextRule(rule *ActivityContextRule) error {
 		return fmt.Errorf("%w: activity_id must reference an activity", ErrInvalidContextRule)
 	}
 	if _, ok := contextSignals[rule.Signal]; !ok {
-		return fmt.Errorf("%w: signal must be path_prefix, domain, url_prefix or workspace_id", ErrInvalidContextRule)
+		return fmt.Errorf("%w: signal must be path_prefix, domain, url_prefix, workspace_id or app", ErrInvalidContextRule)
 	}
 	if rule.Pattern == "" || len([]rune(rule.Pattern)) > maxPlanningTextRunes || len([]rune(rule.Note)) > maxPlanningTextRunes {
 		return fmt.Errorf("%w: pattern is required and pattern and note must be at most %d characters", ErrInvalidContextRule, maxPlanningTextRunes)

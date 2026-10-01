@@ -10,7 +10,7 @@ import java.time.ZoneId
 class DayModelTest {
     private val zone = ZoneId.of("Europe/Istanbul")
     private val json = """{"date":"2026-10-01","from":"2026-09-30T21:00:00Z","to":"2026-10-01T10:30:00Z","plan_exists":true,"day":{
-        "blocks":[{"id":1,"title":"Telemetry","start":"2026-10-01T09:00:00Z","end":"2026-10-01T10:00:00Z","state":"planned","closes_distractions":true,"status":"past","in_plan_minutes":25.5,"distraction_minutes":34.5},
+        "blocks":[{"id":1,"title":"Telemetry","start":"2026-10-01T09:00:00Z","end":"2026-10-01T10:00:00Z","state":"planned","closes_distractions":true,"status":"past","tracked":true,"in_plan_minutes":25.5,"distraction_minutes":34.5},
                   {"id":2,"title":"Later","start":"2026-10-01T12:00:00Z","end":"2026-10-01T13:00:00Z","state":"planned","closes_distractions":false,"status":"upcoming","in_plan_minutes":0,"distraction_minutes":0}],
         "planned_minutes":120,"in_plan_minutes":25.5,"distraction_minutes":34.5,
         "distraction_by_device":[{"device":"mac","minutes":15},{"device":"phone","minutes":19.5}],
@@ -27,7 +27,9 @@ class DayModelTest {
         assertEquals("upcoming", view.blocks[1].status)
         assertEquals(34.5, view.distractionMinutes, 0.0)
         assertEquals(listOf("mac" to 15.0, "phone" to 19.5), view.distractionByDevice)
-        assertTrue(view.chunks[0].distraction)
+        assertEquals(DayModel.DISTRACTION, view.chunks[0].kind)
+        assertTrue(view.blocks[0].tracked)
+        assertFalse(view.blocks[1].tracked)
         assertEquals(2, view.chunks[0].items.size)
         assertEquals(1, view.chunks[0].segments.size)
         assertEquals(1, view.gaps.size)
@@ -36,7 +38,7 @@ class DayModelTest {
     @Test
     fun groupsTheSameThingAcrossChunksAndKeepsThreadsApart() {
         fun item(name: String, detail: String?, minutes: Double, device: String = "mac") = DayItem(name, detail, "unlabeled", minutes, 1, device)
-        fun chunk(vararg items: DayItem) = DayChunk("mac", Instant.EPOCH, Instant.EPOCH, false, 0.0, items.toList(), emptyList())
+        fun chunk(vararg items: DayItem) = DayChunk("mac", Instant.EPOCH, Instant.EPOCH, "other", 0.0, items.toList(), emptyList())
         val grouped = DayModel.grouped(listOf(
             chunk(item("T3 Code", "Telemetry · Fix collector", 10.0), item("Code", null, 4.0)),
             chunk(item("T3 Code", "Telemetry · Fix collector", 15.0), item("T3 Code", "Telemetry · Phone app", 12.0), item("Code", null, 3.0, "phone")),

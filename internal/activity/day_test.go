@@ -25,7 +25,7 @@ func TestBuildDayCompressesWithoutDroppingTime(t *testing.T) {
 		{ID: 1, Title: "Telemetry", Start: at(9, 0, 0), End: at(10, 0, 0), State: "planned", Closes: true},
 		{ID: 2, Title: "Later", Start: at(12, 0, 0), End: at(13, 0, 0), State: "planned"},
 	}
-	day := BuildDay(blocks, result, labels, nil, at(0, 0, 0), at(10, 30, 0), true)
+	day := BuildDay(blocks, result, labels, nil, nil, at(0, 0, 0), at(10, 30, 0), true)
 
 	var phone, mac []Chunk
 	var active float64
@@ -60,7 +60,7 @@ func TestBuildDayCompressesWithoutDroppingTime(t *testing.T) {
 	if day.PlannedMinutes != 120 || day.InPlanMinutes != 25.5 || day.DistractionMinutes != 34.5 || day.Distraction[0].Minutes != 15 || day.Distraction[1].Minutes != 19.5 {
 		t.Fatalf("totals = %+v", day)
 	}
-	if plain := BuildDay(nil, result, labels, nil, at(0, 0, 0), at(10, 30, 0), false); plain.Chunks[0].Segments != nil || len(plain.Blocks) != 0 {
+	if plain := BuildDay(nil, result, labels, nil, nil, at(0, 0, 0), at(10, 30, 0), false); plain.Chunks[0].Segments != nil || len(plain.Blocks) != 0 {
 		t.Fatalf("without segments = %+v", plain.Chunks[0])
 	}
 }
@@ -83,7 +83,7 @@ func TestT3TimeIsNamedByTheNearestMessage(t *testing.T) {
 		{Device: DeviceMac, App: "T3 Code (Nightly)", Start: at(12, 0), End: at(12, 10)},
 		{Device: DeviceMac, App: "Code", Start: at(12, 10), End: at(12, 12)},
 	}}
-	day := BuildDay(nil, result, nil, messages, at(0, 0), at(13, 0), true)
+	day := BuildDay(nil, result, nil, messages, nil, at(0, 0), at(13, 0), true)
 	details := map[string]float64{}
 	for _, chunk := range day.Chunks {
 		for _, item := range chunk.Items {
@@ -95,5 +95,44 @@ func TestT3TimeIsNamedByTheNearestMessage(t *testing.T) {
 	if details["T3 Code (Nightly)|Telemetry · Fix collector"] != 18 || details["com.t3tools.t3code|Telemetry · Phone app"] != 10 ||
 		details["T3 Code (Nightly)|"] != 10 || details["Code|"] != 2 {
 		t.Fatalf("details = %+v", details)
+	}
+}
+
+func TestTrackedBlocksCountOnlyTimeOnTheTask(t *testing.T) {
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 1, hour, minute, 0, 0, time.UTC) }
+	task := int64(7)
+	messages := ThreadMessages([]Record{
+		{Source: "t3:mac:env", Kind: "t3.project", Payload: []byte(`{"project_id":"p","title":"Telemetry","workspace_root":"/Users/ri/code/personal/Telemetry"}`)},
+		{Source: "t3:mac:env", Kind: "t3.project", Payload: []byte(`{"project_id":"q","title":"Other","workspace_root":"/Users/ri/code/other"}`)},
+		{Source: "t3:mac:env", Kind: "t3.thread", Payload: []byte(`{"thread_id":"a","project_id":"p","title":"Fix collector"}`)},
+		{Source: "t3:mac:env", Kind: "t3.thread", Payload: []byte(`{"thread_id":"b","project_id":"q","title":"Side quest"}`)},
+		{Source: "t3:mac:env", Kind: "t3.turn", Payload: []byte(`{"thread_id":"a","requested_at":"2026-10-01T09:05:00Z"}`)},
+		{Source: "t3:mac:env", Kind: "t3.turn", Payload: []byte(`{"thread_id":"b","requested_at":"2026-10-01T09:50:00Z"}`)},
+	})
+	result := Result{LastRecord: map[string]time.Time{}, Segments: []Segment{
+		{Device: DeviceMac, App: "T3 Code (Nightly)", Start: at(9, 0), End: at(9, 20)},             // the task's project
+		{Device: DeviceMac, App: "Helium", Domain: "github.com", Start: at(9, 20), End: at(9, 30)}, // a task site
+		{Device: DeviceMac, App: "Helium", Domain: "news.ycombinator.com", Start: at(9, 30), End: at(9, 40)},
+		{Device: DeviceMac, App: "T3 Code (Nightly)", Start: at(9, 45), End: at(9, 55)},  // another project
+		{Device: DeviceMac, App: "T3 Code (Nightly)", Start: at(10, 0), End: at(10, 10)}, // after the block
+	}}
+	blocks := []PlannedBlock{{ID: 1, Title: "Telemetry", TaskID: &task, Start: at(9, 0), End: at(10, 0), State: "planned", Closes: true}}
+	rules := map[int64][]TaskRule{task: {{Signal: "path_prefix", Pattern: "/Users/ri/code/personal/Telemetry"}, {Signal: "domain", Pattern: "github.com"}}}
+	day := BuildDay(blocks, result, nil, messages, rules, at(0, 0), at(11, 0), false)
+	if block := day.Blocks[0]; !block.Tracked || block.InPlanMinutes != 30 {
+		t.Fatalf("block = %+v", block)
+	}
+	kinds := []string{}
+	for _, chunk := range day.Chunks {
+		kinds = append(kinds, chunk.Kind)
+	}
+	// 09:00-09:30 on task, then other; nothing after the block is "task".
+	if len(day.Chunks) != 2 || day.Chunks[0].Kind != KindTask || day.Chunks[0].TaskMinutes != 30 || day.Chunks[1].Kind != KindOther || day.Chunks[1].TaskMinutes != 0 {
+		t.Fatalf("kinds = %v chunks = %+v", kinds, day.Chunks)
+	}
+	// The same day without rules counts any undistracted time, and says so.
+	untracked := BuildDay(blocks, result, nil, messages, nil, at(0, 0), at(11, 0), false)
+	if block := untracked.Blocks[0]; block.Tracked || block.InPlanMinutes != 50 {
+		t.Fatalf("untracked block = %+v", block)
 	}
 }

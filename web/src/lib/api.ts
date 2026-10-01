@@ -349,7 +349,7 @@ export type ActivityContext = {
   agent_session?: string;
 };
 
-export type ContextSignal = 'path_prefix' | 'domain' | 'url_prefix' | 'workspace_id';
+export type ContextSignal = 'path_prefix' | 'domain' | 'url_prefix' | 'workspace_id' | 'app';
 
 export type ContextMatch = { rule_id: number; activity_id: number; signal: ContextSignal; pattern: string; value: string };
 

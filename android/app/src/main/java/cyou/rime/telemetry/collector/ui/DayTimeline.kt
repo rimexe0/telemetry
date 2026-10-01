@@ -34,7 +34,14 @@ import java.time.Instant
 import java.time.ZoneId
 
 val DistractionColor = Color(0xFFE5484D)
+val TaskColor = Color(0xFF2F8F5B)
 val OtherColor = Color(0xFF55544F)
+
+fun kindColor(kind: String): Color = when (kind) {
+    DayModel.DISTRACTION -> DistractionColor
+    DayModel.TASK -> TaskColor
+    else -> OtherColor
+}
 
 private val HourHeight = 64.dp
 private val HoursWidth = 40.dp
@@ -42,8 +49,8 @@ private val LabelFrom = 18.dp
 
 /**
  * The day top to bottom: planned blocks, then what the Mac and the phone
- * recorded. Red is time on distractions, grey is anything else, and empty
- * means nothing was recorded. A stretch tall enough names its main app.
+ * recorded. Red is time on distractions, green is time on the planned task,
+ * grey is anything else, and empty means nothing was recorded. A stretch tall enough names its main app.
  */
 @Composable
 fun DayTimeline(view: DayView, now: Instant, names: AppNames, modifier: Modifier = Modifier, zone: ZoneId = ZoneId.systemDefault(), onChunk: (DayChunk) -> Unit) {
@@ -84,7 +91,7 @@ fun DayTimeline(view: DayView, now: Instant, names: AppNames, modifier: Modifier
                 Lane {
                     view.chunks.filter { it.device == device }.forEach { chunk ->
                         val top = chunk.items.firstOrNull()
-                        Stretch(down(chunk.start), down(chunk.end) - down(chunk.start), if (chunk.distraction) DistractionColor else OtherColor,
+                        Stretch(down(chunk.start), down(chunk.end) - down(chunk.start), kindColor(chunk.kind),
                             top?.let { "${names.of(it.name)} ${DayModel.clock(chunk.activeMinutes)}" }.orEmpty(), Color.White, Modifier.clickable { onChunk(chunk) })
                     }
                 }

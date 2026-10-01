@@ -148,6 +148,7 @@ type planningRepository struct {
 	records  []activity.Record
 
 	followUps []store.FollowUpChange
+	rules     []store.TaskRuleChange
 }
 
 func (r *planningRepository) ApplyDayPlan(_ context.Context, date time.Time, input store.PlanInput, _ string) (store.AgentChange, store.Plan, error) {
@@ -281,6 +282,41 @@ func TestFollowUpsResolveLocalTimes(t *testing.T) {
 	}
 }
 
+func (r *planningRepository) ApplyTaskRuleChanges(_ context.Context, changes []store.TaskRuleChange, _ string) (store.AgentChange, []store.ActivityContextRule, error) {
+	r.rules = changes
+	written := []store.ActivityContextRule{}
+	for i, change := range changes {
+		written = append(written, store.ActivityContextRule{ID: int64(i + 1), ActivityID: change.TaskID, Signal: change.Signal, Pattern: change.Pattern})
+	}
+	return store.AgentChange{ID: 9, Kind: store.AgentChangeRules, Changes: json.RawMessage(`[]`), Previous: json.RawMessage(`[]`)}, written, nil
+}
+
+func TestChangeTaskRulesPassesRulesThrough(t *testing.T) {
+	repository := &planningRepository{}
+	session := connectPlanning(t, repository, time.Now())
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "change_task_rules", Arguments: map[string]any{
+		"changes": []map[string]any{
+			{"action": "add", "task_id": 7, "signal": "app", "pattern": "T3 Code (Nightly)"},
+			{"action": "add", "task_id": 7, "signal": "domain", "pattern": "github.com"},
+		}, "reason": "working on Telemetry in T3 Code today"}})
+	if err != nil || result.IsError {
+		t.Fatalf("change_task_rules = %+v, %v", result, err)
+	}
+	if len(repository.rules) != 2 || repository.rules[0].TaskID != 7 || repository.rules[0].Signal != "app" || repository.rules[1].Pattern != "github.com" {
+		t.Fatalf("rules = %+v", repository.rules)
+	}
+	encoded, _ := json.Marshal(result.StructuredContent)
+	var output ChangeTaskRulesOutput
+	json.Unmarshal(encoded, &output)
+	if output.Change.ID != 9 || len(output.Rules) != 2 || output.Rules[0].TaskID != 7 {
+		t.Fatalf("output = %s", encoded)
+	}
+	listed, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "task_rules", Arguments: map[string]any{}})
+	if err != nil || listed.IsError {
+		t.Fatalf("task_rules = %+v, %v", listed, err)
+	}
+}
+
 func TestSetDayPlanUsesTheOwnersLocalTime(t *testing.T) {
 	repository := &planningRepository{}
 	// 22:30 UTC on Sep 30 is already Oct 1 in Istanbul.
@@ -317,6 +353,7 @@ func connectPlanning(t *testing.T, repository store.Repository, now time.Time) *
 	server := mcp.NewServer(&mcp.Implementation{Name: "telemetry-test", Version: "0"}, nil)
 	addPlanningTools(server, repository, func() time.Time { return now })
 	addFollowUpTools(server, repository, func() time.Time { return now })
+	addRuleTools(server, repository)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(context.Background(), serverTransport, nil); err != nil {
 		t.Fatal(err)

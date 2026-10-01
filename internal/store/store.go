@@ -106,6 +106,7 @@ type Repository interface {
 	ApplyDayPlan(context.Context, time.Time, PlanInput, string) (AgentChange, Plan, error)
 	AddPlanBlock(context.Context, time.Time, PlanBlockSpec, string) (AgentChange, Plan, error)
 	ApplyFollowUpChanges(context.Context, []FollowUpChange, string) (AgentChange, []FollowUp, error)
+	ApplyTaskRuleChanges(context.Context, []TaskRuleChange, string) (AgentChange, []ActivityContextRule, error)
 	ListFollowUps(context.Context, time.Time) ([]FollowUp, error)
 	CloseFollowUp(context.Context, int64, string) (FollowUp, error)
 	ApplyBlocklistChange(context.Context, []policy.BlocklistChange, string) (AgentChange, error)

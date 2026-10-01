@@ -7,13 +7,15 @@
     path_prefix: 'Folder / repository',
     domain: 'Web domain',
     url_prefix: 'URL prefix',
-    workspace_id: 'T3 workspace id'
+    workspace_id: 'T3 workspace id',
+    app: 'App'
   };
   const placeholder: Record<ContextSignal, string> = {
     path_prefix: '/Users/you/code/project',
     domain: 'docs.example.com',
     url_prefix: 'https://github.com/owner/repo',
-    workspace_id: 't3:<project id>'
+    workspace_id: 't3:<project id>',
+    app: 'T3 Code or com.example.app'
   };
 
   let rules: ActivityContextRule[] = [];

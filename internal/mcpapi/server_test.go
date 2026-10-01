@@ -264,6 +264,10 @@ func (fakeRepository) CloseFollowUp(context.Context, int64, string) (store.Follo
 	return store.FollowUp{}, nil
 }
 
+func (fakeRepository) ApplyTaskRuleChanges(context.Context, []store.TaskRuleChange, string) (store.AgentChange, []store.ActivityContextRule, error) {
+	return store.AgentChange{}, nil, nil
+}
+
 func (fakeRepository) AddPlanBlock(context.Context, time.Time, store.PlanBlockSpec, string) (store.AgentChange, store.Plan, error) {
 	return store.AgentChange{}, store.Plan{}, nil
 }
