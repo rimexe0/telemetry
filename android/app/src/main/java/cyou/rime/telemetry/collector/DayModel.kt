@@ -16,9 +16,10 @@ data class DayBlock(
     val distractionMinutes: Double,
 )
 
-data class DayItem(val name: String, val label: String, val minutes: Double, val visits: Int)
+/** Time on one app or site; [detail] narrows it, such as the T3 Code project and thread. */
+data class DayItem(val name: String, val detail: String?, val label: String, val minutes: Double, val visits: Int, val device: String = "")
 
-data class DaySegment(val start: Instant, val end: Instant, val name: String, val title: String?, val label: String)
+data class DaySegment(val start: Instant, val end: Instant, val name: String, val detail: String?, val title: String?, val label: String, val device: String = "")
 
 /** A stretch of continuous use of one device; items total it, segments are the records behind it. */
 data class DayChunk(
@@ -75,10 +76,12 @@ object DayModel {
                     end = Instant.parse(chunk.getString("end")),
                     distraction = chunk.optString("kind") == DISTRACTION,
                     activeMinutes = chunk.optDouble("active_minutes", 0.0),
-                    items = chunk.optJSONArray("items").each { DayItem(it.getString("name"), it.optString("label"), it.optDouble("minutes", 0.0), it.optInt("visits")) },
+                    items = chunk.optJSONArray("items").each {
+                        DayItem(it.getString("name"), it.optString("detail").ifBlank { null }, it.optString("label"), it.optDouble("minutes", 0.0), it.optInt("visits"), chunk.getString("device"))
+                    },
                     segments = chunk.optJSONArray("segments").each {
                         DaySegment(Instant.parse(it.getString("start")), Instant.parse(it.getString("end")), it.getString("name"),
-                            it.optString("title").ifBlank { null }, it.optString("label"))
+                            it.optString("detail").ifBlank { null }, it.optString("title").ifBlank { null }, it.optString("label"), chunk.getString("device"))
                     },
                 )
             },
@@ -96,6 +99,12 @@ object DayModel {
             else -> "${total / 60}h ${total % 60}m"
         }
     }
+
+    /** Totals per app or site and device across chunks, biggest first. */
+    fun grouped(chunks: List<DayChunk>): List<DayItem> =
+        chunks.flatMap { it.items }.groupBy { Triple(it.device, it.name, it.detail) }.map { (_, same) ->
+            same.first().copy(minutes = same.sumOf { it.minutes }, visits = same.sumOf { it.visits })
+        }.sortedWith(compareByDescending<DayItem> { it.minutes }.thenBy { it.name })
 
     fun deviceName(device: String): String = when (device) {
         "mac" -> "Mac"

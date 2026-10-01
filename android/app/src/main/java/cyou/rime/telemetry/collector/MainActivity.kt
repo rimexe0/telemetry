@@ -30,9 +30,11 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -40,7 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import cyou.rime.telemetry.collector.ui.DayStrip
+import cyou.rime.telemetry.collector.ui.DayTimeline
 import cyou.rime.telemetry.collector.ui.TelemetryTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -65,9 +67,9 @@ data class HomeState(
 
 /**
  * The owner's everyday screen: the current task when there is one, today's
- * plan with the time spent inside it, time on distractions, and the day on
- * one strip. The plan opens the planner and the strip opens the day's
- * details; collection and pairing controls live in [SettingsActivity].
+ * plan with the time spent inside it, time on distractions, and the day as a
+ * timeline. The plan opens the planner; the totals and each stretch of the
+ * timeline open their details; collection and pairing controls live in [SettingsActivity].
  */
 class MainActivity : ComponentActivity() {
     private companion object {
@@ -85,7 +87,7 @@ class MainActivity : ComponentActivity() {
                     state = state,
                     onSettings = { startActivity(Intent(this, SettingsActivity::class.java)) },
                     onPlanner = { startActivity(Intent(this, PanelActivity::class.java)) },
-                    onDay = { startActivity(Intent(this, DayActivity::class.java)) },
+                    onDay = { chunk -> startActivity(DayActivity.intent(this, chunk)) },
                     onSetup = ::openSetup,
                     onBlocking = { startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
                 )
@@ -163,7 +165,9 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun HomeScreen(state: HomeState, onSettings: () -> Unit, onPlanner: () -> Unit, onDay: () -> Unit, onSetup: () -> Unit, onBlocking: () -> Unit) {
+private fun HomeScreen(state: HomeState, onSettings: () -> Unit, onPlanner: () -> Unit, onDay: (DayChunk?) -> Unit, onSetup: () -> Unit, onBlocking: () -> Unit) {
+    val context = LocalContext.current
+    val names = remember { AppNames(context) }
     Scaffold(
         topBar = {
             TopAppBar(title = {}, actions = {
@@ -191,8 +195,8 @@ private fun HomeScreen(state: HomeState, onSettings: () -> Unit, onPlanner: () -
             if (state.needsBlocking) Prompt("Blocking is switched off on this phone.", "Turn on", onBlocking)
             state.day?.let { day ->
                 Plan(day, onPlanner)
-                Totals(day)
-                DayStrip(day, Instant.now(), Modifier.fillMaxWidth().clickable(onClick = onDay))
+                Totals(day, Modifier.fillMaxWidth().clickable { onDay(null) })
+                DayTimeline(day, Instant.now(), names, Modifier.fillMaxWidth(), onChunk = onDay)
             }
             state.footer?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
@@ -234,8 +238,8 @@ private fun Plan(day: DayView, onPlanner: () -> Unit) {
 }
 
 @Composable
-private fun Totals(day: DayView) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+private fun Totals(day: DayView, modifier: Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (day.blocks.isNotEmpty()) Total("In plan", "${DayModel.clock(day.inPlanMinutes)} of ${DayModel.clock(day.plannedMinutes)}", null)
         Total("Distractions", DayModel.clock(day.distractionMinutes),
             day.distractionByDevice.filter { it.second >= 1 }.sortedByDescending { it.second }

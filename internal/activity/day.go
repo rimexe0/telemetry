@@ -1,7 +1,9 @@
 package activity
 
 import (
+	"encoding/json"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -13,11 +15,94 @@ const (
 	// chunkMinRun stays inside the chunk around it.
 	chunkPause  = 5 * time.Minute
 	chunkMinRun = 2 * time.Minute
+
+	// T3 Code time is given to the thread whose message was sent closest to
+	// it, when that message is within this distance.
+	threadReach = 15 * time.Minute
 )
+
+// ThreadMessage is one message the owner sent in a T3 Code thread.
+type ThreadMessage struct {
+	At      time.Time
+	Thread  string
+	Project string
+}
+
+// ThreadMessages lists the owner's T3 messages from every collector machine,
+// in time order. A message is the only record of which thread was in use.
+func ThreadMessages(coding []Record) []ThreadMessage {
+	projects, threads := map[string]string{}, map[string][2]string{}
+	for _, record := range coding {
+		switch record.Kind {
+		case "t3.project":
+			var project struct {
+				ID    string `json:"project_id"`
+				Title string `json:"title"`
+			}
+			if json.Unmarshal(record.Payload, &project) == nil {
+				projects[record.Source+"\x00"+project.ID] = project.Title
+			}
+		case "t3.thread":
+			var thread t3Thread
+			if json.Unmarshal(record.Payload, &thread) == nil {
+				threads[record.Source+"\x00"+thread.ThreadID] = [2]string{thread.Title, thread.ProjectID}
+			}
+		}
+	}
+	messages := []ThreadMessage{}
+	for _, record := range coding {
+		if record.Kind != "t3.turn" {
+			continue
+		}
+		var turn t3Turn
+		if json.Unmarshal(record.Payload, &turn) != nil {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339Nano, turn.RequestedAt)
+		thread, ok := threads[record.Source+"\x00"+turn.ThreadID]
+		if err != nil || !ok {
+			continue
+		}
+		messages = append(messages, ThreadMessage{At: at.UTC(), Thread: thread[0], Project: projects[record.Source+"\x00"+thread[1]]})
+	}
+	sort.SliceStable(messages, func(i, j int) bool { return messages[i].At.Before(messages[j].At) })
+	return messages
+}
+
+func isT3(app string) bool {
+	return strings.HasPrefix(app, "T3 Code") || strings.HasPrefix(app, "com.t3tools.")
+}
+
+// threadFor names the thread a stretch of T3 Code time most likely belongs
+// to: the one with the message sent closest to it. Empty when no message is
+// near, because then nothing shows which thread was open.
+func threadFor(segment Segment, messages []ThreadMessage) string {
+	best, bestDistance := "", threadReach+1
+	index := sort.Search(len(messages), func(i int) bool { return !messages[i].At.Before(segment.Start.Add(-threadReach)) })
+	for ; index < len(messages) && !messages[index].At.After(segment.End.Add(threadReach)); index++ {
+		message := messages[index]
+		distance := time.Duration(0)
+		if message.At.Before(segment.Start) {
+			distance = segment.Start.Sub(message.At)
+		} else if message.At.After(segment.End) {
+			distance = message.At.Sub(segment.End)
+		}
+		if distance < bestDistance {
+			bestDistance = distance
+			best = message.Thread
+			if message.Project != "" {
+				best = message.Project + " · " + message.Thread
+			}
+		}
+	}
+	return best
+}
 
 // DayItem totals one app or site inside a chunk.
 type DayItem struct {
-	Name    string  `json:"name"`
+	Name string `json:"name"`
+	// Detail narrows the name: for T3 Code, the project and thread.
+	Detail  string  `json:"detail,omitempty"`
 	Label   string  `json:"label"`
 	Minutes float64 `json:"minutes"`
 	Visits  int     `json:"visits"`
@@ -25,11 +110,12 @@ type DayItem struct {
 
 // DaySegment is one uninterrupted use of an app or site, as recorded.
 type DaySegment struct {
-	Start time.Time `json:"start"`
-	End   time.Time `json:"end"`
-	Name  string    `json:"name"`
-	Title string    `json:"title,omitempty"`
-	Label string    `json:"label"`
+	Start  time.Time `json:"start"`
+	End    time.Time `json:"end"`
+	Name   string    `json:"name"`
+	Detail string    `json:"detail,omitempty"`
+	Title  string    `json:"title,omitempty"`
+	Label  string    `json:"label"`
 }
 
 // Chunk is a stretch of continuous use of one device, summarised. Its items
@@ -90,7 +176,7 @@ func kindOf(labels []Label, segment Segment) string {
 }
 
 // chunks compresses one device's ordered segments.
-func chunks(device string, segments []Segment, labels []Label, withSegments bool) []Chunk {
+func chunks(device string, segments []Segment, labels []Label, messages []ThreadMessage, withSegments bool) []Chunk {
 	// Runs: consecutive segments of one kind with no long pause.
 	type run struct {
 		kind     string
@@ -137,7 +223,7 @@ func chunks(device string, segments []Segment, labels []Label, withSegments bool
 			joined = append(joined, current)
 		}
 		for _, current := range joined {
-			result = append(result, chunkOf(device, current.segments, labels, withSegments))
+			result = append(result, chunkOf(device, current.segments, labels, messages, withSegments))
 		}
 	}
 	return result
@@ -145,7 +231,7 @@ func chunks(device string, segments []Segment, labels []Label, withSegments bool
 
 func lastEnd(segments []Segment) time.Time { return segments[len(segments)-1].End }
 
-func chunkOf(device string, segments []Segment, labels []Label, withSegments bool) Chunk {
+func chunkOf(device string, segments []Segment, labels []Label, messages []ThreadMessage, withSegments bool) Chunk {
 	chunk := Chunk{Device: device, Start: segments[0].Start, End: lastEnd(segments), Kind: KindOther, Items: []DayItem{}}
 	items := map[string]*DayItem{}
 	for _, segment := range segments {
@@ -155,13 +241,18 @@ func chunkOf(device string, segments []Segment, labels []Label, withSegments boo
 		if label == Distraction {
 			chunk.DistractionMinutes += minutes
 		}
-		if items[name] == nil {
-			items[name] = &DayItem{Name: name, Label: label}
+		detail := ""
+		if isT3(segment.App) {
+			detail = threadFor(segment, messages)
 		}
-		items[name].Minutes += minutes
-		items[name].Visits++
+		key := name + "\x00" + detail
+		if items[key] == nil {
+			items[key] = &DayItem{Name: name, Detail: detail, Label: label}
+		}
+		items[key].Minutes += minutes
+		items[key].Visits++
 		if withSegments {
-			chunk.Segments = append(chunk.Segments, DaySegment{Start: segment.Start, End: segment.End, Name: name, Title: segment.Title, Label: label})
+			chunk.Segments = append(chunk.Segments, DaySegment{Start: segment.Start, End: segment.End, Name: name, Detail: detail, Title: segment.Title, Label: label})
 		}
 	}
 	if chunk.DistractionMinutes*2 > chunk.ActiveMinutes {
@@ -175,14 +266,18 @@ func chunkOf(device string, segments []Segment, labels []Label, withSegments boo
 		if chunk.Items[i].Minutes != chunk.Items[j].Minutes {
 			return chunk.Items[i].Minutes > chunk.Items[j].Minutes
 		}
-		return chunk.Items[i].Name < chunk.Items[j].Name
+		if chunk.Items[i].Name != chunk.Items[j].Name {
+			return chunk.Items[i].Name < chunk.Items[j].Name
+		}
+		return chunk.Items[i].Detail < chunk.Items[j].Detail
 	})
 	chunk.ActiveMinutes, chunk.DistractionMinutes = round(chunk.ActiveMinutes), round(chunk.DistractionMinutes)
 	return chunk
 }
 
 // BuildDay sets the plan next to a compressed timeline of [from, to).
-func BuildDay(blocks []PlannedBlock, result Result, labels []Label, from, to time.Time, withSegments bool) Day {
+// messages, from ThreadMessages, name the thread behind T3 Code time.
+func BuildDay(blocks []PlannedBlock, result Result, labels []Label, messages []ThreadMessage, from, to time.Time, withSegments bool) Day {
 	day := Day{Blocks: []DayBlock{}, Distraction: []DeviceMinutes{}, Chunks: []Chunk{}, NoData: result.Gaps}
 	if day.NoData == nil {
 		day.NoData = []Gap{}
@@ -205,7 +300,7 @@ func BuildDay(blocks []PlannedBlock, result Result, labels []Label, from, to tim
 			}
 		}
 		sort.SliceStable(own, func(i, j int) bool { return own[i].Start.Before(own[j].Start) })
-		day.Chunks = append(day.Chunks, chunks(device, own, labels, withSegments)...)
+		day.Chunks = append(day.Chunks, chunks(device, own, labels, messages, withSegments)...)
 		day.Distraction = append(day.Distraction, DeviceMinutes{Device: device, Minutes: round(minutes)})
 		day.DistractionMinutes += minutes
 	}

@@ -1,5 +1,7 @@
 package cyou.rime.telemetry.collector
 
+import android.content.Context
+import android.content.Intent
 import android.graphics.Color as AndroidColor
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -35,10 +37,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
-import cyou.rime.telemetry.collector.ui.DayStrip
 import cyou.rime.telemetry.collector.ui.DistractionColor
 import cyou.rime.telemetry.collector.ui.OtherColor
 import cyou.rime.telemetry.collector.ui.TelemetryTheme
@@ -49,68 +51,38 @@ import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 
-/** One row of the day: a chunk of use, or a stretch with no data. */
-private sealed interface DayRow {
-    val start: Instant
-
-    data class Use(val chunk: DayChunk) : DayRow {
-        override val start get() = chunk.start
-    }
-
-    data class Missing(val gap: DayGap) : DayRow {
-        override val start get() = gap.start
-    }
-}
-
 /**
- * Today in order, newest first. Each row is a chunk of continuous use with
- * its apps and sites totalled; tapping it lists every record behind it.
+ * Where the time went, grouped: every app and site with its total, biggest
+ * first, for the whole day or for one stretch of the timeline. Tapping a
+ * row lists its visits.
  */
 class DayActivity : ComponentActivity() {
+    companion object {
+        private const val DEVICE = "device"
+        private const val START = "start"
+
+        /** The whole day, or one stretch of it. */
+        fun intent(context: Context, chunk: DayChunk?): Intent = Intent(context, DayActivity::class.java).apply {
+            if (chunk != null) {
+                putExtra(DEVICE, chunk.device)
+                putExtra(START, chunk.start.toEpochMilli())
+            }
+        }
+    }
+
     private var view by mutableStateOf<DayView?>(null)
     private var message by mutableStateOf("Loading…")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge(SystemBarStyle.dark(AndroidColor.TRANSPARENT), SystemBarStyle.dark(AndroidColor.TRANSPARENT))
         super.onCreate(savedInstanceState)
+        // The cached day shows the totals at once; the visits arrive with the full answer.
+        view = DayCache.read(this)?.takeIf { DayModel.isToday(it, Instant.now()) }
         setContent { TelemetryTheme { Screen() } }
         lifecycleScope.launch {
-            view = withContext(Dispatchers.IO) { DayCache.details(this@DayActivity) }
-            // Offline: the cached day still lists the chunks, without their records.
-            if (view == null) view = DayCache.read(this@DayActivity)?.takeIf { DayModel.isToday(it, Instant.now()) }
+            val full = withContext(Dispatchers.IO) { DayCache.details(this@DayActivity) }
+            if (full != null) view = full
             message = if (view == null) "The server could not be reached." else ""
-        }
-    }
-
-    @OptIn(ExperimentalMaterial3Api::class)
-    @Composable
-    private fun Screen() {
-        val names = remember { AppNames(this) }
-        Scaffold(topBar = {
-            TopAppBar(
-                title = { Text("Today") },
-                navigationIcon = { IconButton(onClick = ::finish) { Icon(painterResource(R.drawable.ic_back), contentDescription = "Back") } },
-            )
-        }) { padding ->
-            val day = view
-            if (day == null) {
-                Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(padding).padding(20.dp))
-                return@Scaffold
-            }
-            val rows = remember(day) {
-                (day.chunks.map { DayRow.Use(it) } + day.gaps.map { DayRow.Missing(it) }).sortedByDescending { it.start }
-            }
-            var open by remember { mutableStateOf<DayChunk?>(null) }
-            LazyColumn(Modifier.fillMaxSize().padding(padding)) {
-                item { DayStrip(day, Instant.now(), Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) }
-                items(rows) { row ->
-                    when (row) {
-                        is DayRow.Use -> Use(row.chunk, names, open == row.chunk) { open = if (open == row.chunk) null else row.chunk }
-                        is DayRow.Missing -> Missing(row.gap)
-                    }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                }
-            }
         }
     }
 
@@ -118,42 +90,72 @@ class DayActivity : ComponentActivity() {
 
     private fun time(at: Instant) = String.format("%02d:%02d", at.atZone(zone).hour, at.atZone(zone).minute)
 
-    private fun seconds(at: Instant) = String.format("%02d:%02d:%02d", at.atZone(zone).hour, at.atZone(zone).minute, at.atZone(zone).second)
+    /** The chunks in scope: the one the timeline opened, or all of them. */
+    private fun scope(day: DayView): List<DayChunk> {
+        val device = intent.getStringExtra(DEVICE) ?: return day.chunks
+        val start = intent.getLongExtra(START, 0)
+        // A chunk that grew since the tap still starts at the same moment.
+        return day.chunks.filter { it.device == device && it.start.toEpochMilli() == start }
+    }
 
+    @OptIn(ExperimentalMaterial3Api::class)
     @Composable
-    private fun Use(chunk: DayChunk, names: AppNames, open: Boolean, onClick: () -> Unit) {
-        Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).clickable(onClick = onClick)) {
-            Box(Modifier.width(4.dp).fillMaxHeight().background(if (chunk.distraction) DistractionColor else OtherColor))
-            Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                Row {
-                    Text("${time(chunk.start)}–${time(chunk.end)}", modifier = Modifier.weight(1f))
-                    Text("${DayModel.deviceName(chunk.device)} · ${DayModel.clock(chunk.activeMinutes)}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    private fun Screen() {
+        val names = remember { AppNames(this) }
+        val day = view
+        val chunks = day?.let(::scope).orEmpty()
+        val whole = intent.getStringExtra(DEVICE) == null
+        Scaffold(topBar = {
+            TopAppBar(
+                title = { Text(if (whole || chunks.isEmpty()) "Today" else "${time(chunks.first().start)}–${time(chunks.last().end)} · ${DayModel.deviceName(chunks.first().device)}") },
+                navigationIcon = { IconButton(onClick = ::finish) { Icon(painterResource(R.drawable.ic_back), contentDescription = "Back") } },
+            )
+        }) { padding ->
+            if (day == null) {
+                Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(padding).padding(20.dp))
+                return@Scaffold
+            }
+            val items = remember(day) { DayModel.grouped(chunks) }
+            val segments = remember(day) { chunks.flatMap { it.segments } }
+            var open by remember { mutableStateOf<DayItem?>(null) }
+            LazyColumn(Modifier.fillMaxSize().padding(padding)) {
+                items(items) { item ->
+                    val visits = if (open == item) segments.filter { it.device == item.device && it.name == item.name && it.detail == item.detail } else emptyList()
+                    Item(item, names, whole, open == item, visits) { open = if (open == item) null else item }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
-                Text(chunk.items.joinToString(" · ") { "${names.of(it.name)} ${DayModel.clock(it.minutes)}" },
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = if (open) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis)
-                if (open) {
-                    if (chunk.segments.isEmpty()) Text("The records behind this are only available online.", style = MaterialTheme.typography.bodySmall)
-                    chunk.segments.forEach { segment ->
-                        Row(Modifier.padding(top = 4.dp)) {
-                            Text(seconds(segment.start), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(64.dp))
-                            Text(listOfNotNull(names.of(segment.name), segment.title?.takeIf { it != segment.name }).joinToString(" · "),
-                                style = MaterialTheme.typography.bodySmall, color = if (segment.label == DayModel.DISTRACTION) DistractionColor else MaterialTheme.colorScheme.onSurface,
-                                maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                            Text(DayModel.clock(Duration.between(segment.start, segment.end).toMillis() / 60_000.0), style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 8.dp))
-                        }
+                if (whole) items(day.gaps) { gap ->
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
+                        Text("No data · ${DayModel.deviceName(gap.device)}", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                        Text("${time(gap.start)}–${time(gap.end)}", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
             }
         }
     }
 
     @Composable
-    private fun Missing(gap: DayGap) {
-        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 8.dp, bottom = 8.dp)) {
-            Text("${time(gap.start)}–${time(gap.end)}", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-            Text("${DayModel.deviceName(gap.device)} · no data", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    private fun Item(item: DayItem, names: AppNames, showDevice: Boolean, open: Boolean, visits: List<DaySegment>, onClick: () -> Unit) {
+        Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).clickable(onClick = onClick)) {
+            Box(Modifier.width(4.dp).fillMaxHeight().background(if (item.label == DayModel.DISTRACTION) DistractionColor else OtherColor))
+            Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                Row {
+                    Text(names.of(item.name), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    Text(DayModel.clock(item.minutes), fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 12.dp))
+                }
+                val under = listOfNotNull(item.detail, DayModel.deviceName(item.device).takeIf { showDevice }, "${item.visits} ${if (item.visits == 1) "visit" else "visits"}")
+                Text(under.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (open && visits.isEmpty()) Text("The visits are only available online.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
+                visits.forEach { visit ->
+                    Row(Modifier.padding(top = 4.dp)) {
+                        Text(time(visit.start), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(48.dp))
+                        Text(visit.title?.takeIf { it != visit.name } ?: "", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                        Text(DayModel.clock(Duration.between(visit.start, visit.end).toMillis() / 60_000.0), style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 8.dp))
+                    }
+                }
+            }
         }
     }
 }

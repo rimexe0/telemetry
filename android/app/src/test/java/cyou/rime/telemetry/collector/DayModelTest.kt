@@ -34,6 +34,19 @@ class DayModelTest {
     }
 
     @Test
+    fun groupsTheSameThingAcrossChunksAndKeepsThreadsApart() {
+        fun item(name: String, detail: String?, minutes: Double, device: String = "mac") = DayItem(name, detail, "unlabeled", minutes, 1, device)
+        fun chunk(vararg items: DayItem) = DayChunk("mac", Instant.EPOCH, Instant.EPOCH, false, 0.0, items.toList(), emptyList())
+        val grouped = DayModel.grouped(listOf(
+            chunk(item("T3 Code", "Telemetry · Fix collector", 10.0), item("Code", null, 4.0)),
+            chunk(item("T3 Code", "Telemetry · Fix collector", 15.0), item("T3 Code", "Telemetry · Phone app", 12.0), item("Code", null, 3.0, "phone")),
+        ))
+        assertEquals(listOf(25.0, 12.0, 4.0, 3.0), grouped.map { it.minutes })
+        assertEquals("Telemetry · Fix collector", grouped[0].detail)
+        assertEquals(2, grouped[0].visits)
+    }
+
+    @Test
     fun timelineSpansFirstActivityToLastBlockInWholeHours() {
         val (start, end) = DayModel.window(DayModel.parse(json), zone)
         // First chunk 09:20 local, last block ends 16:00 local.

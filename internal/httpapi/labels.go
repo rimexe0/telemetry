@@ -216,9 +216,14 @@ func (s *Server) deviceDay(writer http.ResponseWriter, request *http.Request) {
 		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
 		return
 	}
+	coding, err := s.repository.CodingRecords(ctx, from)
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
 	writeJSON(writer, http.StatusOK, map[string]any{
 		"date": day.Format("2006-01-02"), "timezone": location.String(), "from": from, "to": to, "generated_at": now, "plan_exists": plan != nil,
-		"day": activity.BuildDay(store.PlannedBlocks(plan), activity.Build(records, from, to), store.LabelsForSummary(labels), from, to,
+		"day": activity.BuildDay(store.PlannedBlocks(plan), activity.Build(records, from, to), store.LabelsForSummary(labels), activity.ThreadMessages(coding), from, to,
 			request.URL.Query().Get("segments") == "1"),
 	})
 }

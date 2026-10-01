@@ -25,7 +25,7 @@ func TestBuildDayCompressesWithoutDroppingTime(t *testing.T) {
 		{ID: 1, Title: "Telemetry", Start: at(9, 0, 0), End: at(10, 0, 0), State: "planned", Closes: true},
 		{ID: 2, Title: "Later", Start: at(12, 0, 0), End: at(13, 0, 0), State: "planned"},
 	}
-	day := BuildDay(blocks, result, labels, at(0, 0, 0), at(10, 30, 0), true)
+	day := BuildDay(blocks, result, labels, nil, at(0, 0, 0), at(10, 30, 0), true)
 
 	var phone, mac []Chunk
 	var active float64
@@ -60,7 +60,40 @@ func TestBuildDayCompressesWithoutDroppingTime(t *testing.T) {
 	if day.PlannedMinutes != 120 || day.InPlanMinutes != 25.5 || day.DistractionMinutes != 34.5 || day.Distraction[0].Minutes != 15 || day.Distraction[1].Minutes != 19.5 {
 		t.Fatalf("totals = %+v", day)
 	}
-	if plain := BuildDay(nil, result, labels, at(0, 0, 0), at(10, 30, 0), false); plain.Chunks[0].Segments != nil || len(plain.Blocks) != 0 {
+	if plain := BuildDay(nil, result, labels, nil, at(0, 0, 0), at(10, 30, 0), false); plain.Chunks[0].Segments != nil || len(plain.Blocks) != 0 {
 		t.Fatalf("without segments = %+v", plain.Chunks[0])
+	}
+}
+
+func TestT3TimeIsNamedByTheNearestMessage(t *testing.T) {
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 1, hour, minute, 0, 0, time.UTC) }
+	turn := func(thread, requested string) Record {
+		return Record{Source: "t3:mac:env", Kind: "t3.turn", Payload: []byte(`{"thread_id":"` + thread + `","requested_at":"` + requested + `"}`)}
+	}
+	messages := ThreadMessages([]Record{
+		{Source: "t3:mac:env", Kind: "t3.project", Payload: []byte(`{"project_id":"p","title":"Telemetry"}`)},
+		{Source: "t3:mac:env", Kind: "t3.thread", Payload: []byte(`{"thread_id":"a","project_id":"p","title":"Fix collector"}`)},
+		{Source: "t3:mac:env", Kind: "t3.thread", Payload: []byte(`{"thread_id":"b","project_id":"p","title":"Phone app"}`)},
+		turn("a", "2026-10-01T09:05:00Z"), turn("b", "2026-10-01T09:40:00Z"),
+	})
+	result := Result{LastRecord: map[string]time.Time{}, Segments: []Segment{
+		{Device: DeviceMac, App: "T3 Code (Nightly)", Start: at(9, 0), End: at(9, 10)},
+		{Device: DeviceMac, App: "T3 Code (Nightly)", Start: at(9, 12), End: at(9, 20)},
+		{Device: DevicePhone, App: "com.t3tools.t3code", Start: at(9, 35), End: at(9, 45)},
+		{Device: DeviceMac, App: "T3 Code (Nightly)", Start: at(12, 0), End: at(12, 10)},
+		{Device: DeviceMac, App: "Code", Start: at(12, 10), End: at(12, 12)},
+	}}
+	day := BuildDay(nil, result, nil, messages, at(0, 0), at(13, 0), true)
+	details := map[string]float64{}
+	for _, chunk := range day.Chunks {
+		for _, item := range chunk.Items {
+			details[item.Name+"|"+item.Detail] += item.Minutes
+		}
+	}
+	// 09:00-09:20 on the Mac is near the 09:05 message; the phone's stretch
+	// holds the 09:40 one; nothing was sent near 12:00, so that stays unnamed.
+	if details["T3 Code (Nightly)|Telemetry · Fix collector"] != 18 || details["com.t3tools.t3code|Telemetry · Phone app"] != 10 ||
+		details["T3 Code (Nightly)|"] != 10 || details["Code|"] != 2 {
+		t.Fatalf("details = %+v", details)
 	}
 }
