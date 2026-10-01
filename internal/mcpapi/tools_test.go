@@ -34,7 +34,16 @@ func (r *toolsRepository) ApplyLabelChanges(_ context.Context, changes []activit
 		return store.AgentChange{}, errors.New("reason is required")
 	}
 	r.applied = append(r.applied, changes...)
-	return store.AgentChange{ID: 1, Kind: store.AgentChangeLabels}, nil
+	encoded, _ := json.Marshal(changes)
+	previous, _ := json.Marshal([]activity.LabelChange{{Action: "remove", Kind: changes[0].Kind, Match: changes[0].Match}})
+	return store.AgentChange{ID: 1, Kind: store.AgentChangeLabels, Changes: encoded, Previous: previous, Reason: reason}, nil
+}
+
+// Real stored changes carry JSON objects; the tool output must validate.
+func (r *toolsRepository) ListAgentChanges(context.Context, int) ([]store.AgentChange, error) {
+	return []store.AgentChange{{ID: 1, Kind: store.AgentChangeLabels, Reason: "x",
+		Changes:  json.RawMessage(`[{"action":"set","kind":"site","match":"x.com","label":"distraction"}]`),
+		Previous: json.RawMessage(`[{"action":"remove","kind":"site","match":"x.com"}]`)}}, nil
 }
 
 func connect(t *testing.T, repository store.Repository, now time.Time) *mcp.ClientSession {
@@ -117,5 +126,13 @@ func TestChangeLabelsToolAppliesAndRejectsBadInput(t *testing.T) {
 	}})
 	if err != nil || !bad.IsError {
 		t.Fatalf("invalid kind must be a tool error: %+v, %v", bad, err)
+	}
+}
+
+func TestRecentChangesOutputValidates(t *testing.T) {
+	session := connect(t, &toolsRepository{}, time.Now())
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "recent_changes", Arguments: map[string]any{}})
+	if err != nil || result.IsError {
+		t.Fatalf("recent_changes = %+v, %v", result, err)
 	}
 }

@@ -2,6 +2,8 @@ package mcpapi
 
 import (
 	"context"
+	"encoding/json"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/rimexe0/telemetry/internal/activity"
@@ -32,9 +34,42 @@ type ChangeLabelsInput struct {
 	Reason  string                 `json:"reason" jsonschema:"the owner's request, in their words where possible"`
 }
 
+// ChangeOutput is store.AgentChange with its JSON fields as JSON values:
+// json.RawMessage would be advertised as a byte array and fail validation.
+type ChangeOutput struct {
+	ID              int64      `json:"id"`
+	Kind            string     `json:"kind"`
+	Changes         any        `json:"changes"`
+	Previous        any        `json:"previous"`
+	Reason          string     `json:"reason"`
+	PolicyVersionID *int64     `json:"policy_version_id,omitempty"`
+	RevertOf        *int64     `json:"revert_of,omitempty"`
+	AppliedAt       time.Time  `json:"applied_at"`
+	RevertedAt      *time.Time `json:"reverted_at,omitempty"`
+	RevertedBy      *int64     `json:"reverted_by,omitempty"`
+}
+
+func changeOutput(change store.AgentChange) (ChangeOutput, error) {
+	output := ChangeOutput{ID: change.ID, Kind: change.Kind, Reason: change.Reason, PolicyVersionID: change.PolicyVersionID,
+		RevertOf: change.RevertOf, AppliedAt: change.AppliedAt, RevertedAt: change.RevertedAt, RevertedBy: change.RevertedBy}
+	for _, field := range []struct {
+		raw    []byte
+		target *any
+	}{{change.Changes, &output.Changes}, {change.Previous, &output.Previous}} {
+		if len(field.raw) == 0 {
+			*field.target = []any{}
+			continue
+		}
+		if err := json.Unmarshal(field.raw, field.target); err != nil {
+			return output, err
+		}
+	}
+	return output, nil
+}
+
 type AppliedChangeOutput struct {
-	Change store.AgentChange `json:"change"`
-	Notes  string            `json:"notes"`
+	Change ChangeOutput `json:"change"`
+	Notes  string       `json:"notes"`
 }
 
 type RecentChangesInput struct {
@@ -42,7 +77,7 @@ type RecentChangesInput struct {
 }
 
 type RecentChangesOutput struct {
-	Changes []store.AgentChange `json:"changes"`
+	Changes []ChangeOutput `json:"changes"`
 }
 
 type RevertChangeInput struct {
@@ -99,7 +134,8 @@ func addChangeTools(server *mcp.Server, repository store.Repository) {
 		if err != nil {
 			return nil, AppliedChangeOutput{}, err
 		}
-		return nil, AppliedChangeOutput{Change: change, Notes: "Applied."}, nil
+		output, err := changeOutput(change)
+		return nil, AppliedChangeOutput{Change: output, Notes: "Applied."}, err
 	})
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "recent_changes",
@@ -110,7 +146,18 @@ func addChangeTools(server *mcp.Server, repository store.Repository) {
 			limit = 10
 		}
 		changes, err := repository.ListAgentChanges(ctx, limit)
-		return nil, RecentChangesOutput{Changes: changes}, err
+		if err != nil {
+			return nil, RecentChangesOutput{}, err
+		}
+		output := RecentChangesOutput{Changes: []ChangeOutput{}}
+		for _, change := range changes {
+			converted, err := changeOutput(change)
+			if err != nil {
+				return nil, RecentChangesOutput{}, err
+			}
+			output.Changes = append(output.Changes, converted)
+		}
+		return nil, output, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "revert_change",
@@ -120,6 +167,7 @@ func addChangeTools(server *mcp.Server, repository store.Repository) {
 		if err != nil {
 			return nil, AppliedChangeOutput{}, err
 		}
-		return nil, AppliedChangeOutput{Change: change, Notes: "Reverted."}, nil
+		output, err := changeOutput(change)
+		return nil, AppliedChangeOutput{Change: output, Notes: "Reverted."}, err
 	})
 }
