@@ -1,13 +1,20 @@
 // Runs in every page before it loads. If Telemetry blocks the site right
 // now, the page is stopped and covered with the reason; the address and
-// history stay as they are. When the block ends, the cover goes away and the
-// page reloads, so nothing is lost.
+// history stay as they are. When the block ends the cover goes away. A page
+// that was stopped before it loaded is loaded again, but only once its tab is
+// looked at; a page that had already loaded is left as it was.
 (() => {
   if (window.top !== window) return;
   let cover = null;
   let stopped = false;
   let mediaTimer = null;
   let guard = null;
+  let reloadWhenSeen = false;
+
+  // A background tab stays stopped until the owner opens it.
+  document.addEventListener("visibilitychange", () => {
+    if (reloadWhenSeen && document.visibilityState === "visible") location.reload();
+  });
 
   function pauseMedia() {
     for (const media of document.querySelectorAll("video, audio")) media.pause();
@@ -39,6 +46,7 @@
   }
 
   function show(decision) {
+    reloadWhenSeen = false;
     if (!cover) cover = build(decision);
     if (!cover.isConnected) document.documentElement.append(cover);
     if (document.readyState !== "complete" && !stopped) {
@@ -58,8 +66,9 @@
     clearInterval(mediaTimer);
     cover.remove();
     cover = guard = mediaTimer = null;
-    // The page was stopped or paused while covered; load it again.
-    location.reload();
+    if (!stopped) return;
+    if (document.visibilityState === "visible") location.reload();
+    else reloadWhenSeen = true;
   }
 
   function apply(decision) {

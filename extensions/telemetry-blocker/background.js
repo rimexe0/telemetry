@@ -20,10 +20,15 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   return true;
 });
 
-// Open tabs follow a block starting or ending without being reloaded.
+// Open tabs follow a block starting or ending. Tabs the browser has put to
+// sleep are left alone; their cover script asks again when they wake.
 async function refreshTabs() {
-  for (const tab of await chrome.tabs.query({ url: ["http://*/*", "https://*/*"] })) {
-    const result = await decision(new URL(tab.url).hostname);
+  const decisions = new Map();
+  for (const tab of await chrome.tabs.query({ url: ["http://*/*", "https://*/*"], discarded: false })) {
+    if (tab.status === "unloaded") continue;
+    const host = new URL(tab.url).hostname;
+    if (!decisions.has(host)) decisions.set(host, await decision(host));
+    const result = decisions.get(host);
     try {
       await chrome.tabs.sendMessage(tab.id, { type: "decision", decision: result });
     } catch {
