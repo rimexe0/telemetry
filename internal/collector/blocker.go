@@ -263,6 +263,34 @@ func (b *Blocker) recordSite(site string, decision policy.Decision) {
 	}
 }
 
+// BrowserStatus describes the decision in force for the extension's popup,
+// and when distractions are next blocked.
+func (b *Blocker) BrowserStatus() awserver.BrowserStatus {
+	now := time.Now()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	status := awserver.BrowserStatus{BlockingSites: []string{}}
+	if !b.fetchedAt.IsZero() {
+		fetched := b.fetchedAt.UTC()
+		status.FetchedAt = &fetched
+	}
+	decision := DecisionAt(b.timeline, now)
+	if decision == nil {
+		return status
+	}
+	status.Connected = true
+	status.Mode, status.Reason, status.BlockAll = ModeLabel(decision.Mode), decision.Reason, decision.BlockAll
+	status.BlockingSites = append(status.BlockingSites, decision.Blocked.Domains...)
+	for _, segment := range b.timeline {
+		if segment.From.After(now) && (segment.Decision.BlockAll || len(segment.Decision.Blocked.Domains) > 0) {
+			at := segment.From.UTC()
+			status.NextBlockAt, status.NextBlockMode = &at, ModeLabel(segment.Decision.Mode)
+			break
+		}
+	}
+	return status
+}
+
 // BlocksSite applies a decision to a website: a domain entry covers its
 // subdomains, and essentials win.
 func BlocksSite(decision policy.Decision, host string) bool {
@@ -331,6 +359,8 @@ func ModeLabel(mode string) string {
 		return "Recovery"
 	case policy.ModeEmergency:
 		return "Emergency"
+	case policy.ModeLeisure:
+		return "Free time"
 	}
 	return mode
 }

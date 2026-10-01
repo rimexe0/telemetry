@@ -126,7 +126,7 @@ func buildModules(names, listen, t3Dir string, credentials *collector.Credential
 	}
 	// The browser extension asks the local API; the blocker answers.
 	if api != nil && blocker != nil {
-		api.Site = blocker.SiteDecision
+		api.Site, api.Browser = blocker.SiteDecision, blocker.BrowserStatus
 	}
 	if len(modules) == 0 {
 		return nil, errors.New("-modules must name at least one module")

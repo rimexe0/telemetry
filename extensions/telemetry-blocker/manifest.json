@@ -1,9 +1,20 @@
 {
   "manifest_version": 3,
   "name": "Telemetry",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Closes sites your Telemetry plan blocks right now, with the reason.",
-  "permissions": ["tabs", "alarms"],
-  "host_permissions": ["http://127.0.0.1:5600/*"],
-  "background": { "service_worker": "background.js" }
+  "permissions": [
+    "tabs",
+    "alarms"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:5600/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Telemetry",
+    "default_popup": "popup.html"
+  }
 }

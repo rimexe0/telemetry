@@ -2,6 +2,7 @@
 // replaces blocked tabs with the reason. The collector follows the approved
 // plan, offline too. If it cannot be reached, nothing is blocked.
 const COLLECTOR = "http://127.0.0.1:5600/api/telemetry/site?host=";
+const STATUS = "http://127.0.0.1:5600/api/telemetry/status";
 const BLOCKED_PAGE = chrome.runtime.getURL("blocked.html");
 
 async function decision(host) {
@@ -30,8 +31,24 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   check(tabId, tab.url);
 });
 
+// The badge shows whether sites are being closed right now.
+async function badge() {
+  try {
+    const response = await fetch(STATUS, { cache: "no-store" });
+    const status = await response.json();
+    const blocking = status.connected && (status.block_all || status.blocking_sites.length > 0);
+    chrome.action.setBadgeText({ text: blocking ? "ON" : "" });
+    chrome.action.setBadgeBackgroundColor({ color: "#8a2b2b" });
+  } catch {
+    chrome.action.setBadgeText({ text: "!" });
+    chrome.action.setBadgeBackgroundColor({ color: "#777" });
+  }
+}
+
 // A work block can start while a site is already open.
 chrome.alarms.create("recheck", { periodInMinutes: 1 });
 chrome.alarms.onAlarm.addListener(async () => {
+  badge();
   for (const tab of await chrome.tabs.query({})) check(tab.id, tab.url);
 });
+badge();

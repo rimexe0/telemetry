@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const maxBody = 1 << 20
@@ -21,6 +22,20 @@ type Handler struct {
 	// Site, when set, answers whether a website is blocked right now, for
 	// the Telemetry browser extension.
 	Site func(host string) SiteDecision
+	// Status, when set, describes the decision in force for the extension.
+	Status func() BrowserStatus
+}
+
+// BrowserStatus is what the extension shows in its popup.
+type BrowserStatus struct {
+	Connected     bool       `json:"connected"`
+	Mode          string     `json:"mode,omitempty"`
+	Reason        string     `json:"reason,omitempty"`
+	BlockingSites []string   `json:"blocking_sites"`
+	BlockAll      bool       `json:"block_all"`
+	NextBlockAt   *time.Time `json:"next_block_at,omitempty"`
+	NextBlockMode string     `json:"next_block_mode,omitempty"`
+	FetchedAt     *time.Time `json:"decisions_fetched_at,omitempty"`
 }
 
 // SiteDecision is what the browser extension needs to block a site.
@@ -46,6 +61,14 @@ func (h Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			writer.WriteHeader(http.StatusNoContent)
 			return
 		}
+	}
+	if request.URL.Path == "/api/telemetry/status" && request.Method == http.MethodGet {
+		status := BrowserStatus{BlockingSites: []string{}}
+		if h.Status != nil {
+			status = h.Status()
+		}
+		writeJSON(writer, http.StatusOK, status)
+		return
 	}
 	if request.URL.Path == "/api/telemetry/site" && request.Method == http.MethodGet {
 		host := strings.ToLower(strings.TrimSpace(request.URL.Query().Get("host")))
