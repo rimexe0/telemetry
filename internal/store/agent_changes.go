@@ -291,6 +291,26 @@ func (p *Postgres) RevertAgentChange(ctx context.Context, id int64) (AgentChange
 		if err != nil {
 			return AgentChange{}, err
 		}
+	case AgentChangeTasks:
+		written, previous, err := revertTasks(ctx, tx, original.Previous)
+		if err != nil {
+			return AgentChange{}, err
+		}
+		if revert, err = insertAgentChange(ctx, tx, original.Kind, written, previous, reason, nil, &original.ID); err != nil {
+			return AgentChange{}, err
+		}
+	case AgentChangePlan:
+		note := reason
+		if runes := []rune(note); len(runes) > maxPlanningTextRunes {
+			note = string(runes[:maxPlanningTextRunes])
+		}
+		written, previous, err := p.revertPlan(ctx, tx, original.Previous, note)
+		if err != nil {
+			return AgentChange{}, err
+		}
+		if revert, err = insertAgentChange(ctx, tx, original.Kind, written, previous, reason, nil, &original.ID); err != nil {
+			return AgentChange{}, err
+		}
 	default:
 		return AgentChange{}, fmt.Errorf("%w: unknown kind %q", ErrInvalidAgentChange, original.Kind)
 	}

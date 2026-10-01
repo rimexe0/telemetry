@@ -248,6 +248,14 @@ func (fakeRepository) SavePolicy(context.Context, policy.Config, string) (store.
 	return store.PolicyVersion{}, nil
 }
 
+func (fakeRepository) ApplyTaskChanges(context.Context, []store.TaskChange, string) (store.AgentChange, []store.Activity, error) {
+	return store.AgentChange{}, nil, nil
+}
+
+func (fakeRepository) ApplyDayPlan(context.Context, time.Time, store.PlanInput, string) (store.AgentChange, store.Plan, error) {
+	return store.AgentChange{}, store.Plan{}, nil
+}
+
 func (fakeRepository) ApplyBlocklistChange(context.Context, []policy.BlocklistChange, string) (store.AgentChange, error) {
 	return store.AgentChange{}, nil
 }

@@ -139,7 +139,7 @@ func addChangeTools(server *mcp.Server, repository store.Repository) {
 	})
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "recent_changes",
-		Description: "Label changes applied through this assistant, newest first, each with what it replaced and whether it was reverted.",
+		Description: "Label, task and day plan changes applied through this assistant, newest first, each with what it replaced and whether it was reverted.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input RecentChangesInput) (*mcp.CallToolResult, RecentChangesOutput, error) {
 		limit := input.Limit
 		if limit == 0 {
@@ -161,7 +161,7 @@ func addChangeTools(server *mcp.Server, repository store.Repository) {
 	})
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "revert_change",
-		Description: "Undo one applied change: restores exactly the apps or labels it touched to what they were before. The revert is itself a change that can be reverted. Confirm with the owner first.",
+		Description: "Undo one applied change: restores exactly the labels, tasks or day plan it touched to what they were before (a task it added is marked abandoned; tasks and plan versions are never deleted). The revert is itself a change that can be reverted. Confirm with the owner first.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input RevertChangeInput) (*mcp.CallToolResult, AppliedChangeOutput, error) {
 		change, err := repository.RevertAgentChange(ctx, input.ID)
 		if err != nil {

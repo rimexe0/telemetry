@@ -102,6 +102,8 @@ type Repository interface {
 	ActivityRecords(context.Context, time.Time, time.Time) ([]activity.Record, map[string]time.Time, error)
 	CodingRecords(context.Context, time.Time) ([]activity.Record, error)
 	CollectionEvidence(context.Context) (silence.Evidence, error)
+	ApplyTaskChanges(context.Context, []TaskChange, string) (AgentChange, []Activity, error)
+	ApplyDayPlan(context.Context, time.Time, PlanInput, string) (AgentChange, Plan, error)
 	ApplyBlocklistChange(context.Context, []policy.BlocklistChange, string) (AgentChange, error)
 	ApplyLabelChanges(context.Context, []activity.LabelChange, string) (AgentChange, error)
 	ListAgentChanges(context.Context, int) ([]AgentChange, error)

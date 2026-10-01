@@ -374,39 +374,47 @@ func (p *Postgres) ListPlanVersions(ctx context.Context, planDate time.Time) ([]
 	return versions, rows.Err()
 }
 
-// SavePlan appends a new version for the date inside one transaction. The
-// previous version and its block states remain retained.
-func (p *Postgres) SavePlan(ctx context.Context, planDate time.Time, input PlanInput) (Plan, error) {
+// planBlocksFromInput validates a plan and resolves activity titles.
+func (p *Postgres) planBlocksFromInput(ctx context.Context, input PlanInput) ([]ProposedBlock, error) {
 	if len(input.Blocks) > maxPlanningBlocks {
-		return Plan{}, fmt.Errorf("a plan may contain at most %d blocks", maxPlanningBlocks)
+		return nil, fmt.Errorf("a plan may contain at most %d blocks", maxPlanningBlocks)
 	}
 	if len([]rune(input.Note)) > maxPlanningTextRunes {
-		return Plan{}, fmt.Errorf("note must be at most %d characters", maxPlanningTextRunes)
+		return nil, fmt.Errorf("note must be at most %d characters", maxPlanningTextRunes)
 	}
 	blocks := make([]ProposedBlock, len(input.Blocks))
 	for i, spec := range input.Blocks {
 		spec.Title = strings.TrimSpace(spec.Title)
 		if spec.ActivityID != nil && *spec.ActivityID <= 0 {
-			return Plan{}, errors.New("activity_id must reference an activity")
+			return nil, errors.New("activity_id must reference an activity")
 		}
 		if spec.Title == "" && spec.ActivityID == nil {
-			return Plan{}, fmt.Errorf("block %d needs a title or an activity", i+1)
+			return nil, fmt.Errorf("block %d needs a title or an activity", i+1)
 		}
 		if len([]rune(spec.Title)) > maxPlanningTextRunes {
-			return Plan{}, fmt.Errorf("block %d title must be at most %d characters", i+1, maxPlanningTextRunes)
+			return nil, fmt.Errorf("block %d title must be at most %d characters", i+1, maxPlanningTextRunes)
 		}
 		if spec.DurationMinutes < 1 || spec.DurationMinutes > 1440 {
-			return Plan{}, fmt.Errorf("block %d duration_minutes must be between 1 and 1440", i+1)
+			return nil, fmt.Errorf("block %d duration_minutes must be between 1 and 1440", i+1)
 		}
 		if spec.StartTime.IsZero() {
-			return Plan{}, fmt.Errorf("block %d start_time is required", i+1)
+			return nil, fmt.Errorf("block %d start_time is required", i+1)
 		}
 		blocks[i] = ProposedBlock{ActivityID: spec.ActivityID, Title: spec.Title, StartTime: spec.StartTime, DurationMinutes: spec.DurationMinutes, Fixed: spec.Fixed, State: "planned"}
 	}
 	if err := p.resolveActivityTitles(ctx, blocks); err != nil {
+		return nil, err
+	}
+	return blocks, nil
+}
+
+// SavePlan appends a new version for the date inside one transaction. The
+// previous version and its block states remain retained.
+func (p *Postgres) SavePlan(ctx context.Context, planDate time.Time, input PlanInput) (Plan, error) {
+	blocks, err := p.planBlocksFromInput(ctx, input)
+	if err != nil {
 		return Plan{}, err
 	}
-
 	tx, err := p.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Plan{}, err

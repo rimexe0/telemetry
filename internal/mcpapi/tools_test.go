@@ -136,3 +136,66 @@ func TestRecentChangesOutputValidates(t *testing.T) {
 		t.Fatalf("recent_changes = %+v, %v", result, err)
 	}
 }
+
+type planningRepository struct {
+	toolsRepository
+	date time.Time
+	plan store.PlanInput
+}
+
+func (r *planningRepository) ApplyDayPlan(_ context.Context, date time.Time, input store.PlanInput, _ string) (store.AgentChange, store.Plan, error) {
+	r.date, r.plan = date, input
+	blocks := []store.PlanBlock{}
+	for i, spec := range input.Blocks {
+		blocks = append(blocks, store.PlanBlock{ID: int64(i + 1), ActivityID: spec.ActivityID, Title: spec.Title, StartTime: spec.StartTime, DurationMinutes: spec.DurationMinutes, State: "planned"})
+	}
+	return store.AgentChange{ID: 3, Kind: store.AgentChangePlan, Changes: json.RawMessage(`{}`), Previous: json.RawMessage(`{}`)},
+		store.Plan{PlanDate: date.Format("2006-01-02"), VersionID: 9, Blocks: blocks}, nil
+}
+
+func TestSetDayPlanUsesTheOwnersLocalTime(t *testing.T) {
+	repository := &planningRepository{}
+	// 22:30 UTC on Sep 30 is already Oct 1 in Istanbul.
+	session := connectPlanning(t, repository, time.Date(2026, 9, 30, 22, 30, 0, 0, time.UTC))
+	task := int64(4)
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "set_day_plan", Arguments: map[string]any{
+		"blocks": []map[string]any{{"start": "09:30", "minutes": 90, "task_id": task}, {"start": "13:00", "minutes": 30, "title": "Shower"}},
+		"reason": "owner approved the draft",
+	}})
+	if err != nil || result.IsError {
+		t.Fatalf("set_day_plan = %+v, %v", result, err)
+	}
+	if repository.date.Format("2006-01-02") != "2026-10-01" {
+		t.Fatalf("plan date = %s, want the local day 2026-10-01", repository.date)
+	}
+	if got := repository.plan.Blocks[0].StartTime; !got.Equal(time.Date(2026, 10, 1, 6, 30, 0, 0, time.UTC)) || *repository.plan.Blocks[0].ActivityID != 4 {
+		t.Fatalf("first block = %+v", repository.plan.Blocks[0])
+	}
+	encoded, _ := json.Marshal(result.StructuredContent)
+	var output SetDayPlanOutput
+	json.Unmarshal(encoded, &output)
+	if len(output.Plan.Blocks) != 2 || output.Plan.Blocks[0].Start != "09:30" || output.Plan.Blocks[0].End != "11:00" {
+		t.Fatalf("plan output = %+v", output.Plan)
+	}
+	bad, _ := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "set_day_plan", Arguments: map[string]any{
+		"blocks": []map[string]any{{"start": "9.30", "minutes": 30}}, "reason": "x"}})
+	if !bad.IsError {
+		t.Fatal("a malformed time must be a tool error")
+	}
+}
+
+func connectPlanning(t *testing.T, repository store.Repository, now time.Time) *mcp.ClientSession {
+	t.Helper()
+	server := mcp.NewServer(&mcp.Implementation{Name: "telemetry-test", Version: "0"}, nil)
+	addPlanningTools(server, repository, func() time.Time { return now })
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	if _, err := server.Connect(context.Background(), serverTransport, nil); err != nil {
+		t.Fatal(err)
+	}
+	session, err := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "0"}, nil).Connect(context.Background(), clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { session.Close() })
+	return session
+}
