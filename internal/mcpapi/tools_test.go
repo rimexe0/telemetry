@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -198,4 +200,35 @@ func connectPlanning(t *testing.T, repository store.Repository, now time.Time) *
 	}
 	t.Cleanup(func() { session.Close() })
 	return session
+}
+
+func TestMCPAcceptsItsPublicHostButNotOthersOnLoopback(t *testing.T) {
+	handler, err := New(&toolsRepository{}, "token", "vps1.example.ts.net")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	call := func(host string) int {
+		request, _ := http.NewRequest(http.MethodPost, server.URL, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+		request.Host = host
+		request.Header.Set("Authorization", "Bearer token")
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Accept", "application/json, text/event-stream")
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		return response.StatusCode
+	}
+	if got := call("vps1.example.ts.net:8443"); got != http.StatusOK {
+		t.Fatalf("public host = %d", got)
+	}
+	if got := call("127.0.0.1"); got != http.StatusOK {
+		t.Fatalf("loopback = %d", got)
+	}
+	if got := call("evil.example"); got != http.StatusForbidden {
+		t.Fatalf("other host = %d, want 403", got)
+	}
 }

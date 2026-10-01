@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -110,7 +111,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	mcpHandler, err := mcpapi.New(database, *readToken)
+	publicHosts := []string{}
+	if parsed, err := url.Parse(publicURL); err == nil && parsed.Hostname() != "" {
+		publicHosts = append(publicHosts, parsed.Hostname())
+	}
+	mcpHandler, err := mcpapi.New(database, *readToken, publicHosts...)
 	if err != nil {
 		log.Fatal(err)
 	}

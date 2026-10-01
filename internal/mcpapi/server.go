@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -71,7 +72,11 @@ type CollectionHealthDeviceOutput struct {
 
 // New returns an authenticated stateless MCP handler. Tool handlers receive
 // only the repository interface, never an unrestricted SQL connection.
-func New(repository store.Repository, readToken string) (http.Handler, error) {
+//
+// publicHosts are the server's own public host names (such as its Tailscale
+// name). Requests that reach the loopback listener through a proxy may carry
+// them; any other host on loopback is refused, as DNS rebinding protection.
+func New(repository store.Repository, readToken string, publicHosts ...string) (http.Handler, error) {
 	if repository == nil || readToken == "" {
 		return nil, errors.New("repository and read token are required")
 	}
@@ -127,8 +132,16 @@ func New(repository store.Repository, readToken string) (http.Handler, error) {
 		JSONResponse:                 true,
 		MaxRequestBodyBytes:          1 << 20,
 		PropagateRequestCancellation: true,
+		// tokenHandler applies the same protection with the public hosts allowed.
+		DisableLocalhostProtection: true,
 	})
-	return tokenHandler{next: handler, token: readToken}, nil
+	allowed := map[string]bool{}
+	for _, host := range publicHosts {
+		if host = strings.ToLower(strings.TrimSpace(host)); host != "" {
+			allowed[host] = true
+		}
+	}
+	return tokenHandler{next: handler, token: readToken, publicHosts: allowed}, nil
 }
 
 func collectionHealthTool(repository store.Repository) func(context.Context, *mcp.CallToolRequest, CollectionHealthInput) (*mcp.CallToolResult, CollectionHealthOutput, error) {
@@ -214,11 +227,32 @@ func parseCollectionHealth(input CollectionHealthInput) (store.CollectionHealthQ
 }
 
 type tokenHandler struct {
-	next  http.Handler
-	token string
+	next        http.Handler
+	token       string
+	publicHosts map[string]bool
+}
+
+func isLoopback(host string) bool {
+	if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil {
+		return ip.IsLoopback()
+	}
+	return strings.EqualFold(host, "localhost")
 }
 
 func (h tokenHandler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+	// DNS rebinding protection: a request reaching the loopback listener must
+	// name loopback or this server's own public host.
+	if local, ok := request.Context().Value(http.LocalAddrContextKey).(net.Addr); ok && local != nil {
+		listener, _, _ := net.SplitHostPort(local.String())
+		host := request.Host
+		if name, _, err := net.SplitHostPort(host); err == nil {
+			host = name
+		}
+		if isLoopback(listener) && !isLoopback(host) && !h.publicHosts[strings.ToLower(host)] {
+			http.Error(writer, `{"error":"invalid Host header"}`, http.StatusForbidden)
+			return
+		}
+	}
 	value := strings.TrimPrefix(request.Header.Get("Authorization"), "Bearer ")
 	if value == request.Header.Get("Authorization") || subtle.ConstantTimeCompare([]byte(value), []byte(h.token)) != 1 {
 		writer.Header().Set("Content-Type", "application/json")
