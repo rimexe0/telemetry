@@ -54,6 +54,11 @@
             android:label="Set up Telemetry"
             android:exported="false" />
         <activity
+            android:name=".DayActivity"
+            android:label="Today"
+            android:theme="@style/AppTheme.Dark"
+            android:exported="false" />
+        <activity
             android:name=".SettingsActivity"
             android:label="Telemetry settings"
             android:theme="@style/AppTheme.Dark"

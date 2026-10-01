@@ -14,13 +14,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -35,36 +35,39 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import cyou.rime.telemetry.collector.ui.DayStrip
 import cyou.rime.telemetry.collector.ui.TelemetryTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Instant
+import java.time.ZoneId
 
 /** What the home screen shows. */
 data class HomeState(
-    val mode: String = "",
-    val title: String = "",
+    /** Set only when there is something to say: a task, a block reason, or a problem. */
+    val title: String? = null,
     val taskState: String? = null,
     val next: String? = null,
     val resume: String? = null,
-    val reason: String = "",
-    val footer: String = "",
+    val reason: String? = null,
+    val footer: String? = null,
     val needsSetup: Boolean = false,
     val needsBlocking: Boolean = false,
-    val insights: List<Insight> = emptyList(),
+    val day: DayView? = null,
 )
 
 /**
- * The owner's everyday screen: what to do now, why something is closed, where
- * to return, and a few facts about today. The planner opens from the facts;
- * collection and pairing controls live in [SettingsActivity].
+ * The owner's everyday screen: the current task when there is one, today's
+ * plan with the time spent inside it, time on distractions, and the day on
+ * one strip. The plan opens the planner and the strip opens the day's
+ * details; collection and pairing controls live in [SettingsActivity].
  */
 class MainActivity : ComponentActivity() {
     private companion object {
@@ -82,13 +85,14 @@ class MainActivity : ComponentActivity() {
                     state = state,
                     onSettings = { startActivity(Intent(this, SettingsActivity::class.java)) },
                     onPlanner = { startActivity(Intent(this, PanelActivity::class.java)) },
+                    onDay = { startActivity(Intent(this, DayActivity::class.java)) },
                     onSetup = ::openSetup,
                     onBlocking = { startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
                 )
             }
         }
         showCached()
-        showCachedInsights()
+        showDay(DayCache.read(this))
         if (savedInstanceState == null && SetupActivity.needsSetup(this)) openSetup()
         CollectionStarter.ensureRunning(this)
 
@@ -104,6 +108,10 @@ class MainActivity : ComponentActivity() {
 
     private fun openSetup() = startActivity(Intent(this, SetupActivity::class.java))
 
+    private fun problem(title: String, reason: String) {
+        state = state.copy(title = title, taskState = null, next = null, resume = null, reason = reason, footer = null)
+    }
+
     private suspend fun refresh() {
         val token = DeliveryConfig(this).token()
         state = state.copy(
@@ -111,21 +119,16 @@ class MainActivity : ComponentActivity() {
             needsBlocking = token != null && !PolicyEvents.blockingEnabled(this),
         )
         if (token == null) {
-            if (!showCached()) {
-                state = state.copy(mode = "NOT SET UP", title = "This phone is not paired yet", taskState = null, next = null, resume = null,
-                    reason = "Finish setting it up to see your current task and follow your plan.", footer = "")
-            }
+            if (!showCached()) problem("This phone is not paired yet", "Finish setting it up to see your plan.")
             return
         }
         val body = withContext(Dispatchers.IO) { NowCache.refresh(this@MainActivity) }
         if (body != null) {
             render(NowModel.parse(body, Instant.now(), Instant.now(), offline = false))
         } else if (!showCached()) {
-            state = state.copy(mode = "OFFLINE", title = "No plan information yet", taskState = null, next = null, resume = null,
-                reason = "The server could not be reached and nothing is cached. Nothing is assumed.", footer = "")
+            problem("No plan information yet", "The server could not be reached and nothing is cached. Nothing is assumed.")
         }
-        withContext(Dispatchers.IO) { Insights.refresh(this@MainActivity) }
-        showCachedInsights()
+        showDay(withContext(Dispatchers.IO) { DayCache.refresh(this@MainActivity) } ?: DayCache.read(this))
     }
 
     /** Shows the cached state, following its timeline while offline. */
@@ -133,53 +136,46 @@ class MainActivity : ComponentActivity() {
         val (json, fetchedAt) = NowCache.read(this) ?: return false
         val now = Instant.now()
         if (!NowModel.timelineCovers(json, now)) {
-            state = state.copy(mode = "OFFLINE", title = "Plan information is out of date", taskState = null, next = null, resume = null,
-                reason = "Last update ${NowModel.ageText(fetchedAt, now)}. Nothing is assumed until the server is reachable.", footer = "")
+            problem("Plan information is out of date", "Last update ${NowModel.ageText(fetchedAt, now)}. Nothing is assumed until the server is reachable.")
             return true
         }
         render(NowModel.parse(json, fetchedAt, now, offline = true))
         return true
     }
 
-    /** Today's facts stay on screen offline; yesterday's are dropped. */
-    private fun showCachedInsights() {
-        val entry = Insights.read(this)
-        val fresh = entry != null && Insights.isToday(entry.json, Instant.now())
-        state = state.copy(insights = if (fresh) runCatching { Insights.parse(entry!!.json, Insights.appName(this)) }.getOrDefault(emptyList()) else emptyList())
+    /** Yesterday's answer is not shown as today. */
+    private fun showDay(view: DayView?) {
+        state = state.copy(day = view?.takeIf { DayModel.isToday(it, Instant.now()) })
     }
 
     private fun render(view: NowView) {
-        val age = NowModel.ageText(view.asOf, Instant.now())
         state = state.copy(
-            mode = view.modeLabel.uppercase(),
-            title = view.taskTitle ?: if (view.planExists) "Nothing scheduled right now" else "No plan for today",
+            title = view.taskTitle,
             taskState = view.taskState,
             next = view.nextAction,
             resume = view.resumeMarker,
-            reason = view.reason,
-            footer = if (view.offline) "Offline: following the plan cached $age." else "Updated $age.",
+            // Free time needs no words; the plan below shows it.
+            reason = view.reason.takeIf { view.mode != "leisure" && it.isNotBlank() },
+            footer = if (view.offline) "Offline: following the plan cached ${NowModel.ageText(view.asOf, Instant.now())}." else null,
         )
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun HomeScreen(state: HomeState, onSettings: () -> Unit, onPlanner: () -> Unit, onSetup: () -> Unit, onBlocking: () -> Unit) {
+private fun HomeScreen(state: HomeState, onSettings: () -> Unit, onPlanner: () -> Unit, onDay: () -> Unit, onSetup: () -> Unit, onBlocking: () -> Unit) {
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(state.mode, style = MaterialTheme.typography.labelLarge, letterSpacing = 2.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                actions = {
-                    IconButton(onClick = onSettings) { Icon(painterResource(R.drawable.ic_settings), contentDescription = "Settings") }
-                },
-            )
+            TopAppBar(title = {}, actions = {
+                IconButton(onClick = onSettings) { Icon(painterResource(R.drawable.ic_settings), contentDescription = "Settings") }
+            })
         },
     ) { padding ->
         Column(
             modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(state.title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            state.title?.let { Text(it, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold) }
             state.taskState?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             state.next?.let { Text("Next: $it", style = MaterialTheme.typography.titleMedium) }
             state.resume?.let {
@@ -190,11 +186,15 @@ private fun HomeScreen(state: HomeState, onSettings: () -> Unit, onPlanner: () -
                     }
                 }
             }
-            if (state.reason.isNotBlank()) Text(state.reason, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            state.reason?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             if (state.needsSetup) Prompt("This phone is not fully set up.", "Finish setup", onSetup)
             if (state.needsBlocking) Prompt("Blocking is switched off on this phone.", "Turn on", onBlocking)
-            Today(state.insights, onPlanner)
-            if (state.footer.isNotBlank()) Text(state.footer, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            state.day?.let { day ->
+                Plan(day, onPlanner)
+                Totals(day)
+                DayStrip(day, Instant.now(), Modifier.fillMaxWidth().clickable(onClick = onDay))
+            }
+            state.footer?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
     }
 }
@@ -209,24 +209,45 @@ private fun Prompt(text: String, action: String, onClick: () -> Unit) {
     }
 }
 
-/** Today's facts; the whole card opens the planner for the details. */
+/** Today's blocks with the time spent inside each; opens the planner. */
 @Composable
-private fun Today(insights: List<Insight>, onPlanner: () -> Unit) {
+private fun Plan(day: DayView, onPlanner: () -> Unit) {
+    val zone = ZoneId.systemDefault()
+    fun time(at: Instant) = String.format("%02d:%02d", at.atZone(zone).hour, at.atZone(zone).minute)
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
         modifier = Modifier.fillMaxWidth().clickable(onClick = onPlanner),
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("TODAY", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (insights.isEmpty()) Text("Today's numbers show up here when the phone has reached the server.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            insights.forEachIndexed { index, insight ->
-                if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Column {
-                    Text(insight.text, style = MaterialTheme.typography.titleMedium)
-                    insight.detail?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            if (day.blocks.isEmpty()) Text("No plan today", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            day.blocks.forEach { block ->
+                val current = block.status == "in_progress"
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("${time(block.start)}–${time(block.end)}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(end = 12.dp))
+                    Text(block.title, fontWeight = if (current) FontWeight.Bold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    if (block.status != "upcoming") Text(DayModel.clock(block.inPlanMinutes), modifier = Modifier.padding(start = 12.dp))
                 }
             }
-            Text("Plan and details  ›", style = MaterialTheme.typography.labelLarge)
         }
+    }
+}
+
+@Composable
+private fun Totals(day: DayView) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (day.blocks.isNotEmpty()) Total("In plan", "${DayModel.clock(day.inPlanMinutes)} of ${DayModel.clock(day.plannedMinutes)}", null)
+        Total("Distractions", DayModel.clock(day.distractionMinutes),
+            day.distractionByDevice.filter { it.second >= 1 }.sortedByDescending { it.second }
+                .joinToString(" · ") { "${DayModel.deviceName(it.first)} ${DayModel.clock(it.second)}" }.ifBlank { null })
+    }
+}
+
+@Composable
+private fun Total(name: String, value: String, detail: String?) {
+    Row(verticalAlignment = Alignment.Bottom) {
+        Text(name, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(110.dp))
+        Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        detail?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 12.dp, bottom = 3.dp)) }
     }
 }

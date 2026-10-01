@@ -158,9 +158,11 @@ func (s *Server) activitySummary(writer http.ResponseWriter, request *http.Reque
 	})
 }
 
-// deviceInsights gives a paired device a few plain facts about today, for
-// its home screen.
-func (s *Server) deviceInsights(writer http.ResponseWriter, request *http.Request) {
+// deviceDay gives a paired device one local day: the plan with the time
+// recorded inside each block, time on distractions, and the day's activity
+// compressed into chunks. With segments=1 each chunk also carries the
+// records behind it, for the details page.
+func (s *Server) deviceDay(writer http.ResponseWriter, request *http.Request) {
 	if !s.pairedDeviceAuthorized(request) && !s.ownerAuthorized(request) {
 		writeError(writer, http.StatusUnauthorized, "unauthorized", "a paired device credential is required")
 		return
@@ -184,13 +186,22 @@ func (s *Server) deviceInsights(writer http.ResponseWriter, request *http.Reques
 	}
 	now := time.Now().UTC()
 	day := now.In(location)
+	if value := request.URL.Query().Get("date"); value != "" {
+		if day, err = time.ParseInLocation("2006-01-02", value, location); err != nil {
+			writeError(writer, http.StatusBadRequest, "invalid_query", "date must be YYYY-MM-DD")
+			return
+		}
+	}
 	from := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, location).UTC()
-	records, _, err := s.repository.ActivityRecords(ctx, from, now)
-	if err != nil {
-		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+	to := from.AddDate(0, 0, 1)
+	if to.After(now) {
+		to = now
+	}
+	if !to.After(from) {
+		writeError(writer, http.StatusBadRequest, "invalid_query", "date is in the future")
 		return
 	}
-	coding, err := s.repository.CodingRecords(ctx, from)
+	records, _, err := s.repository.ActivityRecords(ctx, from, to)
 	if err != nil {
 		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
 		return
@@ -200,9 +211,15 @@ func (s *Server) deviceInsights(writer http.ResponseWriter, request *http.Reques
 		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
 		return
 	}
+	plan, err := s.repository.LatestPlan(ctx, time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
 	writeJSON(writer, http.StatusOK, map[string]any{
-		"date": day.Format("2006-01-02"), "generated_at": now,
-		"insights": activity.Insights(activity.Build(records, from, now), activity.CodingThreads(coding, from, now), store.LabelsForSummary(labels)),
+		"date": day.Format("2006-01-02"), "timezone": location.String(), "from": from, "to": to, "generated_at": now, "plan_exists": plan != nil,
+		"day": activity.BuildDay(store.PlannedBlocks(plan), activity.Build(records, from, to), store.LabelsForSummary(labels), from, to,
+			request.URL.Query().Get("segments") == "1"),
 	})
 }
 

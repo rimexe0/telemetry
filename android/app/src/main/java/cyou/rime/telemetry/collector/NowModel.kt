@@ -6,6 +6,7 @@ import java.time.Instant
 
 /** What the Now screen shows, derived only from server state or its cached timeline. */
 data class NowView(
+    val mode: String,
     val modeLabel: String,
     val reason: String,
     val taskTitle: String?,
@@ -65,6 +66,7 @@ object NowModel {
         }
         val task = root.optJSONObject("task")
         return NowView(
+            mode = decision.optString("mode"),
             modeLabel = modeLabel(decision.optString("mode")),
             reason = decision.optString("reason"),
             taskTitle = task?.optString("title")?.ifBlank { null },
