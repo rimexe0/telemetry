@@ -43,6 +43,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import cyou.rime.telemetry.collector.ui.DayTimeline
+import cyou.rime.telemetry.collector.ui.DistractionColor
 import cyou.rime.telemetry.collector.ui.TelemetryTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -63,6 +64,7 @@ data class HomeState(
     val needsSetup: Boolean = false,
     val needsBlocking: Boolean = false,
     val day: DayView? = null,
+    val followUps: List<FollowUp> = emptyList(),
 )
 
 /**
@@ -90,10 +92,12 @@ class MainActivity : ComponentActivity() {
                     onDay = { chunk -> startActivity(DayActivity.intent(this, chunk)) },
                     onSetup = ::openSetup,
                     onBlocking = { startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
+                    onDone = ::done,
                 )
             }
         }
         showCached()
+        showFollowUps()
         showDay(DayCache.read(this))
         if (savedInstanceState == null && SetupActivity.needsSetup(this)) openSetup()
         CollectionStarter.ensureRunning(this)
@@ -109,6 +113,15 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openSetup() = startActivity(Intent(this, SetupActivity::class.java))
+
+    private fun showFollowUps() {
+        state = state.copy(followUps = FollowUpWatch.open(this, NowCache.read(this)?.json))
+    }
+
+    private fun done(followUp: FollowUp) {
+        state = state.copy(followUps = state.followUps - followUp)
+        lifecycleScope.launch { withContext(Dispatchers.IO) { runCatching { FollowUpWatch.markDone(this@MainActivity, followUp.id) } } }
+    }
 
     private fun problem(title: String, reason: String) {
         state = state.copy(title = title, taskState = null, next = null, resume = null, reason = reason, footer = null)
@@ -130,6 +143,7 @@ class MainActivity : ComponentActivity() {
         } else if (!showCached()) {
             problem("No plan information yet", "The server could not be reached and nothing is cached. Nothing is assumed.")
         }
+        showFollowUps()
         showDay(withContext(Dispatchers.IO) { DayCache.refresh(this@MainActivity) } ?: DayCache.read(this))
     }
 
@@ -165,7 +179,8 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun HomeScreen(state: HomeState, onSettings: () -> Unit, onPlanner: () -> Unit, onDay: (DayChunk?) -> Unit, onSetup: () -> Unit, onBlocking: () -> Unit) {
+private fun HomeScreen(state: HomeState, onSettings: () -> Unit, onPlanner: () -> Unit, onDay: (DayChunk?) -> Unit, onSetup: () -> Unit, onBlocking: () -> Unit,
+    onDone: (FollowUp) -> Unit) {
     val context = LocalContext.current
     val names = remember { AppNames(context) }
     Scaffold(
@@ -179,6 +194,7 @@ private fun HomeScreen(state: HomeState, onSettings: () -> Unit, onPlanner: () -
             modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            FollowUps(state.followUps, onDone)
             state.title?.let { Text(it, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold) }
             state.taskState?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             state.next?.let { Text("Next: $it", style = MaterialTheme.typography.titleMedium) }
@@ -209,6 +225,28 @@ private fun Prompt(text: String, action: String, onClick: () -> Unit) {
         Row(Modifier.padding(start = 14.dp, end = 8.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(text, modifier = Modifier.weight(1f))
             FilledTonalButton(onClick = onClick) { Text(action) }
+        }
+    }
+}
+
+/** Things waiting on the owner: due ones first with Done, then what is coming. */
+@Composable
+private fun FollowUps(followUps: List<FollowUp>, onDone: (FollowUp) -> Unit) {
+    if (followUps.isEmpty()) return
+    val zone = ZoneId.systemDefault()
+    val now = Instant.now()
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(start = 14.dp, end = 8.dp, top = 4.dp, bottom = 4.dp)) {
+            followUps.forEach { followUp ->
+                val due = !now.isBefore(followUp.dueAt)
+                val at = followUp.dueAt.atZone(zone)
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
+                    Text(String.format("%02d:%02d", at.hour, at.minute), color = if (due) DistractionColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(end = 12.dp))
+                    Text(followUp.title, fontWeight = if (due) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.weight(1f))
+                    FilledTonalButton(onClick = { onDone(followUp) }) { Text("Done") }
+                }
+            }
         }
     }
 }

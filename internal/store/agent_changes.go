@@ -299,6 +299,14 @@ func (p *Postgres) RevertAgentChange(ctx context.Context, id int64) (AgentChange
 		if revert, err = insertAgentChange(ctx, tx, original.Kind, written, previous, reason, nil, &original.ID); err != nil {
 			return AgentChange{}, err
 		}
+	case AgentChangeFollowUps:
+		written, previous, err := revertFollowUps(ctx, tx, original.Previous)
+		if err != nil {
+			return AgentChange{}, err
+		}
+		if revert, err = insertAgentChange(ctx, tx, original.Kind, written, previous, reason, nil, &original.ID); err != nil {
+			return AgentChange{}, err
+		}
 	case AgentChangePlan:
 		note := reason
 		if runes := []rune(note); len(runes) > maxPlanningTextRunes {

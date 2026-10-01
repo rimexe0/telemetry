@@ -28,6 +28,7 @@ object PolicyWatch {
         NowCache.refresh(context)
         val entry = NowCache.read(context)
         IncidentWatch.check(context, entry?.json)
+        runCatching { FollowUpWatch.check(context, entry?.json) }
         val decision = entry?.let { runCatching { BlockPolicy.at(it.json, Instant.now()) }.getOrNull() }
         // Optional root suspension; lifts everything when nothing should be blocked.
         runCatching { AppSuspender.reconcile(context, decision) }

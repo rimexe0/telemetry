@@ -105,6 +105,9 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
         <receiver
+            android:name=".FollowUpDoneReceiver"
+            android:exported="false" />
+        <receiver
             android:name=".RestartReceiver"
             android:exported="false">
             <intent-filter>

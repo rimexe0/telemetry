@@ -146,6 +146,8 @@ type planningRepository struct {
 	conflict error
 	stored   *store.Plan
 	records  []activity.Record
+
+	followUps []store.FollowUpChange
 }
 
 func (r *planningRepository) ApplyDayPlan(_ context.Context, date time.Time, input store.PlanInput, _ string) (store.AgentChange, store.Plan, error) {
@@ -234,6 +236,51 @@ func TestPlanReviewSetsRecordedActivityAgainstBlocks(t *testing.T) {
 	}
 }
 
+func (r *planningRepository) ApplyFollowUpChanges(_ context.Context, changes []store.FollowUpChange, _ string) (store.AgentChange, []store.FollowUp, error) {
+	r.followUps = changes
+	written := []store.FollowUp{}
+	for i, change := range changes {
+		written = append(written, store.FollowUp{ID: int64(i + 1), Title: *change.Title, DueAt: *change.DueAt, NagMinutes: change.NagMinutes, State: store.FollowUpOpen})
+	}
+	return store.AgentChange{ID: 8, Kind: store.AgentChangeFollowUps, Changes: json.RawMessage(`[]`), Previous: json.RawMessage(`[]`)}, written, nil
+}
+
+func TestFollowUpsResolveLocalTimes(t *testing.T) {
+	repository := &planningRepository{}
+	// 15:10 UTC is 18:10 in Istanbul.
+	session := connectPlanning(t, repository, time.Date(2026, 10, 1, 15, 10, 0, 0, time.UTC))
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "change_follow_ups", Arguments: map[string]any{
+		"changes": []map[string]any{
+			{"action": "add", "title": "Hang the laundry", "in_minutes": 60, "nag_minutes": 10},
+			{"action": "add", "title": "Call the bank", "at": "09:00"},
+			{"action": "add", "title": "Take out the bread", "at": "18:40"},
+		}, "reason": "washing machine, 1 hour"}})
+	if err != nil || result.IsError {
+		t.Fatalf("change_follow_ups = %+v, %v", result, err)
+	}
+	due := func(i int) time.Time { return *repository.followUps[i].DueAt }
+	// 09:00 has passed today, so it means tomorrow; 18:40 is still today.
+	if !due(0).Equal(time.Date(2026, 10, 1, 16, 10, 0, 0, time.UTC)) || !due(1).Equal(time.Date(2026, 10, 2, 6, 0, 0, 0, time.UTC)) ||
+		!due(2).Equal(time.Date(2026, 10, 1, 15, 40, 0, 0, time.UTC)) || *repository.followUps[0].NagMinutes != 10 {
+		t.Fatalf("due = %v, %v, %v", due(0), due(1), due(2))
+	}
+	encoded, _ := json.Marshal(result.StructuredContent)
+	var output ChangeFollowUpsOutput
+	json.Unmarshal(encoded, &output)
+	if output.Change.ID != 8 || output.FollowUps[0].Due != "2026-10-01 19:10" || output.FollowUps[0].DueInMinutes != 60 {
+		t.Fatalf("output = %s", encoded)
+	}
+	bad, _ := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "change_follow_ups", Arguments: map[string]any{
+		"changes": []map[string]any{{"action": "add", "title": "No time"}}, "reason": "x"}})
+	if !bad.IsError {
+		t.Fatal("a new follow-up without a time must be refused")
+	}
+	listed, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "follow_ups", Arguments: map[string]any{}})
+	if err != nil || listed.IsError {
+		t.Fatalf("follow_ups = %+v, %v", listed, err)
+	}
+}
+
 func TestSetDayPlanUsesTheOwnersLocalTime(t *testing.T) {
 	repository := &planningRepository{}
 	// 22:30 UTC on Sep 30 is already Oct 1 in Istanbul.
@@ -269,6 +316,7 @@ func connectPlanning(t *testing.T, repository store.Repository, now time.Time) *
 	t.Helper()
 	server := mcp.NewServer(&mcp.Implementation{Name: "telemetry-test", Version: "0"}, nil)
 	addPlanningTools(server, repository, func() time.Time { return now })
+	addFollowUpTools(server, repository, func() time.Time { return now })
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(context.Background(), serverTransport, nil); err != nil {
 		t.Fatal(err)

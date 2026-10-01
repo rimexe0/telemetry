@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -90,8 +92,21 @@ func (s *Server) deviceNow(writer http.ResponseWriter, request *http.Request) {
 			open = append(open, incident)
 		}
 	}
+	// Open follow-ups, so the device can show the due ones until they are done.
+	followUps, err := s.repository.ListFollowUps(ctx, now)
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
+	openFollowUps := []store.FollowUp{}
+	for _, item := range followUps {
+		if item.State == store.FollowUpOpen {
+			openFollowUps = append(openFollowUps, item)
+		}
+	}
 	writeJSON(writer, http.StatusOK, map[string]any{
 		"generated_at": now,
+		"follow_ups":   openFollowUps,
 		// Open collection problems, so this device can tell the owner about
 		// another device that went quiet (#28).
 		"collection_incidents": open,
@@ -103,4 +118,33 @@ func (s *Server) deviceNow(writer http.ResponseWriter, request *http.Request) {
 		"timeline":   policy.Timeline(config, version, facts, now.Add(-10*time.Minute), now.Add(12*time.Hour)),
 		"panel_path": "/panel/",
 	})
+}
+
+// deviceFollowUpDone lets a paired device mark one follow-up done. It is the
+// only owner record a device credential can change: the reminder stays on the
+// phone until it is done, so the phone must be able to say so.
+func (s *Server) deviceFollowUpDone(writer http.ResponseWriter, request *http.Request) {
+	if !s.pairedDeviceAuthorized(request) && !s.ownerAuthorized(request) {
+		writeError(writer, http.StatusUnauthorized, "unauthorized", "a paired device credential is required")
+		return
+	}
+	id, err := strconv.ParseInt(request.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeError(writer, http.StatusBadRequest, "invalid_path", "follow-up id must be a positive integer")
+		return
+	}
+	by := "owner"
+	if device := strings.TrimSpace(request.Header.Get("X-Telemetry-Device-ID")); device != "" {
+		by = "device:" + device
+	}
+	item, err := s.repository.CloseFollowUp(request.Context(), id, by)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(writer, http.StatusNotFound, "not_found", "follow-up does not exist")
+		return
+	}
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"follow_up": item})
 }

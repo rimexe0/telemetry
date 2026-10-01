@@ -252,6 +252,18 @@ func (fakeRepository) ApplyTaskChanges(context.Context, []store.TaskChange, stri
 	return store.AgentChange{}, nil, nil
 }
 
+func (fakeRepository) ApplyFollowUpChanges(context.Context, []store.FollowUpChange, string) (store.AgentChange, []store.FollowUp, error) {
+	return store.AgentChange{}, nil, nil
+}
+
+func (fakeRepository) ListFollowUps(context.Context, time.Time) ([]store.FollowUp, error) {
+	return nil, nil
+}
+
+func (fakeRepository) CloseFollowUp(context.Context, int64, string) (store.FollowUp, error) {
+	return store.FollowUp{}, nil
+}
+
 func (fakeRepository) AddPlanBlock(context.Context, time.Time, store.PlanBlockSpec, string) (store.AgentChange, store.Plan, error) {
 	return store.AgentChange{}, store.Plan{}, nil
 }
