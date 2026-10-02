@@ -4,9 +4,11 @@
 const COLLECTOR = "http://127.0.0.1:5600/api/telemetry/site?host=";
 const STATUS = "http://127.0.0.1:5600/api/telemetry/status";
 
-async function decision(host) {
+// The page address goes along so a single page of a closed site can stay
+// open, such as one music stream.
+async function decision(host, address) {
   try {
-    const response = await fetch(COLLECTOR + encodeURIComponent(host), { cache: "no-store" });
+    const response = await fetch(COLLECTOR + encodeURIComponent(host) + "&url=" + encodeURIComponent(address || ""), { cache: "no-store" });
     return response.ok ? await response.json() : null;
   } catch {
     return null;
@@ -16,7 +18,7 @@ async function decision(host) {
 // The cover script asks when a page starts loading.
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (message.type !== "check") return false;
-  decision(message.host).then(reply);
+  decision(message.host, message.url).then(reply);
   return true;
 });
 
@@ -26,9 +28,8 @@ async function refreshTabs() {
   const decisions = new Map();
   for (const tab of await chrome.tabs.query({ url: ["http://*/*", "https://*/*"], discarded: false })) {
     if (tab.status === "unloaded") continue;
-    const host = new URL(tab.url).hostname;
-    if (!decisions.has(host)) decisions.set(host, await decision(host));
-    const result = decisions.get(host);
+    if (!decisions.has(tab.url)) decisions.set(tab.url, await decision(new URL(tab.url).hostname, tab.url));
+    const result = decisions.get(tab.url);
     try {
       await chrome.tabs.sendMessage(tab.id, { type: "decision", decision: result });
     } catch {

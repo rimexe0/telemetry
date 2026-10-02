@@ -268,6 +268,18 @@ func (fakeRepository) ApplyTaskRuleChanges(context.Context, []store.TaskRuleChan
 	return store.AgentChange{}, nil, nil
 }
 
+func (fakeRepository) ApplyBlockingSchedule(context.Context, store.ScheduleChange, string) (store.AgentChange, policy.Config, error) {
+	return store.AgentChange{}, policy.Config{}, nil
+}
+
+func (fakeRepository) OpenNow(context.Context, store.Opening, string) (store.AgentChange, store.Opening, error) {
+	return store.AgentChange{}, store.Opening{}, nil
+}
+
+func (fakeRepository) ActiveOpenings(context.Context, time.Time) ([]store.Opening, error) {
+	return nil, nil
+}
+
 func (fakeRepository) AddPlanBlock(context.Context, time.Time, store.PlanBlockSpec, string) (store.AgentChange, store.Plan, error) {
 	return store.AgentChange{}, store.Plan{}, nil
 }

@@ -10,9 +10,11 @@ function world({ readyState, visibility, blocked }) {
     createElement: el, querySelectorAll: () => [], documentElement: { append() { w.covered = true; } },
     addEventListener: (n, f) => (w.listeners[n] = f) };
   const window = { stop: () => w.stops++ }; window.top = window;
-  const ctx = { window, document, location: { hostname: "x.com", reload: () => w.reloads++ }, history: {},
-    setInterval: () => 1, clearInterval() {}, MutationObserver: class { observe() {} disconnect() {} },
-    chrome: { runtime: { sendMessage: (m, cb) => cb({ blocked }), onMessage: { addListener: (f) => (w.send = (b) => f({ type: "decision", decision: { blocked: b } })) } } } };
+  const location = { hostname: "x.com", href: "https://x.com/a", reload: () => w.reloads++ };
+  w.location = location;
+  const ctx = { window, document, location, history: {},
+    setInterval: (f) => { w.tick = f; return 1; }, clearInterval() {}, MutationObserver: class { observe() {} disconnect() {} },
+    chrome: { runtime: { sendMessage: (m, cb) => { w.messages.push(m); cb({ blocked: typeof blocked === "function" ? blocked(m.url) : blocked }); }, onMessage: { addListener: (f) => (w.send = (b) => f({ type: "decision", decision: { blocked: b } })) } } } };
   vm.runInNewContext(src, ctx);
   w.seen = (v) => { w.visibility = v; w.listeners.visibilitychange(); };
   return w;
@@ -33,3 +35,9 @@ check("a new block cancels the waiting reload", w.covered && w.reloads === 0);
 w.send(false); check("and it reloads when that block ends", w.reloads === 1);
 w = world({ readyState: "complete", visibility: "hidden", blocked: false });
 w.send(true); w.send(false); w.seen("visible"); check("loaded background page never reloads", w.reloads === 0);
+w = world({ readyState: "complete", visibility: "visible", blocked: (url) => !url.includes("open") });
+w.location.href = "https://x.com/open"; w.tick();
+check("the page address is sent with each check", w.messages.at(-1).url === "https://x.com/open");
+check("an open page of a closed site is uncovered when navigated to", !w.covered);
+w.location.href = "https://x.com/other"; w.tick();
+check("and covered again on the next page", w.covered);

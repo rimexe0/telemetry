@@ -19,7 +19,8 @@ const approvalRule = "Before calling this, show the owner exactly what will chan
 
 const blocklistNotes = "Blocking follows the owner's labels: label \"distraction\" is blocked while a plan work block or execution session is open (or the daily-plan gate applies); \"essential\" is never blocked; other labels only name time. " +
 	"Enforcement: Android apps on the phone (block screen, or suspended when root is enabled there); Mac apps are hidden by the Telemetry Desktop collector with a short notice; websites are covered by the Telemetry browser extension in Helium. " +
-	"Blocking happens only during a work block (a plan block tied to a task) or an execution session, or under the daily-plan gate; at other times nothing is blocked."
+	"When closed_by_default is on (see blocking_schedule), distractions are closed at all times except the daily distraction times and openings. " +
+	"When it is off, blocking happens only during a work or focus block or an execution session, or under the daily-plan gate."
 
 type BlocklistInput struct{}
 

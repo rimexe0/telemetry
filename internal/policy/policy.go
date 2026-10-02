@@ -20,7 +20,10 @@ const (
 	ModeWork      = "work"
 	ModeBreak     = "break"
 	ModePlanGate  = "plan_gate"
-	ModeLeisure   = "leisure"
+	// ModeClosed is the ordinary state when distractions are closed by
+	// default: no block is open and it is not distraction time.
+	ModeClosed  = "closed"
+	ModeLeisure = "leisure"
 
 	BlockKindWork = "work"
 	BlockKindFree = "free"
@@ -45,12 +48,53 @@ type PlanGateConfig struct {
 	EndsAt string `json:"ends_at,omitempty"`
 }
 
+// Window is a daily stretch of local time, "HH:MM" to "HH:MM". An end at or
+// before the start means it runs past midnight.
+type Window struct {
+	Start string `json:"start"`
+	End   string `json:"end"`
+}
+
 type Config struct {
 	Timezone         string         `json:"timezone"`
 	Distractions     []TargetGroup  `json:"distractions"`
 	Essentials       []TargetGroup  `json:"essentials"`
 	PlanGate         PlanGateConfig `json:"plan_gate"`
 	EmergencyMinutes int            `json:"emergency_minutes"`
+	// ClosedByDefault closes distractions at all times except during
+	// DistractionTimes, whether or not a plan exists.
+	ClosedByDefault  bool     `json:"closed_by_default,omitempty"`
+	DistractionTimes []Window `json:"distraction_times,omitempty"`
+	// OpenAddresses are pages that stay open while their site is closed, such
+	// as one music stream. Each is a host and path prefix without a scheme.
+	OpenAddresses []string `json:"open_addresses,omitempty"`
+}
+
+// NormalizeAddress reduces a URL or address to host and path without scheme
+// or "www.", the form OpenAddresses are stored and matched in.
+func NormalizeAddress(value string) string {
+	value = strings.TrimSpace(value)
+	if index := strings.Index(value, "://"); index >= 0 {
+		value = value[index+3:]
+	}
+	host, rest, _ := strings.Cut(value, "/")
+	host = strings.TrimPrefix(strings.ToLower(host), "www.")
+	if rest == "" {
+		return host
+	}
+	return host + "/" + rest
+}
+
+// AddressOpen reports whether a page stays open under the decision's open
+// addresses.
+func AddressOpen(open []string, address string) bool {
+	address = NormalizeAddress(address)
+	for _, prefix := range open {
+		if address != "" && strings.HasPrefix(address, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // Block is a plan block reduced to what the policy needs. Work blocks
@@ -87,6 +131,17 @@ type Urgent struct {
 	Until           time.Time `json:"until"`
 }
 
+// Opening lifts the block on some distractions for a stated purpose until a
+// time. It only removes blocks; it never closes anything.
+type Opening struct {
+	ID      int64  `json:"id"`
+	Purpose string `json:"purpose"`
+	// GroupIDs are the distraction groups opened; All opens every one.
+	GroupIDs []string  `json:"group_ids,omitempty"`
+	All      bool      `json:"all,omitempty"`
+	Until    time.Time `json:"until"`
+}
+
 type Emergency struct {
 	StartedAt time.Time `json:"started_at"`
 	Until     time.Time `json:"until"`
@@ -99,6 +154,7 @@ type Facts struct {
 	Execution  *Execution `json:"execution,omitempty"`
 	Gates      []Gate     `json:"gates,omitempty"`
 	Urgent     *Urgent    `json:"urgent,omitempty"`
+	Openings   []Opening  `json:"openings,omitempty"`
 	Emergency  *Emergency `json:"emergency,omitempty"`
 	BreakSince *time.Time `json:"break_since,omitempty"`
 }
@@ -119,6 +175,8 @@ type Decision struct {
 	BlockedGroups []string `json:"blocked_groups"`
 	Blocked       Targets  `json:"blocked"`
 	AlwaysAllowed Targets  `json:"always_allowed"`
+	// OpenAddresses are pages that stay open although their site is blocked.
+	OpenAddresses []string `json:"open_addresses,omitempty"`
 	Basis         []string `json:"basis"`
 	Warnings      []string `json:"warnings,omitempty"`
 }
@@ -141,6 +199,25 @@ func (c *Config) Normalize() error {
 	}
 	if c.PlanGate.EndsAt != "" && !clockPattern.MatchString(c.PlanGate.EndsAt) {
 		return fmt.Errorf("%w: plan_gate.ends_at must be HH:MM", ErrInvalidConfig)
+	}
+	if len(c.DistractionTimes) > 20 {
+		return fmt.Errorf("%w: at most 20 distraction times are supported", ErrInvalidConfig)
+	}
+	for _, window := range c.DistractionTimes {
+		if !clockPattern.MatchString(window.Start) || !clockPattern.MatchString(window.End) || window.Start == window.End {
+			return fmt.Errorf("%w: a distraction time needs a start and a different end as HH:MM", ErrInvalidConfig)
+		}
+	}
+	if len(c.OpenAddresses) > 50 {
+		return fmt.Errorf("%w: at most 50 open addresses are supported", ErrInvalidConfig)
+	}
+	for i, address := range c.OpenAddresses {
+		address = NormalizeAddress(address)
+		// A bare site would open the whole site; that is what labels are for.
+		if !strings.Contains(address, "/") || len(address) > 300 || strings.ContainsAny(address, " \t") {
+			return fmt.Errorf("%w: open address %q must be a page address such as youtube.com/watch?v=...", ErrInvalidConfig, c.OpenAddresses[i])
+		}
+		c.OpenAddresses[i] = address
 	}
 	total := 0
 	for _, list := range [][]TargetGroup{c.Distractions, c.Essentials} {
@@ -189,8 +266,47 @@ func (f Facts) Validate() error {
 	return nil
 }
 
-// Evaluate returns the decision at one instant.
+// Evaluate returns the decision at one instant: the decision the plan and
+// the schedule give, with the owner's current openings lifted from it.
 func Evaluate(config Config, version int64, facts Facts, at time.Time) Decision {
+	decision := evaluate(config, version, facts, at)
+	// Gates and emergencies are not touched by openings.
+	if decision.BlockAll || len(decision.BlockedGroups) == 0 {
+		return decision
+	}
+	location, err := time.LoadLocation(config.Timezone)
+	if err != nil {
+		location = time.UTC
+	}
+	for _, opening := range facts.Openings {
+		if !at.Before(opening.Until) {
+			continue
+		}
+		opened := map[string]bool{}
+		for _, id := range opening.GroupIDs {
+			opened[id] = true
+		}
+		kept := []string{}
+		for _, id := range decision.BlockedGroups {
+			if !opening.All && !opened[id] {
+				kept = append(kept, id)
+			}
+		}
+		if len(kept) == len(decision.BlockedGroups) {
+			continue
+		}
+		decision.BlockedGroups = kept
+		decision.Blocked = subtract(expand(config.Distractions, kept), decision.AlwaysAllowed)
+		if len(kept) == 0 {
+			decision.Blocked = emptyTargets()
+		}
+		decision.Reason += " Opened until " + opening.Until.In(location).Format("15:04") + " for: " + opening.Purpose + "."
+		decision.Basis = append(decision.Basis, fmt.Sprintf("opening:%d", opening.ID))
+	}
+	return decision
+}
+
+func evaluate(config Config, version int64, facts Facts, at time.Time) Decision {
 	location, err := time.LoadLocation(config.Timezone)
 	if err != nil {
 		location = time.UTC
@@ -213,8 +329,21 @@ func Evaluate(config Config, version int64, facts Facts, at time.Time) Decision 
 		}
 		decision.Blocked = expand(config.Distractions, decision.BlockedGroups)
 		decision.Blocked = subtract(decision.Blocked, decision.AlwaysAllowed)
+		decision.OpenAddresses = config.OpenAddresses
 	}
-	clock := func(t time.Time) string { return t.In(location).Format("15:04") }
+	// clock names a time for the owner: the day is said when it is not today.
+	clock := func(t time.Time) string {
+		local, today := t.In(location), at.In(location)
+		switch days := int(time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, time.UTC).Sub(
+			time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)).Hours() / 24); days {
+		case 0:
+			return local.Format("15:04")
+		case 1:
+			return "tomorrow " + local.Format("15:04")
+		default:
+			return local.Format("Mon 15:04")
+		}
+	}
 
 	if emergency := facts.Emergency; emergency != nil && !at.Before(emergency.StartedAt) && at.Before(emergency.Until) {
 		decision.Mode = ModeEmergency
@@ -287,10 +416,73 @@ func Evaluate(config Config, version int64, facts Facts, at time.Time) Decision 
 		blockDistractions(nil)
 		return decision
 	}
+	if config.ClosedByDefault {
+		if end, open := distractionTime(config, location, at); open {
+			decision.Mode = ModeLeisure
+			decision.Reason = "Distraction time until " + clock(end) + "."
+			decision.Basis = append(decision.Basis, "distraction_time")
+			decision.Blocked = emptyTargets()
+			return decision
+		}
+		decision.Mode = ModeClosed
+		decision.Reason = "Distractions are closed."
+		if next, ok := nextDistractionTime(config, location, at); ok {
+			decision.Reason += " Distraction time starts at " + clock(next) + "."
+		}
+		decision.Basis = append(decision.Basis, "closed_by_default")
+		blockDistractions(nil)
+		return decision
+	}
 	decision.Mode = ModeLeisure
 	decision.Reason = "Free time. Nothing is blocked."
 	decision.Blocked = emptyTargets()
 	return decision
+}
+
+// windowBounds returns every start and end of the distraction times on the
+// local days around at.
+func windowBounds(config Config, location *time.Location, at time.Time) [][2]time.Time {
+	bounds := [][2]time.Time{}
+	local := at.In(location)
+	for offset := -1; offset <= 1; offset++ {
+		day := local.AddDate(0, 0, offset).Format("2006-01-02")
+		for _, window := range config.DistractionTimes {
+			start, err := time.ParseInLocation("2006-01-02 15:04", day+" "+window.Start, location)
+			if err != nil {
+				continue
+			}
+			end, err := time.ParseInLocation("2006-01-02 15:04", day+" "+window.End, location)
+			if err != nil {
+				continue
+			}
+			if !end.After(start) {
+				end = end.AddDate(0, 0, 1)
+			}
+			bounds = append(bounds, [2]time.Time{start, end})
+		}
+	}
+	return bounds
+}
+
+// distractionTime reports whether at is inside a distraction time and when
+// that time ends.
+func distractionTime(config Config, location *time.Location, at time.Time) (time.Time, bool) {
+	for _, bound := range windowBounds(config, location, at) {
+		if !at.Before(bound[0]) && at.Before(bound[1]) {
+			return bound[1], true
+		}
+	}
+	return time.Time{}, false
+}
+
+func nextDistractionTime(config Config, location *time.Location, at time.Time) (time.Time, bool) {
+	var next time.Time
+	for _, bound := range windowBounds(config, location, at) {
+		if bound[0].After(at) && (next.IsZero() || bound[0].Before(next)) {
+			next = bound[0]
+		}
+	}
+	return next, !next.IsZero()
 }
 
 func openWorkBlock(blocks []Block, at time.Time) *Block {

@@ -20,8 +20,9 @@ type Handler struct {
 	Hostname string
 	Version  string
 	// Site, when set, answers whether a website is blocked right now, for
-	// the Telemetry browser extension.
-	Site func(host string) SiteDecision
+	// the Telemetry browser extension. address is the page's full address
+	// when the extension sends it.
+	Site func(host, address string) SiteDecision
 	// Status, when set, describes the decision in force for the extension.
 	Status func() BrowserStatus
 }
@@ -74,7 +75,7 @@ func (h Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		host := strings.ToLower(strings.TrimSpace(request.URL.Query().Get("host")))
 		decision := SiteDecision{Host: host}
 		if h.Site != nil && host != "" {
-			decision = h.Site(host)
+			decision = h.Site(host, request.URL.Query().Get("url"))
 		}
 		writeJSON(writer, http.StatusOK, decision)
 		return

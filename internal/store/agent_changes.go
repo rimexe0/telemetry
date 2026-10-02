@@ -299,6 +299,26 @@ func (p *Postgres) RevertAgentChange(ctx context.Context, id int64) (AgentChange
 		if revert, err = insertAgentChange(ctx, tx, original.Kind, written, previous, reason, nil, &original.ID); err != nil {
 			return AgentChange{}, err
 		}
+	case AgentChangeSchedule:
+		var restore ScheduleChange
+		if err := json.Unmarshal(original.Previous, &restore); err != nil {
+			return AgentChange{}, err
+		}
+		previous, _, version, err := applyScheduleTx(ctx, tx, restore, reason)
+		if err != nil {
+			return AgentChange{}, err
+		}
+		if revert, err = insertAgentChange(ctx, tx, original.Kind, restore, previous, reason, &version, &original.ID); err != nil {
+			return AgentChange{}, err
+		}
+	case AgentChangeOpening:
+		written, previous, err := revertOpening(ctx, tx, original.Previous)
+		if err != nil {
+			return AgentChange{}, err
+		}
+		if revert, err = insertAgentChange(ctx, tx, original.Kind, written, previous, reason, nil, &original.ID); err != nil {
+			return AgentChange{}, err
+		}
 	case AgentChangeRules:
 		written, previous, err := revertTaskRules(ctx, tx, original.Previous)
 		if err != nil {

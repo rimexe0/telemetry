@@ -134,7 +134,8 @@ func (s *Server) policyInputs(ctx context.Context, from, to time.Time) (policy.C
 	config.PlanGate.Enabled = settings.DailyPlanGateEnabled
 
 	facts := policy.Facts{PlanDate: alignmentPlanDate(from).Format("2006-01-02")}
-	for day := alignmentPlanDate(from); !day.After(alignmentPlanDate(to)); day = day.AddDate(0, 0, 1) {
+	// The day before is read too: a block that starts late can run past midnight.
+	for day := alignmentPlanDate(from).AddDate(0, 0, -1); !day.After(alignmentPlanDate(to)); day = day.AddDate(0, 0, 1) {
 		plan, err := s.repository.LatestPlan(ctx, day)
 		if err != nil {
 			return config, 0, policy.Facts{}, err
@@ -150,9 +151,17 @@ func (s *Server) policyInputs(ctx context.Context, from, to time.Time) (policy.C
 			if block.ActivityID != nil || block.Focus {
 				kind = policy.BlockKindWork
 			}
+			if day.Before(alignmentPlanDate(from)) && !blockEnd(block).After(from) {
+				continue
+			}
 			facts.Blocks = append(facts.Blocks, policy.Block{ID: block.ID, Title: block.Title, Start: block.StartTime, End: blockEnd(block), Kind: kind, State: block.State})
 		}
 	}
+	openings, err := s.repository.ActiveOpenings(ctx, from)
+	if err != nil {
+		return config, 0, policy.Facts{}, err
+	}
+	facts.Openings = store.PolicyOpenings(config, openings)
 	primary, err := s.repository.CurrentPrimaryExecutionSession(ctx)
 	if err != nil {
 		return config, 0, policy.Facts{}, err

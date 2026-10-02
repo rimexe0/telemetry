@@ -55,7 +55,14 @@ func TestSitesFollowDomainsAndSubdomains(t *testing.T) {
 	}
 	blocker := &Blocker{Credentials: &Credentials{BaseURL: "https://server.example.ts.net:8443"}}
 	blocker.timeline = []policy.Segment{{From: time.Now().Add(-time.Minute), To: time.Now().Add(time.Hour), Decision: policy.Decision{Mode: policy.ModeGate, BlockAll: true, Reason: "Go outside first."}}}
-	if !blocker.SiteDecision("x.com").Blocked || blocker.SiteDecision("server.example.ts.net").Blocked || blocker.SiteDecision("localhost").Blocked {
+	if !blocker.SiteDecision("x.com", "").Blocked || blocker.SiteDecision("server.example.ts.net", "").Blocked || blocker.SiteDecision("localhost", "").Blocked {
 		t.Fatal("a gate blocks sites but never the Telemetry panel or localhost")
+	}
+	// Closed by default with one stream kept open: that page loads, the rest of the site does not.
+	blocker.timeline[0].Decision = policy.Decision{Mode: policy.ModeClosed, Reason: "Distractions are closed.",
+		Blocked: policy.Targets{Domains: []string{"youtube.com"}}, OpenAddresses: []string{"youtube.com/watch?v=rFZHOHl-L8A"}}
+	if blocker.SiteDecision("www.youtube.com", "https://www.youtube.com/watch?v=rFZHOHl-L8A").Blocked ||
+		!blocker.SiteDecision("www.youtube.com", "https://www.youtube.com/watch?v=other").Blocked || !blocker.SiteDecision("www.youtube.com", "").Blocked {
+		t.Fatal("only the open address stays open")
 	}
 }

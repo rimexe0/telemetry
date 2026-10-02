@@ -76,8 +76,17 @@
     else hide();
   }
 
-  chrome.runtime.sendMessage({ type: "check", host: location.hostname }, apply);
+  const check = () => chrome.runtime.sendMessage({ type: "check", host: location.hostname, url: location.href }, apply);
+  check();
   chrome.runtime.onMessage.addListener((message) => {
     if (message.type === "decision") apply(message.decision);
   });
+  // Sites such as YouTube change page without loading one; ask again then,
+  // because one page of a closed site may be open while the next is not.
+  let address = location.href;
+  setInterval(() => {
+    if (location.href === address) return;
+    address = location.href;
+    check();
+  }, 1000);
 })();

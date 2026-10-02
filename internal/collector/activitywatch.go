@@ -17,7 +17,7 @@ type ActivityWatchAPI struct {
 	Listen  string
 	Version string
 	// Site answers the browser extension's site checks when the blocker runs.
-	Site    func(host string) awserver.SiteDecision
+	Site    func(host, address string) awserver.SiteDecision
 	Browser func() awserver.BrowserStatus
 }
 

@@ -11,6 +11,10 @@ import (
 	"github.com/rimexe0/telemetry/internal/store"
 )
 
+// deviceTimeline is how far ahead a device can follow the approved schedule
+// without reaching the server. Past it, a device stops blocking.
+const deviceTimeline = 48 * time.Hour
+
 type deviceTask struct {
 	Title        string `json:"title"`
 	NextAction   string `json:"next_action,omitempty"`
@@ -40,7 +44,7 @@ func (s *Server) deviceNow(writer http.ResponseWriter, request *http.Request) {
 	}
 	ctx := request.Context()
 	now := time.Now().UTC()
-	config, version, facts, err := s.policyInputs(ctx, now, now.Add(12*time.Hour))
+	config, version, facts, err := s.policyInputs(ctx, now, now.Add(deviceTimeline))
 	if err != nil {
 		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
 		return
@@ -115,7 +119,7 @@ func (s *Server) deviceNow(writer http.ResponseWriter, request *http.Request) {
 		"decision":             policy.Evaluate(config, version, facts, now),
 		// Start in the past so a device whose clock runs slightly behind still
 		// finds a segment covering its own "now".
-		"timeline":   policy.Timeline(config, version, facts, now.Add(-10*time.Minute), now.Add(12*time.Hour)),
+		"timeline":   policy.Timeline(config, version, facts, now.Add(-10*time.Minute), now.Add(deviceTimeline)),
 		"panel_path": "/panel/",
 	})
 }

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Telemetry",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Covers sites your Telemetry plan blocks right now with the reason, without losing the page.",
   "permissions": [
     "tabs",

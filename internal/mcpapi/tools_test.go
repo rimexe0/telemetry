@@ -12,6 +12,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/rimexe0/telemetry/internal/activity"
+	"github.com/rimexe0/telemetry/internal/policy"
 	"github.com/rimexe0/telemetry/internal/store"
 )
 
@@ -149,6 +150,8 @@ type planningRepository struct {
 
 	followUps []store.FollowUpChange
 	rules     []store.TaskRuleChange
+	schedule  store.ScheduleChange
+	opening   store.Opening
 }
 
 func (r *planningRepository) ApplyDayPlan(_ context.Context, date time.Time, input store.PlanInput, _ string) (store.AgentChange, store.Plan, error) {
@@ -317,6 +320,59 @@ func TestChangeTaskRulesPassesRulesThrough(t *testing.T) {
 	}
 }
 
+func (r *planningRepository) ApplyBlockingSchedule(_ context.Context, change store.ScheduleChange, _ string) (store.AgentChange, policy.Config, error) {
+	r.schedule = change
+	config := policy.Config{ClosedByDefault: change.ClosedByDefault != nil && *change.ClosedByDefault, OpenAddresses: change.AddOpenAddresses}
+	if change.DistractionTimes != nil {
+		config.DistractionTimes = *change.DistractionTimes
+	}
+	return store.AgentChange{ID: 11, Kind: store.AgentChangeSchedule, Changes: json.RawMessage(`{}`), Previous: json.RawMessage(`{}`)}, config, nil
+}
+
+func (r *planningRepository) OpenNow(_ context.Context, opening store.Opening, _ string) (store.AgentChange, store.Opening, error) {
+	r.opening = opening
+	opening.ID = 4
+	return store.AgentChange{ID: 12, Kind: store.AgentChangeOpening, Changes: json.RawMessage(`{}`), Previous: json.RawMessage(`{}`)}, opening, nil
+}
+
+func TestScheduleToolsSetTimesAndOpenForAPurpose(t *testing.T) {
+	repository := &planningRepository{}
+	// 08:00 UTC is 11:00 in Istanbul.
+	session := connectPlanning(t, repository, time.Date(2026, 10, 2, 8, 0, 0, 0, time.UTC))
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "set_blocking_schedule", Arguments: map[string]any{
+		"closed_by_default": true, "distraction_times": []map[string]any{{"start": "20:00", "end": "22:00"}},
+		"add_open_addresses": []string{"https://www.youtube.com/watch?v=rFZHOHl-L8A"}, "reason": "block by default, distraction time 8 to 10"}})
+	if err != nil || result.IsError {
+		t.Fatalf("set_blocking_schedule = %+v, %v", result, err)
+	}
+	encoded, _ := json.Marshal(result.StructuredContent)
+	var schedule SetBlockingScheduleOutput
+	json.Unmarshal(encoded, &schedule)
+	if !*repository.schedule.ClosedByDefault || (*repository.schedule.DistractionTimes)[0].End != "22:00" || !schedule.Schedule.ClosedByDefault ||
+		schedule.Schedule.DistractionTimes[0].Start != "20:00" || schedule.Schedule.OpenAddresses[0] != "youtube.com/watch?v=rFZHOHl-L8A" {
+		t.Fatalf("schedule = %s", encoded)
+	}
+	empty, _ := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "set_blocking_schedule", Arguments: map[string]any{"reason": "x"}})
+	if !empty.IsError {
+		t.Fatal("a change with nothing in it must be refused")
+	}
+	opened, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "open_now", Arguments: map[string]any{
+		"minutes": 20, "sites": []string{"youtube.com"}, "purpose": "a tutorial for the album work"}})
+	if err != nil || opened.IsError {
+		t.Fatalf("open_now = %+v, %v", opened, err)
+	}
+	encoded, _ = json.Marshal(opened.StructuredContent)
+	var output OpenNowOutput
+	json.Unmarshal(encoded, &output)
+	if !repository.opening.Until.Equal(time.Date(2026, 10, 2, 8, 20, 0, 0, time.UTC)) || output.Opening.Until != "11:20" || output.Opening.ID != 4 {
+		t.Fatalf("opening = %s", encoded)
+	}
+	listed, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "blocking_schedule", Arguments: map[string]any{}})
+	if err != nil || listed.IsError {
+		t.Fatalf("blocking_schedule = %+v, %v", listed, err)
+	}
+}
+
 func TestSetDayPlanUsesTheOwnersLocalTime(t *testing.T) {
 	repository := &planningRepository{}
 	// 22:30 UTC on Sep 30 is already Oct 1 in Istanbul.
@@ -354,6 +410,7 @@ func connectPlanning(t *testing.T, repository store.Repository, now time.Time) *
 	addPlanningTools(server, repository, func() time.Time { return now })
 	addFollowUpTools(server, repository, func() time.Time { return now })
 	addRuleTools(server, repository)
+	addScheduleTools(server, repository, func() time.Time { return now })
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(context.Background(), serverTransport, nil); err != nil {
 		t.Fatal(err)

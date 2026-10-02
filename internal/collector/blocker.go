@@ -221,8 +221,10 @@ func (b *Blocker) alwaysOpen(host string) bool {
 }
 
 // SiteDecision answers whether host is blocked now, for the browser
-// extension. Without a current decision nothing is blocked.
-func (b *Blocker) SiteDecision(host string) awserver.SiteDecision {
+// extension. address is the page's full address when the extension sends it;
+// a page among the decision's open addresses stays open. Without a current
+// decision nothing is blocked.
+func (b *Blocker) SiteDecision(host, address string) awserver.SiteDecision {
 	b.mu.Lock()
 	decision := DecisionAt(b.timeline, time.Now())
 	b.mu.Unlock()
@@ -230,7 +232,7 @@ func (b *Blocker) SiteDecision(host string) awserver.SiteDecision {
 	if decision == nil || b.alwaysOpen(host) {
 		return result
 	}
-	if BlocksSite(*decision, host) {
+	if BlocksSite(*decision, host) && !policy.AddressOpen(decision.OpenAddresses, address) {
 		result.Blocked, result.Mode, result.Reason = true, ModeLabel(decision.Mode), decision.Reason
 		b.recordSite(host, *decision)
 	}
@@ -359,6 +361,8 @@ func ModeLabel(mode string) string {
 		return "Recovery"
 	case policy.ModeEmergency:
 		return "Emergency"
+	case policy.ModeClosed:
+		return "Focus hours"
 	case policy.ModeLeisure:
 		return "Free time"
 	}

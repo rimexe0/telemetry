@@ -37,6 +37,9 @@ func Timeline(config Config, version int64, facts Facts, from, to time.Time) []S
 	if facts.Urgent != nil {
 		add(facts.Urgent.Until)
 	}
+	for _, opening := range facts.Openings {
+		add(opening.Until)
+	}
 	if facts.Emergency != nil {
 		add(facts.Emergency.StartedAt)
 		add(facts.Emergency.Until)
@@ -51,6 +54,20 @@ func Timeline(config Config, version int64, facts Facts, from, to time.Time) []S
 					add(end)
 				}
 			}
+		}
+	}
+	if location, err := time.LoadLocation(config.Timezone); err == nil {
+		if config.ClosedByDefault {
+			for day := from; !day.After(to.Add(24 * time.Hour)); day = day.Add(24 * time.Hour) {
+				for _, bound := range windowBounds(config, location, day) {
+					add(bound[0])
+					add(bound[1])
+				}
+			}
+		}
+		// A reason that says "tomorrow 10:35" says "10:35" from midnight on.
+		for day := from.In(location); !day.After(to); day = day.AddDate(0, 0, 1) {
+			add(time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, location).AddDate(0, 0, 1))
 		}
 	}
 	ordered := make([]time.Time, 0, len(points))
