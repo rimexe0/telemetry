@@ -201,35 +201,15 @@ func (s *Server) deviceDay(writer http.ResponseWriter, request *http.Request) {
 		writeError(writer, http.StatusBadRequest, "invalid_query", "date is in the future")
 		return
 	}
-	records, _, err := s.repository.ActivityRecords(ctx, from, to)
-	if err != nil {
-		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
-		return
-	}
-	labels, err := s.repository.ListActivityLabels(ctx)
-	if err != nil {
-		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
-		return
-	}
-	plan, err := s.repository.LatestPlan(ctx, time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC))
-	if err != nil {
-		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
-		return
-	}
-	coding, err := s.repository.CodingRecords(ctx, from)
-	if err != nil {
-		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
-		return
-	}
-	rules, err := s.repository.ListActivityContextRules(ctx, false)
+	input, plan, err := store.LoadDayInput(ctx, s.repository, time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC), from, to,
+		request.URL.Query().Get("segments") == "1")
 	if err != nil {
 		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{
 		"date": day.Format("2006-01-02"), "timezone": location.String(), "from": from, "to": to, "generated_at": now, "plan_exists": plan != nil,
-		"day": activity.BuildDay(store.PlannedBlocks(plan), activity.Build(records, from, to), store.LabelsForSummary(labels), activity.ThreadMessages(coding), store.TaskRules(rules), from, to,
-			request.URL.Query().Get("segments") == "1"),
+		"day": activity.BuildDay(input),
 	})
 }
 

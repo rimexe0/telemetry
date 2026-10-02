@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rimexe0/telemetry/internal/activity"
 	"github.com/rimexe0/telemetry/internal/policy"
 	"github.com/rimexe0/telemetry/internal/store"
 )
@@ -14,6 +15,9 @@ import (
 // deviceTimeline is how far ahead a device can follow the approved schedule
 // without reaching the server. Past it, a device stops blocking.
 const deviceTimeline = 48 * time.Hour
+
+// trackingWindow is how far back the current-task reading looks.
+const trackingWindow = 45 * time.Minute
 
 type deviceTask struct {
 	Title        string `json:"title"`
@@ -108,8 +112,25 @@ func (s *Server) deviceNow(writer http.ResponseWriter, request *http.Request) {
 			openFollowUps = append(openFollowUps, item)
 		}
 	}
+	// What the owner is on at the Mac right now, and the open tasks to choose from.
+	recent, _, err := store.LoadDayInput(ctx, s.repository, alignmentPlanDate(now), now.Add(-trackingWindow), now, false)
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
+	tracking := activity.Track(recent)
+	tasks := []activity.TaskRef{}
+	for _, item := range recent.Tasks {
+		tasks = append(tasks, activity.TaskRef{ID: item.ID, Title: item.Title})
+	}
+	// With no session and no block, the recognised task is the current task.
+	if task == nil && tracking.State == activity.KindTask {
+		task = &deviceTask{Title: tracking.Task, State: "active"}
+	}
 	writeJSON(writer, http.StatusOK, map[string]any{
 		"generated_at": now,
+		"tracking":     tracking,
+		"tasks":        tasks,
 		"follow_ups":   openFollowUps,
 		// Open collection problems, so this device can tell the owner about
 		// another device that went quiet (#28).
@@ -151,4 +172,34 @@ func (s *Server) deviceFollowUpDone(writer http.ResponseWriter, request *http.Re
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"follow_up": item})
+}
+
+// deviceClaim records the owner's answer, given on a paired device, to "what
+// are you working on": a task, or none. It applies from now while they stay
+// at the Mac.
+func (s *Server) deviceClaim(writer http.ResponseWriter, request *http.Request) {
+	if !s.pairedDeviceAuthorized(request) {
+		writeError(writer, http.StatusUnauthorized, "unauthorized", "a paired device credential is required")
+		return
+	}
+	request.Body = http.MaxBytesReader(writer, request.Body, s.config.MaxRequestSize)
+	var input struct {
+		TaskID  *int64 `json:"task_id"`
+		Context string `json:"context"`
+	}
+	if err := decodeExecutionJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_json", "request body must contain one claim")
+		return
+	}
+	claim, err := s.repository.AddTaskClaim(request.Context(), store.TaskClaim{TaskID: input.TaskID, Context: input.Context,
+		DeviceID: strings.TrimSpace(request.Header.Get("X-Telemetry-Device-ID"))})
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(writer, http.StatusNotFound, "not_found", "task does not exist")
+		return
+	}
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"claim": claim})
 }

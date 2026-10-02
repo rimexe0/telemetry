@@ -109,6 +109,8 @@ type Repository interface {
 	ApplyBlockingSchedule(context.Context, ScheduleChange, string) (AgentChange, policy.Config, error)
 	OpenNow(context.Context, Opening, string) (AgentChange, Opening, error)
 	ActiveOpenings(context.Context, time.Time) ([]Opening, error)
+	AddTaskClaim(context.Context, TaskClaim) (TaskClaim, error)
+	ListTaskClaims(context.Context, time.Time, time.Time) ([]TaskClaim, error)
 	ApplyTaskRuleChanges(context.Context, []TaskRuleChange, string) (AgentChange, []ActivityContextRule, error)
 	ListFollowUps(context.Context, time.Time) ([]FollowUp, error)
 	CloseFollowUp(context.Context, int64, string) (FollowUp, error)

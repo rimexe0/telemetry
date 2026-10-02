@@ -280,6 +280,14 @@ func (fakeRepository) ActiveOpenings(context.Context, time.Time) ([]store.Openin
 	return nil, nil
 }
 
+func (fakeRepository) AddTaskClaim(_ context.Context, claim store.TaskClaim) (store.TaskClaim, error) {
+	return claim, nil
+}
+
+func (fakeRepository) ListTaskClaims(context.Context, time.Time, time.Time) ([]store.TaskClaim, error) {
+	return nil, nil
+}
+
 func (fakeRepository) AddPlanBlock(context.Context, time.Time, store.PlanBlockSpec, string) (store.AgentChange, store.Plan, error) {
 	return store.AgentChange{}, store.Plan{}, nil
 }

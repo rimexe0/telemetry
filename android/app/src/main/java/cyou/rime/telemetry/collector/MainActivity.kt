@@ -291,7 +291,7 @@ private fun Plan(day: DayView, onPlanner: () -> Unit) {
         modifier = Modifier.fillMaxWidth().clickable(onClick = onPlanner),
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (day.blocks.isEmpty()) Text("No plan today", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (day.blocks.isEmpty() && day.tasks.isEmpty()) Text("No plan today", color = MaterialTheme.colorScheme.onSurfaceVariant)
             day.blocks.forEach { block ->
                 val current = block.status == "in_progress"
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -303,6 +303,14 @@ private fun Plan(day: DayView, onPlanner: () -> Unit) {
                         color = if (block.tracked) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
+            // Tasks need no time: each shows the time recognised as it today.
+            day.tasks.forEach { task ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(task.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    Text(if (task.tracked) DayModel.clock(task.minutes) else "not tracked", modifier = Modifier.padding(start = 12.dp),
+                        color = if (task.tracked) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
         }
     }
 }
@@ -310,7 +318,9 @@ private fun Plan(day: DayView, onPlanner: () -> Unit) {
 @Composable
 private fun Totals(day: DayView, modifier: Modifier) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        if (day.blocks.isNotEmpty()) Total("In plan", "${DayModel.clock(day.inPlanMinutes)} of ${DayModel.clock(day.plannedMinutes)}", null)
+        if (day.blocks.isNotEmpty() || day.tasks.isNotEmpty()) {
+            Total("On plan", DayModel.clock(day.inPlanMinutes) + if (day.plannedMinutes >= 1) " of ${DayModel.clock(day.plannedMinutes)}" else "", null)
+        }
         Total("Distractions", DayModel.clock(day.distractionMinutes),
             day.distractionByDevice.filter { it.second >= 1 }.sortedByDescending { it.second }
                 .joinToString(" · ") { "${DayModel.deviceName(it.first)} ${DayModel.clock(it.second)}" }.ifBlank { null })

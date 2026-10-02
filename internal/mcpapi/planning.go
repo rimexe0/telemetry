@@ -14,6 +14,8 @@ import (
 )
 
 const planningNotes = "Tasks (the task pool) are what the owner wants to get done; a day plan is a list of time blocks, each optionally tied to a task. " +
+	"A task needs no time block: its time is counted whenever the owner's activity matches its rules (task_rules), so on a day with no fixed times just add the tasks and their rules. " +
+	"Use blocks only for things that have a real time. " +
 	"Distractions are closed during blocks tied to a task and during focus blocks. Times are the owner's local time. " +
 	"Draft the plan from the owner's rough description and the task pool, show it, and apply it only after they approve it in the conversation. " +
 	"Every applied change is logged; recent_changes lists it and revert_change undoes it."
@@ -119,11 +121,12 @@ type PlanReviewOutput struct {
 	Blocks     []activity.BlockReview `json:"blocks"`
 	Outside    activity.Observed      `json:"outside_blocks"`
 	Insights   []activity.Insight     `json:"insights"`
+	Tasks      []activity.DayTask     `json:"tasks" jsonschema:"the open tasks with the time recognised as each today, by rules or by the owner's own answer; tracked is false for a task with neither"`
 	Notes      string                 `json:"notes"`
 }
 
 const planReviewNotes = "This puts recorded activity next to each planned block; it does not judge whether the plan was followed. " +
-	"Nothing links a task to particular apps yet, so read the apps, sites and coding threads against the block's title yourself and say when you are unsure. " +
+	"tasks lists the time recognised as each open task; a task that is not tracked has no rules yet, so read the apps, sites and coding threads against its title yourself, say when you are unsure, and give it rules. " +
 	"distraction_minutes is active time on things the owner labelled \"distraction\". no_data_minutes is missing data, never rest or focus. " +
 	"Agent minutes are agent runtime, not the owner's attention. Blocks are observed up to now; upcoming blocks have nothing observed."
 
@@ -212,8 +215,9 @@ func addPlanningTools(server *mcp.Server, repository store.Repository, now func(
 		return nil, output, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "change_tasks",
-		Description: "Add tasks to the pool or update them (next action, status, priority, deadline, effort, details). " + approvalRule,
+		Name: "change_tasks",
+		Description: "Add tasks to the pool or update them (next action, status, priority, deadline, effort, details). " +
+			"Right after adding a task, give it rules with change_task_rules so its time can be recognised: look up the real app, site and project names in activity_summary and coding_threads instead of asking the owner. " + approvalRule,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input ChangeTasksInput) (*mcp.CallToolResult, ChangeTasksOutput, error) {
 		location, err := ownerLocation(ctx, repository)
 		if err != nil {
@@ -306,8 +310,13 @@ func addPlanningTools(server *mcp.Server, repository store.Repository, now func(
 		labels := store.LabelsForSummary(stored)
 		result := activity.Build(records, from, to)
 		review := activity.ReviewPlan(store.PlannedBlocks(plan), result, coding, labels, from, to, limit)
+		day, _, err := store.LoadDayInput(ctx, repository, date, from, to, false)
+		if err != nil {
+			return nil, PlanReviewOutput{}, err
+		}
 		return nil, PlanReviewOutput{Date: date.Format("2006-01-02"), Timezone: location.String(), From: from, To: to, PlanExists: plan != nil,
-			Blocks: review.Blocks, Outside: review.Outside, Insights: activity.Insights(result, activity.CodingThreads(coding, from, to), labels), Notes: planReviewNotes}, nil
+			Blocks: review.Blocks, Outside: review.Outside, Insights: activity.Insights(result, activity.CodingThreads(coding, from, to), labels),
+			Tasks: activity.BuildDay(day).Tasks, Notes: planReviewNotes}, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "set_day_plan",

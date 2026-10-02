@@ -32,6 +32,8 @@ type Credentials struct {
 type Blocker struct {
 	Credentials *Credentials
 	HTTP        *http.Client
+	// OnNow, when set, receives each fresh /v1/device/now answer.
+	OnNow func(body []byte)
 
 	health    Health
 	mu        sync.Mutex
@@ -125,6 +127,9 @@ func (b *Blocker) refresh(ctx context.Context, host Host) {
 	}
 	host.Queue.SaveCursor(ctx, blockerCursor, string(body), time.Now())
 	b.health.Succeeded(time.Now())
+	if b.OnNow != nil {
+		b.OnNow(body)
+	}
 }
 
 func (b *Blocker) fetch(ctx context.Context) ([]byte, error) {

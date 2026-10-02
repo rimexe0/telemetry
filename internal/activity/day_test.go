@@ -22,10 +22,10 @@ func TestBuildDayCompressesWithoutDroppingTime(t *testing.T) {
 		{Device: DeviceMac, App: "Code", Title: "main.go", Start: at(9, 45, 0), End: at(10, 0, 0)},
 	}}
 	blocks := []PlannedBlock{
-		{ID: 1, Title: "Telemetry", Start: at(9, 0, 0), End: at(10, 0, 0), State: "planned", Closes: true},
+		{ID: 1, Title: "Telemetry", Start: at(9, 0, 0), End: at(10, 0, 0), State: "planned"},
 		{ID: 2, Title: "Later", Start: at(12, 0, 0), End: at(13, 0, 0), State: "planned"},
 	}
-	day := BuildDay(blocks, result, labels, nil, nil, at(0, 0, 0), at(10, 30, 0), true)
+	day := BuildDay(DayInput{Blocks: blocks, Result: result, Labels: labels, From: at(0, 0, 0), To: at(10, 30, 0), WithSegments: true})
 
 	var phone, mac []Chunk
 	var active float64
@@ -60,8 +60,14 @@ func TestBuildDayCompressesWithoutDroppingTime(t *testing.T) {
 	if day.PlannedMinutes != 120 || day.InPlanMinutes != 25.5 || day.DistractionMinutes != 34.5 || day.Distraction[0].Minutes != 15 || day.Distraction[1].Minutes != 19.5 {
 		t.Fatalf("totals = %+v", day)
 	}
-	if plain := BuildDay(nil, result, labels, nil, nil, at(0, 0, 0), at(10, 30, 0), false); plain.Chunks[0].Segments != nil || len(plain.Blocks) != 0 {
+	if plain := BuildDay(DayInput{Result: result, Labels: labels, From: at(0, 0, 0), To: at(10, 30, 0)}); plain.Chunks[0].Segments != nil || len(plain.Blocks) != 0 {
 		t.Fatalf("without segments = %+v", plain.Chunks[0])
+	}
+	// A focus block with no task only closes distractions: it plans nothing and counts nothing.
+	focus := BuildDay(DayInput{Blocks: []PlannedBlock{{ID: 9, Title: "Rest", Start: at(9, 0, 0), End: at(10, 0, 0), State: "planned", Closes: true}},
+		Result: result, Labels: labels, From: at(0, 0, 0), To: at(10, 30, 0)})
+	if focus.PlannedMinutes != 0 || focus.InPlanMinutes != 0 || focus.Blocks[0].InPlanMinutes != 0 || focus.Blocks[0].DistractionMinutes != 34.5 {
+		t.Fatalf("focus-only block = %+v", focus)
 	}
 }
 
@@ -83,7 +89,7 @@ func TestT3TimeIsNamedByTheNearestMessage(t *testing.T) {
 		{Device: DeviceMac, App: "T3 Code (Nightly)", Start: at(12, 0), End: at(12, 10)},
 		{Device: DeviceMac, App: "Code", Start: at(12, 10), End: at(12, 12)},
 	}}
-	day := BuildDay(nil, result, nil, messages, nil, at(0, 0), at(13, 0), true)
+	day := BuildDay(DayInput{Result: result, Messages: messages, From: at(0, 0), To: at(13, 0), WithSegments: true})
 	details := map[string]float64{}
 	for _, chunk := range day.Chunks {
 		for _, item := range chunk.Items {
@@ -117,8 +123,8 @@ func TestTrackedBlocksCountOnlyTimeOnTheTask(t *testing.T) {
 		{Device: DeviceMac, App: "T3 Code (Nightly)", Start: at(10, 0), End: at(10, 10)}, // after the block
 	}}
 	blocks := []PlannedBlock{{ID: 1, Title: "Telemetry", TaskID: &task, Start: at(9, 0), End: at(10, 0), State: "planned", Closes: true}}
-	rules := map[int64][]TaskRule{task: {{Signal: "path_prefix", Pattern: "/Users/ri/code/personal/Telemetry"}, {Signal: "domain", Pattern: "github.com"}}}
-	day := BuildDay(blocks, result, nil, messages, rules, at(0, 0), at(11, 0), false)
+	tasks := []TaskInfo{{ID: task, Title: "Telemetry", Rules: []TaskRule{{Signal: "path_prefix", Pattern: "/Users/ri/code/personal/Telemetry"}, {Signal: "domain", Pattern: "github.com"}}}}
+	day := BuildDay(DayInput{Blocks: blocks, Result: result, Messages: messages, Tasks: tasks, From: at(0, 0), To: at(11, 0)})
 	if block := day.Blocks[0]; !block.Tracked || block.InPlanMinutes != 30 {
 		t.Fatalf("block = %+v", block)
 	}
@@ -126,13 +132,87 @@ func TestTrackedBlocksCountOnlyTimeOnTheTask(t *testing.T) {
 	for _, chunk := range day.Chunks {
 		kinds = append(kinds, chunk.Kind)
 	}
-	// 09:00-09:30 on task, then other; nothing after the block is "task".
-	if len(day.Chunks) != 2 || day.Chunks[0].Kind != KindTask || day.Chunks[0].TaskMinutes != 30 || day.Chunks[1].Kind != KindOther || day.Chunks[1].TaskMinutes != 0 {
+	// 09:00-09:30 on task, then other. T3 Code after the block has no message
+	// near it, so nothing says which project it was and it stays "other".
+	if len(day.Chunks) != 2 || day.Chunks[0].Kind != KindTask || day.Chunks[0].Task != "Telemetry" || day.Chunks[0].TaskMinutes != 30 ||
+		day.Chunks[1].Kind != KindOther || day.Chunks[1].TaskMinutes != 0 {
 		t.Fatalf("kinds = %v chunks = %+v", kinds, day.Chunks)
 	}
+	if len(day.Tasks) != 1 || !day.Tasks[0].Tracked || day.Tasks[0].Minutes != 30 || day.InPlanMinutes != 30 {
+		t.Fatalf("tasks = %+v in plan %v", day.Tasks, day.InPlanMinutes)
+	}
 	// The same day without rules counts any undistracted time, and says so.
-	untracked := BuildDay(blocks, result, nil, messages, nil, at(0, 0), at(11, 0), false)
+	untracked := BuildDay(DayInput{Blocks: blocks, Result: result, Messages: messages, From: at(0, 0), To: at(11, 0)})
 	if block := untracked.Blocks[0]; block.Tracked || block.InPlanMinutes != 50 {
 		t.Fatalf("untracked block = %+v", block)
+	}
+}
+
+func TestTasksAreTrackedWithoutBlocksAndClaimsSettleWhatRulesCannot(t *testing.T) {
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
+	album, slides := int64(3), int64(4)
+	tasks := []TaskInfo{
+		{ID: album, Title: "Dad's album", Rules: []TaskRule{{Signal: "app", Pattern: "T3 Code (Nightly)"}}},
+		{ID: slides, Title: "Science fair presentation", Rules: []TaskRule{{Signal: "domain", Pattern: "docs.google.com"}}},
+	}
+	result := Result{LastRecord: map[string]time.Time{}, Segments: []Segment{
+		{Device: DeviceMac, App: "T3 Code (Nightly)", Start: at(14, 0), End: at(14, 30)},
+		{Device: DeviceMac, App: "Helium", Domain: "docs.google.com", Start: at(14, 30), End: at(14, 50)},
+		{Device: DeviceMac, App: "Keynote", Start: at(14, 50), End: at(15, 10)},
+		// Away for an hour, then Keynote again.
+		{Device: DeviceMac, App: "Keynote", Start: at(16, 10), End: at(16, 20)},
+	}}
+	// No blocks at all: the tasks still get their time.
+	day := BuildDay(DayInput{Result: result, Tasks: tasks, From: at(0, 0), To: at(17, 0)})
+	if day.Tasks[0].Minutes != 30 || day.Tasks[1].Minutes != 20 || day.InPlanMinutes != 50 || day.PlannedMinutes != 0 {
+		t.Fatalf("without claims = %+v, in plan %v", day.Tasks, day.InPlanMinutes)
+	}
+	// At 14:52 the owner says Keynote is the presentation. It holds while they
+	// stay at the Mac, and not after they have been away.
+	claimed := BuildDay(DayInput{Result: result, Tasks: tasks, Claims: []Claim{{TaskID: &slides, Start: at(14, 52)}}, From: at(0, 0), To: at(17, 0)})
+	if claimed.Tasks[1].Minutes != 38 || claimed.Tasks[0].Minutes != 30 {
+		t.Fatalf("a claim takes effect in the middle of a window: %+v", claimed.Tasks)
+	}
+	earlier := BuildDay(DayInput{Result: result, Tasks: tasks, Claims: []Claim{{TaskID: &slides, Start: at(14, 50)}}, From: at(0, 0), To: at(17, 0)})
+	if earlier.Tasks[1].Minutes != 40 || earlier.Tasks[0].Minutes != 30 {
+		t.Fatalf("claimed = %+v", earlier.Tasks)
+	}
+	notWork := BuildDay(DayInput{Result: result, Tasks: tasks, Claims: []Claim{{Start: at(13, 59)}}, From: at(0, 0), To: at(17, 0)})
+	if notWork.Tasks[0].Minutes != 0 || notWork.Tasks[1].Minutes != 0 {
+		t.Fatalf("\"not work\" holds for the sitting: %+v", notWork.Tasks)
+	}
+}
+
+func TestTrackTellsWhatIsOnAndAsksOnlyWhenItCannotTell(t *testing.T) {
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
+	album, slides := int64(3), int64(4)
+	tasks := []TaskInfo{
+		{ID: album, Title: "Dad's album", Rules: []TaskRule{{Signal: "app", Pattern: "T3 Code (Nightly)"}}},
+		{ID: slides, Title: "Science fair presentation"},
+	}
+	mac := func(app string, from, to time.Time) Segment {
+		return Segment{Device: DeviceMac, App: app, Start: from, End: to}
+	}
+	track := func(to time.Time, claims []Claim, segments ...Segment) Tracking {
+		return Track(DayInput{Result: Result{Segments: segments}, Tasks: tasks, Claims: claims, From: at(0, 0), To: to})
+	}
+	if got := track(at(14, 10), nil, mac("T3 Code (Nightly)", at(14, 0), at(14, 10))); got.State != KindTask || *got.TaskID != album || got.Task != "Dad's album" || !got.Since.Equal(at(14, 0)) {
+		t.Fatalf("recognised = %+v", got)
+	}
+	if got := track(at(14, 1), nil, mac("Keynote", at(14, 0), at(14, 1))); got.State != KindOther {
+		t.Fatalf("a minute of something else is not asked about yet: %+v", got)
+	}
+	unclear := track(at(14, 3), nil, mac("Keynote", at(14, 0), at(14, 3)))
+	if unclear.State != "unclear" || unclear.Context != "Keynote" || len(unclear.Candidates) != 2 {
+		t.Fatalf("unclear = %+v", unclear)
+	}
+	if got := track(at(14, 3), []Claim{{Start: at(14, 2)}}, mac("Keynote", at(14, 0), at(14, 3))); got.State != KindOther {
+		t.Fatalf("after \"not work\" it does not ask again: %+v", got)
+	}
+	if got := track(at(14, 3), []Claim{{TaskID: &slides, Start: at(14, 2)}}, mac("Keynote", at(14, 0), at(14, 3))); got.State != KindTask || *got.TaskID != slides {
+		t.Fatalf("after a claim it tracks that task: %+v", got)
+	}
+	if got := track(at(15, 0), nil, mac("Keynote", at(14, 0), at(14, 30))); got.State != "away" {
+		t.Fatalf("nothing recent = %+v", got)
 	}
 }

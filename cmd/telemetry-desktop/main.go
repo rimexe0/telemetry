@@ -93,7 +93,7 @@ func login(arguments []string) {
 // defaultModules are the modules this system can run.
 func defaultModules() string {
 	if runtime.GOOS == "darwin" {
-		return "window,activitywatch-api,t3,blocker"
+		return "window,activitywatch-api,t3,blocker,tracker"
 	}
 	return "activitywatch-api,t3"
 }
@@ -102,6 +102,7 @@ func buildModules(names, listen, t3Dir string, credentials *collector.Credential
 	modules := []collector.Module{}
 	seen := map[string]bool{}
 	var blocker *collector.Blocker
+	var tracker *collector.Tracker
 	var api *collector.ActivityWatchAPI
 	for _, name := range strings.Split(names, ",") {
 		name = strings.TrimSpace(name)
@@ -120,13 +121,20 @@ func buildModules(names, listen, t3Dir string, credentials *collector.Credential
 		case "blocker":
 			blocker = &collector.Blocker{Credentials: credentials}
 			modules = append(modules, blocker)
+		case "tracker":
+			tracker = &collector.Tracker{Credentials: credentials}
+			modules = append(modules, tracker)
 		default:
-			return nil, fmt.Errorf("unknown module %q (known: window, activitywatch-api, t3, blocker)", name)
+			return nil, fmt.Errorf("unknown module %q (known: window, activitywatch-api, t3, blocker, tracker)", name)
 		}
 	}
 	// The browser extension asks the local API; the blocker answers.
 	if api != nil && blocker != nil {
 		api.Site, api.Browser = blocker.SiteDecision, blocker.BrowserStatus
+	}
+	// The tracker reads the answers the blocker already fetches.
+	if tracker != nil && blocker != nil {
+		blocker.OnNow = tracker.Handle
 	}
 	if len(modules) == 0 {
 		return nil, errors.New("-modules must name at least one module")
@@ -136,7 +144,7 @@ func buildModules(names, listen, t3Dir string, credentials *collector.Credential
 
 func run(arguments []string) error {
 	flags := flag.NewFlagSet("run", flag.ExitOnError)
-	moduleNames := flags.String("modules", defaultModules(), "comma-separated modules to run: window, activitywatch-api, t3, blocker")
+	moduleNames := flags.String("modules", defaultModules(), "comma-separated modules to run: window, activitywatch-api, t3, blocker, tracker")
 	listen := flags.String("listen", "127.0.0.1:5600", "loopback address for the activitywatch-api module")
 	home, _ := os.UserHomeDir()
 	t3Dir := flags.String("t3-dir", filepath.Join(home, ".t3", "userdata"), "T3 Code userdata directory for the t3 module")

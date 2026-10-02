@@ -18,6 +18,9 @@ data class DayBlock(
     val distractionMinutes: Double,
 )
 
+/** One of the owner's open tasks with the time recognised as it; untracked tasks have no rules yet. */
+data class DayTask(val title: String, val tracked: Boolean, val minutes: Double)
+
 /** Time on one app or site; [detail] narrows it, such as the T3 Code project and thread. */
 data class DayItem(val name: String, val detail: String?, val label: String, val minutes: Double, val visits: Int, val device: String = "")
 
@@ -30,6 +33,8 @@ data class DayChunk(
     val end: Instant,
     /** "distraction", "task" or "other". */
     val kind: String,
+    /** The task most of a "task" chunk went to. */
+    val task: String?,
     val activeMinutes: Double,
     val items: List<DayItem>,
     val segments: List<DaySegment>,
@@ -43,6 +48,7 @@ data class DayView(
     val from: Instant,
     val to: Instant,
     val blocks: List<DayBlock>,
+    val tasks: List<DayTask>,
     val plannedMinutes: Double,
     val inPlanMinutes: Double,
     val distractionMinutes: Double,
@@ -69,6 +75,7 @@ object DayModel {
                 DayBlock(it.getString("title"), Instant.parse(it.getString("start")), Instant.parse(it.getString("end")), it.getString("status"),
                     it.optBoolean("tracked"), it.optDouble("in_plan_minutes", 0.0), it.optDouble("distraction_minutes", 0.0))
             },
+            tasks = day.optJSONArray("tasks").each { DayTask(it.getString("title"), it.optBoolean("tracked"), it.optDouble("minutes", 0.0)) },
             plannedMinutes = day.optDouble("planned_minutes", 0.0),
             inPlanMinutes = day.optDouble("in_plan_minutes", 0.0),
             distractionMinutes = day.optDouble("distraction_minutes", 0.0),
@@ -79,6 +86,7 @@ object DayModel {
                     start = Instant.parse(chunk.getString("start")),
                     end = Instant.parse(chunk.getString("end")),
                     kind = chunk.optString("kind"),
+                    task = chunk.optString("task").ifBlank { null },
                     activeMinutes = chunk.optDouble("active_minutes", 0.0),
                     items = chunk.optJSONArray("items").each {
                         DayItem(it.getString("name"), it.optString("detail").ifBlank { null }, it.optString("label"), it.optDouble("minutes", 0.0), it.optInt("visits"), chunk.getString("device"))

@@ -640,6 +640,14 @@ func (f *fakeRepository) ActiveOpenings(context.Context, time.Time) ([]store.Ope
 	return nil, nil
 }
 
+func (f *fakeRepository) AddTaskClaim(_ context.Context, claim store.TaskClaim) (store.TaskClaim, error) {
+	return claim, nil
+}
+
+func (f *fakeRepository) ListTaskClaims(context.Context, time.Time, time.Time) ([]store.TaskClaim, error) {
+	return nil, nil
+}
+
 func (f *fakeRepository) AddPlanBlock(context.Context, time.Time, store.PlanBlockSpec, string) (store.AgentChange, store.Plan, error) {
 	return store.AgentChange{}, store.Plan{}, nil
 }

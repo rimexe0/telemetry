@@ -92,7 +92,8 @@ fun DayTimeline(view: DayView, now: Instant, names: AppNames, modifier: Modifier
                     view.chunks.filter { it.device == device }.forEach { chunk ->
                         val top = chunk.items.firstOrNull()
                         Stretch(down(chunk.start), down(chunk.end) - down(chunk.start), kindColor(chunk.kind),
-                            top?.let { "${names.of(it.name)} ${DayModel.clock(chunk.activeMinutes)}" }.orEmpty(), Color.White, Modifier.clickable { onChunk(chunk) })
+                            (chunk.task ?: top?.let { names.of(it.name) })?.let { "$it ${DayModel.clock(chunk.activeMinutes)}" }.orEmpty(), Color.White,
+                            Modifier.clickable { onChunk(chunk) })
                     }
                 }
             }
