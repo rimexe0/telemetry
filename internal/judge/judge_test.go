@@ -50,10 +50,14 @@ func TestAskRunsTheCommandWithThePromptLast(t *testing.T) {
 func TestLinkPromptAndParse(t *testing.T) {
 	prompt := LinkPrompt([]TaskOption{{ID: 3, Title: "Dad's album", Notes: "monthly collage from WhatsApp exports"}, {ID: 4, Title: "Science fair presentation"}},
 		"ChatGPT · WhatsApp Chat - Group · Create July session PDF", "")
-	for _, want := range []string{"- id 3: Dad's album (monthly collage from WhatsApp exports)", "- id 4: Science fair presentation", "On screen: ChatGPT · WhatsApp Chat - Group", "Never guess"} {
+	for _, want := range []string{"- id 3: Dad's album (monthly collage from WhatsApp exports)", "- id 4: Science fair presentation", "Tool in use (not evidence by itself): ChatGPT",
+		"Project open in it: WhatsApp Chat - Group", "Thread title: Create July session PDF", "A tool's name appearing in a task's title is NOT a match", "Never guess"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt lacks %q:\n%s", want, prompt)
 		}
+	}
+	if plain := LinkPrompt(nil, "trendyol.com", ""); !strings.Contains(plain, "On screen: trendyol.com") {
+		t.Fatalf("a plain site: %s", plain)
 	}
 	link, err := ParseLink(`{"task_id":3,"confidence":"High","reason":"WhatsApp export is the album source"}`)
 	if err != nil || link.TaskID == nil || *link.TaskID != 3 || link.Confidence != "high" {

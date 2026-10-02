@@ -123,13 +123,16 @@ type Link struct {
 }
 
 // LinkPrompt asks which of the owner's tasks, if any, something on screen
-// belongs to. It asks for null unless the match is clear: a wrong link would
-// count unrelated time as work.
+// belongs to. It asks for null unless the match is clear, and says that a
+// shared tool is not a match: a wrong link counts unrelated time as work,
+// which is worse than no link. context is "app · project · thread" for a
+// coding agent, or an app or site.
 func LinkPrompt(tasks []TaskOption, context, title string) string {
 	lines := []string{
 		"A person has a few tasks for today. Decide which task, if any, the thing on their screen belongs to.",
-		"Only name a task when the match is clear from the names (same project, same subject). Most things belong to no task: then answer null.",
-		"If you are not sure, answer null with confidence \"low\". Never guess.",
+		"The same apps and tools (T3 Code, ChatGPT, Codex, a browser, an editor) are used for every task and for things that are no task at all.",
+		"A tool's name appearing in a task's title is NOT a match. Match only when the project, document or subject on screen is clearly the task's own.",
+		"Most things belong to no task: then answer null. If you are not sure, answer null with confidence \"low\". Never guess.",
 		"",
 		"Tasks:",
 	}
@@ -143,7 +146,16 @@ func LinkPrompt(tasks []TaskOption, context, title string) string {
 		}
 		lines = append(lines, line)
 	}
-	lines = append(lines, "", "On screen: "+context)
+	lines = append(lines, "")
+	// Name the tool apart from what it is being used on.
+	if parts := strings.SplitN(context, " · ", 3); len(parts) >= 2 {
+		lines = append(lines, "Tool in use (not evidence by itself): "+parts[0], "Project open in it: "+parts[1])
+		if len(parts) == 3 {
+			lines = append(lines, "Thread title: "+parts[2])
+		}
+	} else {
+		lines = append(lines, "On screen: "+context)
+	}
 	if title != "" {
 		lines = append(lines, "Window or page title: "+title)
 	}
