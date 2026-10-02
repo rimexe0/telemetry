@@ -317,3 +317,55 @@ func TestLearnedMemoryAppliesAtProjectLevelAndCanOverrideARule(t *testing.T) {
 		t.Fatalf("an owner's no must override a rule: %+v", day.Tasks)
 	}
 }
+
+func TestAgentTimeWaitingAndReturnsAreMeasuredPerTask(t *testing.T) {
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
+	album, slides := int64(3), int64(4)
+	tasks := []TaskInfo{
+		{ID: album, Title: "Dad's album", Rules: []TaskRule{{Signal: "path_prefix", Pattern: "/Users/ri/Downloads/WhatsApp Chat - Group"}}},
+		{ID: slides, Title: "Science fair presentation", Related: []string{"docs.google.com"}},
+	}
+	codex := func(from, to time.Time) Record {
+		return Record{Source: "activitywatch:mac:aw-watcher-codex_derived_x", Kind: "activitywatch.event", Start: from, End: &to,
+			Payload: []byte(`{"data":{"event_stream":"codex.turn","thread_id":"t1","chat_title":"Create July session PDF","project_path":"/Users/ri/Downloads/WhatsApp Chat - Group"}}`)}
+	}
+	coding := []Record{codex(at(14, 5), at(14, 20)), codex(at(14, 50), at(15, 0))}
+	mac := func(app, domain string, from, to time.Time) Segment {
+		return Segment{Device: DeviceMac, App: app, Domain: domain, Start: from, End: to}
+	}
+	segments := []Segment{
+		mac("ChatGPT", "", at(14, 0), at(14, 6)),                // writes the message that starts the first turn
+		mac("Helium", "docs.google.com", at(14, 6), at(14, 40)), // fills the wait with the presentation
+		mac("ChatGPT", "", at(14, 40), at(14, 51)),              // back on the album 20 minutes after the agent stopped
+		mac("Helium", "docs.google.com", at(14, 51), at(15, 10)),
+	}
+	input := DayInput{Result: Result{Segments: segments}, Tasks: tasks, Messages: ThreadMessages(coding), Turns: AgentTurns(coding), From: at(0, 0), To: at(15, 10)}
+	day := BuildDay(input)
+	albumDay, slidesDay := day.Tasks[0], day.Tasks[1]
+	// The agent ran 15 + 10 minutes. After its first stop at 14:20 the owner came back at 14:40: 20 minutes
+	// waiting. After the second stop at 15:00 they have not come back: 10 more, and it is still their turn.
+	if albumDay.Minutes != 17 || albumDay.AgentMinutes != 25 || albumDay.WaitingMinutes != 30 || albumDay.Returns != 1 ||
+		albumDay.YourTurnSince == nil || !albumDay.YourTurnSince.Equal(at(15, 0)) || !albumDay.StartedAt.Equal(at(14, 0)) {
+		t.Fatalf("album = %+v", albumDay)
+	}
+	if slidesDay.Minutes != 53 || slidesDay.AgentMinutes != 0 || slidesDay.Returns != 1 || slidesDay.YourTurnSince != nil {
+		t.Fatalf("slides = %+v", slidesDay)
+	}
+	now := Track(input)
+	if now.State != KindTask || *now.TaskID != slides || len(now.YourTurn) != 1 || now.YourTurn[0].TaskID != album || !now.YourTurn[0].Since.Equal(at(15, 0)) || now.AgentRunning {
+		t.Fatalf("tracking = %+v", now)
+	}
+	// While the agent runs, nothing is the owner's turn and being elsewhere is filling a wait.
+	input.To = at(14, 15)
+	input.Result.Segments = []Segment{segments[0], mac("Helium", "docs.google.com", at(14, 6), at(14, 15))}
+	input.Turns = []AgentTurn{{Tool: "codex", ThreadID: "codex\x00t1", Project: "WhatsApp Chat - Group", Root: "/Users/ri/Downloads/WhatsApp Chat - Group", Requested: at(14, 5)}}
+	if during := Track(input); !during.AgentRunning || len(during.YourTurn) != 0 {
+		t.Fatalf("during the run = %+v", during)
+	}
+	// A one-off the owner excused is marked, so nobody is told about it again.
+	off := Track(DayInput{Result: Result{Segments: []Segment{mac("Obsidian", "", at(15, 0), at(15, 30))}}, Tasks: tasks,
+		Claims: []Claim{{Context: "Obsidian", Start: at(15, 12)}}, From: at(0, 0), To: at(15, 30)})
+	if off.State != KindOther || off.Context != "Obsidian" || off.LearnContext != "Obsidian" || !off.Excused {
+		t.Fatalf("excused one-off = %+v", off)
+	}
+}

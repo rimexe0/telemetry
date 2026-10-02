@@ -47,13 +47,56 @@ func TestTrackerShowsEachNoticeOnce(t *testing.T) {
 	if got := tracker.decide(trackingBody("task", 4, "Science fair presentation", "", morning), morning.Add(4*time.Minute)); got == nil || got.kind != "tell" {
 		t.Fatalf("a different task must be told: %+v", got)
 	}
-	// Work that is no task is named by the server and never asked about.
-	if got := tracker.decide(trackingBody("other", 0, "", "T3 Code (Nightly) · Telemetry · Clarify next steps", morning), morning.Add(10*time.Minute)); got != nil {
-		t.Fatalf("off-plan work must not raise a question: %+v", got)
+	// Work that is no task is named by the server; a few minutes of it is not mentioned.
+	if got := tracker.decide(trackingBody("other", 0, "", "T3 Code (Nightly) · Telemetry · Clarify next steps", morning), morning.Add(5*time.Minute)); got != nil {
+		t.Fatalf("a few minutes off plan must not be mentioned: %+v", got)
 	}
 	// The next day greets again.
 	if got := tracker.decide(trackingBody("other", 0, "", "", time.Time{}), morning.Add(24*time.Hour)); got == nil || got.kind != "greet" {
 		t.Fatalf("next day = %+v", got)
+	}
+}
+
+func TestTrackerInMultitaskWork(t *testing.T) {
+	start := time.Date(2026, 10, 2, 14, 0, 0, 0, time.Local)
+	tracker := &Tracker{greeted: start.Format("2006-01-02")}
+	stopped := start.Add(-4 * time.Minute)
+	body := trackingBody("other", 0, "", "T3 Code (Nightly) · Telemetry · Clarify next steps", start)
+	body.Tracking.LearnContext = "T3 Code (Nightly) · Telemetry"
+	body.Tracking.YourTurn = []turnRef{{TaskID: 3, Task: "Dad's album", Since: stopped}}
+	// The album's agent stopped: said once, as a fact.
+	turn := tracker.decide(body, start)
+	if turn == nil || turn.kind != "turn" || turn.title != "Your turn: Dad's album" || turn.detail != "Its agent stopped 4 min ago." {
+		t.Fatalf("your turn = %+v", turn)
+	}
+	if got := tracker.decide(body, start.Add(time.Minute)); got != nil {
+		t.Fatalf("the same stop announced twice: %+v", got)
+	}
+	// Ten minutes on something outside the plan, nothing running: told, with what is waiting.
+	if got := tracker.decide(body, start.Add(9*time.Minute)); got != nil {
+		t.Fatalf("nine minutes is not mentioned: %+v", got)
+	}
+	off := tracker.decide(body, start.Add(10*time.Minute))
+	if off == nil || off.kind != "off" || off.title != "10 min on T3 Code (Nightly) · Telemetry · Clarify next steps" || off.detail != "Waiting for you: Dad's album." ||
+		off.learn != "T3 Code (Nightly) · Telemetry" {
+		t.Fatalf("off plan = %+v", off)
+	}
+	if got := tracker.decide(body, start.Add(15*time.Minute)); got != nil {
+		t.Fatalf("repeated too soon: %+v", got)
+	}
+	if got := tracker.decide(body, start.Add(20*time.Minute)); got == nil || got.kind != "off" {
+		t.Fatalf("still off plan ten minutes later: %+v", got)
+	}
+	// While an agent of a planned task runs, being elsewhere is filling a wait.
+	waiting := &Tracker{greeted: start.Format("2006-01-02")}
+	body.Tracking.YourTurn, body.Tracking.AgentRunning = nil, true
+	if got := waiting.decide(body, start.Add(30*time.Minute)); got != nil {
+		t.Fatalf("filling a wait must not be mentioned: %+v", got)
+	}
+	// A one-off the owner excused is left alone.
+	body.Tracking.AgentRunning, body.Tracking.Excused = false, true
+	if got := waiting.decide(body, start.Add(30*time.Minute)); got != nil {
+		t.Fatalf("an excused one-off must not be mentioned: %+v", got)
 	}
 }
 
@@ -127,16 +170,19 @@ func TestTrackerRecordsAnswers(t *testing.T) {
 	options := []taskRef{{3, "Dad's album"}, {4, "Science fair presentation"}}
 	last := func() call { return calls[len(calls)-1] }
 
-	// "Wrong" on a told task lets the owner pick the right one; "Something else" needs no explanation.
-	answers = []int{0, 1}
-	tracker.show(notice{kind: "tell", title: "Tracking: Dad's album", options: options}, "Keynote")
-	if last().path != "/v1/device/claims" || last().body["task_id"] != float64(4) || last().body["context"] != "Keynote" || tracker.told != 4 {
-		t.Fatalf("pick = %+v told = %d", last(), tracker.told)
+	// "Wrong" on a told task: that task forgets the thing and the picked one remembers it.
+	told := notice{kind: "tell", title: "Tracking: Dad's album", options: options, context: "Keynote · deck", learn: "Keynote", task: 3}
+	answers = []int{0, 0}
+	tracker.show(told, "")
+	if len(calls) != 2 || calls[0].path != "/v1/device/evidence" || calls[0].body["task_id"] != float64(3) || calls[0].body["verdict"] != "unrelated" ||
+		calls[1].body["task_id"] != float64(4) || calls[1].body["verdict"] != "related" || calls[1].body["context"] != "Keynote" || tracker.told != 4 {
+		t.Fatalf("correction = %+v told = %d", calls, tracker.told)
 	}
-	answers = []int{0, 2}
-	tracker.show(notice{kind: "tell", title: "Tracking: Dad's album", options: options}, "Finder")
-	if last().body["task_id"] != nil || shown[len(shown)-1] != "What is this part of?" {
-		t.Fatalf("something else = %+v shown = %v", last(), shown)
+	// "Something else" needs no explanation: the told task forgets it and nothing else is said.
+	answers = []int{0, 1}
+	tracker.show(told, "")
+	if len(calls) != 3 || last().body["verdict"] != "unrelated" || shown[len(shown)-1] != "What is this part of?" || tracker.told != 0 {
+		t.Fatalf("something else = %+v shown = %v", calls, shown)
 	}
 	// Starting a focus session from the day's greeting.
 	answers = []int{1}
@@ -167,7 +213,20 @@ func TestTrackerRecordsAnswers(t *testing.T) {
 	if last().path != "/v1/device/focus" || last().body["action"] != "pause" {
 		t.Fatalf("pause = %+v", last())
 	}
+	// Off plan: "It's part of…" is remembered for that task at project level; "One-off" excuses it for the sitting.
+	answers = []int{1, 0}
+	tracker.show(notice{kind: "off", options: options, context: "ChatGPT · WhatsApp Chat - Group · Create July session PDF", learn: "ChatGPT · WhatsApp Chat - Group"}, "")
+	if last().path != "/v1/device/evidence" || last().body["task_id"] != float64(3) || last().body["context"] != "ChatGPT · WhatsApp Chat - Group" || last().body["verdict"] != "related" {
+		t.Fatalf("it's part of = %+v", last())
+	}
+	answers = []int{2}
+	tracker.show(notice{kind: "off", options: options, context: "Obsidian", learn: "Obsidian"}, "")
+	if last().path != "/v1/device/claims" || last().body["task_id"] != nil || last().body["context"] != "Obsidian" {
+		t.Fatalf("one-off = %+v", last())
+	}
 	before := len(calls)
+	answers = []int{0}
+	tracker.show(notice{kind: "turn", title: "Your turn: Dad's album"}, "")
 	answers = []int{0}
 	tracker.show(notice{kind: "back", focus: focus}, "")
 	answers = []int{-1}

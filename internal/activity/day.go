@@ -63,10 +63,22 @@ func onTask(segment Segment, root string, rules []TaskRule) bool {
 	return false
 }
 
-// ThreadMessages lists the owner's messages to coding agents from every
-// collector machine, in time order. A message is the only record of which
-// thread was in use.
-func ThreadMessages(coding []Record) []ThreadMessage {
+// AgentTurn is one run of a coding agent in a thread, started by a message
+// from the owner. Ended is nil while it runs.
+type AgentTurn struct {
+	// Tool is "t3" or "codex"; ThreadID is unique across machines.
+	Tool      string
+	ThreadID  string
+	Thread    string
+	Project   string
+	Root      string
+	Requested time.Time
+	Ended     *time.Time
+}
+
+// AgentTurns reads the coding agents' turns from every collector machine,
+// in the order they were requested.
+func AgentTurns(coding []Record) []AgentTurn {
 	projects, threads := map[string][2]string{}, map[string][2]string{}
 	for _, record := range coding {
 		switch record.Kind {
@@ -86,13 +98,15 @@ func ThreadMessages(coding []Record) []ThreadMessage {
 			}
 		}
 	}
-	messages := []ThreadMessage{}
+	turns := []AgentTurn{}
 	for _, record := range coding {
 		if strings.Contains(record.Source, "aw-watcher-codex") {
-			// A Codex turn starts when the owner sends a message.
+			// A Codex turn starts when the owner sends a message. The watcher
+			// records it when it ends, so every one seen here has ended.
 			var event struct {
 				Data struct {
 					Stream     string `json:"event_stream"`
+					ThreadID   string `json:"thread_id"`
 					Title      string `json:"chat_title"`
 					Path       string `json:"project_path"`
 					IsSubagent bool   `json:"is_subagent"`
@@ -103,26 +117,52 @@ func ThreadMessages(coding []Record) []ThreadMessage {
 				if index := strings.LastIndex(strings.TrimRight(project, "/"), "/"); index >= 0 {
 					project = strings.TrimRight(project, "/")[index+1:]
 				}
-				messages = append(messages, ThreadMessage{Tool: "codex", At: record.Start.UTC(), Thread: event.Data.Title, Project: project, Root: event.Data.Path})
+				turn := AgentTurn{Tool: "codex", ThreadID: "codex\x00" + event.Data.ThreadID, Thread: event.Data.Title, Project: project, Root: event.Data.Path,
+					Requested: record.Start.UTC()}
+				if record.End != nil {
+					ended := record.End.UTC()
+					turn.Ended = &ended
+				} else {
+					turn.Ended = &turn.Requested
+				}
+				turns = append(turns, turn)
 			}
 			continue
 		}
 		if record.Kind != "t3.turn" {
 			continue
 		}
-		var turn t3Turn
-		if json.Unmarshal(record.Payload, &turn) != nil {
+		var payload t3Turn
+		if json.Unmarshal(record.Payload, &payload) != nil {
 			continue
 		}
-		at, err := time.Parse(time.RFC3339Nano, turn.RequestedAt)
-		thread, ok := threads[record.Source+"\x00"+turn.ThreadID]
+		at, err := time.Parse(time.RFC3339Nano, payload.RequestedAt)
+		thread, ok := threads[record.Source+"\x00"+payload.ThreadID]
 		if err != nil || !ok {
 			continue
 		}
 		project := projects[record.Source+"\x00"+thread[1]]
-		messages = append(messages, ThreadMessage{Tool: "t3", At: at.UTC(), Thread: thread[0], Project: project[0], Root: project[1]})
+		turn := AgentTurn{Tool: "t3", ThreadID: record.Source + "\x00" + payload.ThreadID, Thread: thread[0], Project: project[0], Root: project[1], Requested: at.UTC()}
+		if payload.State != "running" {
+			ended := turn.Requested
+			if completed, err := time.Parse(time.RFC3339Nano, payload.CompletedAt); err == nil {
+				ended = completed.UTC()
+			}
+			turn.Ended = &ended
+		}
+		turns = append(turns, turn)
 	}
-	sort.SliceStable(messages, func(i, j int) bool { return messages[i].At.Before(messages[j].At) })
+	sort.SliceStable(turns, func(i, j int) bool { return turns[i].Requested.Before(turns[j].Requested) })
+	return turns
+}
+
+// ThreadMessages lists the owner's messages to coding agents, in time order.
+// A message is the only record of which thread was in use.
+func ThreadMessages(coding []Record) []ThreadMessage {
+	messages := []ThreadMessage{}
+	for _, turn := range AgentTurns(coding) {
+		messages = append(messages, ThreadMessage{Tool: turn.Tool, At: turn.Requested, Thread: turn.Thread, Project: turn.Project, Root: turn.Root})
+	}
 	return messages
 }
 
@@ -237,13 +277,123 @@ type DeviceMinutes struct {
 }
 
 // DayTask is one of the owner's open tasks with the time that went to it.
+// The owner's attention, the agent's runtime and the time the agent sat
+// stopped waiting for the owner are three different measurements.
 type DayTask struct {
 	ID    int64  `json:"id"`
 	Title string `json:"title"`
-	// Tracked means the task has rules or was claimed today, so Minutes can
-	// be other than zero.
-	Tracked bool    `json:"tracked"`
+	// Tracked means the task has rules, memory or a claim, so Minutes can be
+	// other than zero.
+	Tracked bool `json:"tracked"`
+	// Minutes is the owner's own attention on the task.
 	Minutes float64 `json:"minutes"`
+	// StartedAt is when the owner first got to it today.
+	StartedAt *time.Time `json:"started_at,omitempty"`
+	// Returns counts how often the owner came back to it after being
+	// elsewhere for a while.
+	Returns int `json:"returns"`
+	// AgentMinutes is time its coding agent ran; it is not the owner's time.
+	AgentMinutes float64 `json:"agent_minutes"`
+	// WaitingMinutes is time its agent had stopped and it was the owner's
+	// turn, until they came back to it.
+	WaitingMinutes float64 `json:"waiting_minutes"`
+	// YourTurnSince is set while its agent has stopped and the owner has not
+	// come back yet.
+	YourTurnSince *time.Time `json:"your_turn_since,omitempty"`
+}
+
+// A visit to a task ends after this long away from it; coming back after
+// that is a return.
+const returnGap = 2 * time.Minute
+
+// taskOfTurn names the one task an agent turn belongs to: by a folder rule,
+// or by the task's memory of that project. None when several tasks match.
+func (c classifier) taskOfTurn(turn AgentTurn) (int64, bool) {
+	var found int64
+	count := 0
+	for _, task := range c.tasks {
+		matched := onTask(Segment{}, turn.Root, task.Rules)
+		suffix := strings.ToLower(" · " + turn.Project)
+		if turn.Project != "" {
+			for _, known := range task.Related {
+				matched = matched || strings.HasSuffix(strings.ToLower(known), suffix)
+			}
+			for _, known := range task.Unrelated {
+				if strings.HasSuffix(strings.ToLower(known), suffix) {
+					matched = false
+				}
+			}
+		}
+		if matched {
+			found = task.ID
+			count++
+		}
+	}
+	return found, count == 1
+}
+
+// agentStats fills in, per task, the agent's runtime, the time it waited for
+// the owner, and whether it is waiting now. attention holds each task's
+// spans of the owner's attention, sorted and disjoint.
+func (c classifier) agentStats(turns []AgentTurn, attention map[int64][]span, from, to time.Time, tasks []DayTask) (running bool) {
+	byThread := map[string][]AgentTurn{}
+	taskOf := map[string]int64{}
+	for _, turn := range turns {
+		task, ok := c.taskOfTurn(turn)
+		if !ok {
+			continue
+		}
+		byThread[turn.ThreadID] = append(byThread[turn.ThreadID], turn)
+		taskOf[turn.ThreadID] = task
+	}
+	index := map[int64]int{}
+	for i := range tasks {
+		index[tasks[i].ID] = i
+	}
+	ran := map[int64][]span{}
+	for thread, list := range byThread {
+		task := &tasks[index[taskOf[thread]]]
+		for i, turn := range list {
+			end := to
+			if turn.Ended != nil {
+				end = *turn.Ended
+			} else if to.Sub(turn.Requested) < 2*time.Hour {
+				// A turn "running" for hours is a stale record, not an agent at work.
+				running = true
+			}
+			if start, stop := later(turn.Requested, from), earlier(end, to); stop.After(start) {
+				ran[task.ID] = append(ran[task.ID], span{start: start, end: stop})
+			}
+			if turn.Ended == nil || turn.Ended.Before(from) || !turn.Ended.Before(to) {
+				continue
+			}
+			// It became the owner's turn when the agent stopped. That lasts
+			// until they send the next message there or their attention is
+			// back on the task.
+			stopped, back, returned := *turn.Ended, to, false
+			if i+1 < len(list) {
+				back, returned = earlier(back, later(list[i+1].Requested, stopped)), true
+			}
+			for _, visit := range attention[task.ID] {
+				if visit.end.After(stopped) {
+					back, returned = earlier(back, later(visit.start, stopped)), true
+					break
+				}
+			}
+			task.WaitingMinutes += back.Sub(stopped).Minutes()
+			if !returned && i+1 == len(list) {
+				if task.YourTurnSince == nil || stopped.Before(*task.YourTurnSince) {
+					since := stopped
+					task.YourTurnSince = &since
+				}
+			}
+		}
+	}
+	for i := range tasks {
+		tasks[i].AgentMinutes = round(minutesIn(span{start: from, end: to}, sequential(ran[tasks[i].ID])))
+		tasks[i].WaitingMinutes = round(tasks[i].WaitingMinutes)
+	}
+	return running
 }
 
 // Day is one day for the phone's home screen and its details page.
@@ -305,6 +455,8 @@ type DayInput struct {
 	Labels []Label
 	// Messages, from ThreadMessages, name the thread behind T3 Code time.
 	Messages []ThreadMessage
+	// Turns, from AgentTurns, say when each task's agent ran and stopped.
+	Turns    []AgentTurn
 	Tasks    []TaskInfo
 	Claims   []Claim
 	Focus    []FocusSpan
@@ -780,8 +932,23 @@ func BuildDay(input DayInput) Day {
 		spans := without(perTask[task.ID])
 		perTask[task.ID] = spans
 		counted = append(counted, spans...)
-		day.Tasks = append(day.Tasks, DayTask{ID: task.ID, Title: task.Title, Tracked: len(task.Rules) > 0 || claimed[task.ID], Minutes: round(minutesIn(whole, spans))})
+		item := DayTask{ID: task.ID, Title: task.Title, Tracked: len(task.Rules)+len(task.Related) > 0 || claimed[task.ID], Minutes: round(minutesIn(whole, spans))}
+		// Visits: stretches of attention with no more than a short break between them.
+		visits := 0
+		var last time.Time
+		for _, visit := range spans {
+			if visits == 0 || visit.start.Sub(last) > returnGap {
+				visits++
+			}
+			last = visit.end
+		}
+		if visits > 0 {
+			started := spans[0].start
+			item.StartedAt, item.Returns = &started, visits-1
+		}
+		day.Tasks = append(day.Tasks, item)
 	}
+	c.agentStats(input.Turns, perTask, from, to, day.Tasks)
 	rules := map[int64]bool{}
 	for _, task := range input.Tasks {
 		rules[task.ID] = len(task.Rules) > 0
@@ -828,10 +995,27 @@ type Tracking struct {
 	Task   string     `json:"task,omitempty"`
 	Since  *time.Time `json:"since,omitempty"`
 	// Context is what is on screen: the app or site and, for an agent app,
-	// its project and thread.
-	Context string `json:"context,omitempty"`
+	// its project and thread. LearnContext is what an answer about it would
+	// be remembered as.
+	Context      string `json:"context,omitempty"`
+	LearnContext string `json:"learn_context,omitempty"`
+	// Excused means the owner said this thing is a one-off outside the plan.
+	Excused bool `json:"excused,omitempty"`
+	// AgentRunning means a task's agent is at work, so being elsewhere is
+	// filling a wait.
+	AgentRunning bool `json:"agent_running"`
+	// YourTurn lists the tasks whose agent has stopped and is waiting for
+	// the owner.
+	YourTurn []TurnRef `json:"your_turn"`
 	// Focus is set while a focus session is running.
 	Focus *FocusNow `json:"focus,omitempty"`
+}
+
+// TurnRef is a task whose agent stopped at Since and waits for the owner.
+type TurnRef struct {
+	TaskID int64     `json:"task_id"`
+	Task   string    `json:"task"`
+	Since  time.Time `json:"since"`
 }
 
 // FocusNow is the running focus session and how what is on screen stands
@@ -860,26 +1044,43 @@ type TaskRef struct {
 // Activity older than this is not "now".
 const trackRecent = 3 * time.Minute
 
-// Track reads the Mac's most recent activity in input (up to input.To).
+// Track reads the Mac's most recent activity in input (up to input.To), and
+// which tasks' agents are running or waiting.
 func Track(input DayInput) Tracking {
 	c := newClassifier(input)
+	segments := c.splitAtClaims(input.Result.Segments)
 	var mac []Segment
-	for _, segment := range c.splitAtClaims(input.Result.Segments) {
+	attention := map[int64][]span{}
+	for _, segment := range segments {
 		if segment.Device == DeviceMac {
 			mac = append(mac, segment)
 		}
+		if kind, task := c.classify(segment); kind == KindTask {
+			attention[task] = append(attention[task], span{start: segment.Start, end: segment.End})
+		}
 	}
 	sort.SliceStable(mac, func(i, j int) bool { return mac[i].Start.Before(mac[j].Start) })
-	var focus *FocusNow
+	tasks := make([]DayTask, len(input.Tasks))
+	for i, task := range input.Tasks {
+		tasks[i] = DayTask{ID: task.ID, Title: task.Title}
+		attention[task.ID] = sequential(attention[task.ID])
+	}
+	tracking := Tracking{State: "away", YourTurn: []TurnRef{}}
+	tracking.AgentRunning = c.agentStats(input.Turns, attention, input.From, input.To, tasks)
+	for _, task := range tasks {
+		if task.YourTurnSince != nil {
+			tracking.YourTurn = append(tracking.YourTurn, TurnRef{TaskID: task.ID, Task: task.Title, Since: *task.YourTurnSince})
+		}
+	}
 	if span := c.focusAt(input.To.Add(-time.Nanosecond)); span != nil {
 		info := c.task(span.TaskID)
-		focus = &FocusNow{TaskID: info.ID, Task: info.Title, NextAction: info.NextAction, Since: span.Start, On: "away"}
+		tracking.Focus = &FocusNow{TaskID: info.ID, Task: info.Title, NextAction: info.NextAction, Since: span.Start, On: "away"}
 	}
 	if len(mac) == 0 || input.To.Sub(lastEnd(mac)) > trackRecent {
-		return Tracking{State: "away", Focus: focus}
+		return tracking
 	}
 	last := mac[len(mac)-1]
-	if focus != nil {
+	if focus := tracking.Focus; focus != nil {
 		info := c.task(focus.TaskID)
 		focus.On, focus.Context, focus.LearnContext, focus.Title = c.focusVerdict(info, last), c.contextOf(last), c.learnContext(last), last.Title
 		if focus.On != FocusOn {
@@ -904,9 +1105,14 @@ func Track(input DayInput) Tracking {
 		}
 		since = mac[i].Start
 	}
-	tracking := Tracking{State: kind, Since: &since, Context: c.contextOf(last), Focus: focus}
+	tracking.State, tracking.Since, tracking.Context, tracking.LearnContext = kind, &since, c.contextOf(last), c.learnContext(last)
 	if kind == KindTask {
 		tracking.TaskID, tracking.Task = &task, c.title(task)
+	}
+	for _, claim := range c.claims {
+		if claim.task == nil && claim.context == tracking.Context && !last.Start.Before(claim.start) && last.Start.Before(claim.end) {
+			tracking.Excused = true
+		}
 	}
 	return tracking
 }

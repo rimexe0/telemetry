@@ -72,7 +72,7 @@ func LoadDayInput(ctx context.Context, repository Repository, planDate, from, to
 	if err != nil {
 		return input, nil, err
 	}
-	input.Messages = activity.ThreadMessages(coding)
+	input.Messages, input.Turns = activity.ThreadMessages(coding), activity.AgentTurns(coding)
 	activities, err := repository.ListActivities(ctx, ActivityFilter{Limit: 500})
 	if err != nil {
 		return input, nil, err

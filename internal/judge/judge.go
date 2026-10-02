@@ -105,3 +105,81 @@ func Ask(ctx context.Context, command []string, question Question) (Verdict, err
 	}
 	return Parse(string(output))
 }
+
+// TaskOption is one of the owner's open tasks, as shown to the judge.
+type TaskOption struct {
+	ID      int64
+	Title   string
+	Notes   string
+	Related []string
+}
+
+// Link is the judge's answer to "which task is this part of". TaskID is nil
+// when it is none of them or the judge cannot tell.
+type Link struct {
+	TaskID     *int64 `json:"task_id"`
+	Confidence string `json:"confidence"`
+	Reason     string `json:"reason"`
+}
+
+// LinkPrompt asks which of the owner's tasks, if any, something on screen
+// belongs to. It asks for null unless the match is clear: a wrong link would
+// count unrelated time as work.
+func LinkPrompt(tasks []TaskOption, context, title string) string {
+	lines := []string{
+		"A person has a few tasks for today. Decide which task, if any, the thing on their screen belongs to.",
+		"Only name a task when the match is clear from the names (same project, same subject). Most things belong to no task: then answer null.",
+		"If you are not sure, answer null with confidence \"low\". Never guess.",
+		"",
+		"Tasks:",
+	}
+	for _, task := range tasks {
+		line := fmt.Sprintf("- id %d: %s", task.ID, task.Title)
+		if task.Notes != "" {
+			line += " (" + task.Notes + ")"
+		}
+		if len(task.Related) > 0 {
+			line += " [already known to include: " + strings.Join(task.Related, "; ") + "]"
+		}
+		lines = append(lines, line)
+	}
+	lines = append(lines, "", "On screen: "+context)
+	if title != "" {
+		lines = append(lines, "Window or page title: "+title)
+	}
+	lines = append(lines, "", "Do not use any tools. Answer with exactly one line of JSON and nothing else:",
+		`{"task_id":<id or null>,"confidence":"high|low","reason":"a few words"}`)
+	return strings.Join(lines, "\n")
+}
+
+// ParseLink reads the judge's link from the last JSON line of its output.
+func ParseLink(output string) (Link, error) {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	for index := len(lines) - 1; index >= 0; index-- {
+		line := strings.TrimSpace(lines[index])
+		start, end := strings.Index(line, "{"), strings.LastIndex(line, "}")
+		if start < 0 || end <= start || !strings.Contains(line, "task_id") {
+			continue
+		}
+		var link Link
+		if json.Unmarshal([]byte(line[start:end+1]), &link) != nil {
+			continue
+		}
+		link.Confidence = strings.ToLower(strings.TrimSpace(link.Confidence))
+		return link, nil
+	}
+	return Link{}, errors.New("the judge gave no answer")
+}
+
+// AskLink runs the command with the link prompt as its last argument.
+func AskLink(ctx context.Context, command []string, tasks []TaskOption, onScreen, title string) (Link, error) {
+	if len(command) == 0 {
+		return Link{}, errors.New("no judge command is configured")
+	}
+	arguments := append(append([]string{}, command[1:]...), LinkPrompt(tasks, onScreen, title))
+	output, err := exec.CommandContext(ctx, command[0], arguments...).Output()
+	if err != nil {
+		return Link{}, fmt.Errorf("judge command: %w", err)
+	}
+	return ParseLink(string(output))
+}

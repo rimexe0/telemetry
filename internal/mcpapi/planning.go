@@ -16,6 +16,9 @@ import (
 const planningNotes = "Tasks (the task pool) are what the owner wants to get done; a day plan is a list of time blocks, each optionally tied to a task. " +
 	"A task needs no time block: its time is counted whenever the owner's activity matches its rules (task_rules), so on a day with no fixed times just add the tasks and their rules. " +
 	"Use blocks only for things that have a real time. " +
+	"How to help this owner: the system stands in for executive function that does not work reliably, so carry the remembering, timing and sequencing yourself. " +
+	"Keep a day to one to three things; on a bad day make the plan smaller instead of holding them to it. Give the next smallest concrete step, not the importance of the task. " +
+	"State facts and the way back; never scold, and never ask them to recall what the records already show. A broken plan continues from where it broke. " +
 	"Distractions are closed during blocks tied to a task and during focus blocks. Times are the owner's local time. " +
 	"Draft the plan from the owner's rough description and the task pool, show it, and apply it only after they approve it in the conversation. " +
 	"Every applied change is logged; recent_changes lists it and revert_change undoes it."
@@ -126,7 +129,9 @@ type PlanReviewOutput struct {
 }
 
 const planReviewNotes = "This puts recorded activity next to each planned block; it does not judge whether the plan was followed. " +
-	"tasks lists the time recognised as each open task; a task that is not tracked has no rules yet, so read the apps, sites and coding threads against its title yourself, say when you are unsure, and give it rules. " +
+	"tasks lists each open task: minutes is the owner's own attention on it, agent_minutes its coding agent's runtime, waiting_minutes how long the agent sat stopped until the owner came back, " +
+	"returns how often they came back to it after being elsewhere, and your_turn_since is set while its agent has stopped and waits for them. An agent stopping is not the task being done. " +
+	"Coming back is the thing that matters: report returns and waiting as facts. A task that is not tracked has no rules or memory yet; read the apps, sites and coding threads against its title yourself and give it rules. " +
 	"distraction_minutes is active time on things the owner labelled \"distraction\". no_data_minutes is missing data, never rest or focus. " +
 	"Agent minutes are agent runtime, not the owner's attention. Blocks are observed up to now; upcoming blocks have nothing observed."
 

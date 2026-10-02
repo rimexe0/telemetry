@@ -16,8 +16,9 @@ import (
 // without reaching the server. Past it, a device stops blocking.
 const deviceTimeline = 48 * time.Hour
 
-// trackingWindow is how far back the current-task reading looks.
-const trackingWindow = 45 * time.Minute
+// trackingWindow is how far back the current-task reading looks. It covers a
+// working day, so an agent that stopped hours ago still counts as waiting.
+const trackingWindow = 12 * time.Hour
 
 type deviceTask struct {
 	Title        string `json:"title"`

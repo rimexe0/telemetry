@@ -46,3 +46,28 @@ func TestAskRunsTheCommandWithThePromptLast(t *testing.T) {
 		t.Fatal("a failing command must be an error")
 	}
 }
+
+func TestLinkPromptAndParse(t *testing.T) {
+	prompt := LinkPrompt([]TaskOption{{ID: 3, Title: "Dad's album", Notes: "monthly collage from WhatsApp exports"}, {ID: 4, Title: "Science fair presentation"}},
+		"ChatGPT · WhatsApp Chat - Group · Create July session PDF", "")
+	for _, want := range []string{"- id 3: Dad's album (monthly collage from WhatsApp exports)", "- id 4: Science fair presentation", "On screen: ChatGPT · WhatsApp Chat - Group", "Never guess"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt lacks %q:\n%s", want, prompt)
+		}
+	}
+	link, err := ParseLink(`{"task_id":3,"confidence":"High","reason":"WhatsApp export is the album source"}`)
+	if err != nil || link.TaskID == nil || *link.TaskID != 3 || link.Confidence != "high" {
+		t.Fatalf("link = %+v, %v", link, err)
+	}
+	none, err := ParseLink("sure:\n{\"task_id\":null,\"confidence\":\"low\",\"reason\":\"a file manager\"}")
+	if err != nil || none.TaskID != nil {
+		t.Fatalf("none = %+v, %v", none, err)
+	}
+	if _, err := ParseLink(`{"verdict":"related"}`); err == nil {
+		t.Fatal("an answer without task_id must not parse")
+	}
+	answered, err := AskLink(context.Background(), []string{"sh", "-c", `echo '{"task_id":4,"confidence":"high","reason":"slides"}'`, "judge"}, nil, "Keynote", "")
+	if err != nil || *answered.TaskID != 4 {
+		t.Fatalf("asked = %+v, %v", answered, err)
+	}
+}
