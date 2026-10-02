@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
@@ -85,8 +86,17 @@ fun DayTimeline(view: DayView, now: Instant, names: AppNames, modifier: Modifier
             }
             Lane {
                 view.blocks.forEach { block ->
-                    Stretch(down(block.start), down(block.end) - down(block.start), MaterialTheme.colorScheme.surfaceContainerHighest, block.title, MaterialTheme.colorScheme.onSurface,
-                        Modifier.border(1.dp, MaterialTheme.colorScheme.onSurfaceVariant))
+                    // A block that runs past the day is drawn to the day's end with its
+                    // border closed, and says when it really ends.
+                    val runsOn = block.end.isAfter(end)
+                    val shownEnd = if (runsOn) end else block.end
+                    val until = block.end.atZone(zone)
+                    val footer = if (!runsOn) null else {
+                        val day = if (until.toLocalDate() == end.atZone(zone).toLocalDate()) "tomorrow" else until.dayOfWeek.name.take(3).lowercase().replaceFirstChar { it.uppercase() }
+                        "until $day ${String.format("%02d:%02d", until.hour, until.minute)}"
+                    }
+                    Stretch(down(block.start), down(shownEnd) - down(block.start), MaterialTheme.colorScheme.surfaceContainerHighest, block.title, MaterialTheme.colorScheme.onSurface,
+                        Modifier.border(1.dp, MaterialTheme.colorScheme.onSurfaceVariant), footer)
                 }
             }
             listOf("mac", "phone").forEach { device ->
@@ -109,10 +119,14 @@ private fun RowScope.Lane(content: @Composable BoxScope.() -> Unit) {
 }
 
 @Composable
-private fun Stretch(top: Dp, height: Dp, color: Color, label: String, labelColor: Color, modifier: Modifier) {
+private fun Stretch(top: Dp, height: Dp, color: Color, label: String, labelColor: Color, modifier: Modifier, footer: String? = null) {
     Box(Modifier.offset(y = top).fillMaxWidth().height(height.coerceAtLeast(2.dp)).background(color).then(modifier)) {
         if (height >= LabelFrom) {
             Text(label, style = MaterialTheme.typography.labelSmall, color = labelColor, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp))
+        }
+        if (footer != null && height >= LabelFrom * 2) {
+            Text(footer, style = MaterialTheme.typography.labelSmall, color = labelColor, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.align(Alignment.BottomStart).padding(horizontal = 4.dp, vertical = 2.dp))
         }
     }
 }
