@@ -106,6 +106,8 @@ type Block struct {
 	End   time.Time `json:"end"`
 	Kind  string    `json:"kind"`
 	State string    `json:"state"`
+	// HasTask is false for a focus block that only closes distractions.
+	HasTask bool `json:"has_task,omitempty"`
 }
 
 type Execution struct {

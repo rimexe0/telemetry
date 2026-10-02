@@ -10,7 +10,7 @@ import java.time.ZoneId
 class DayModelTest {
     private val zone = ZoneId.of("Europe/Istanbul")
     private val json = """{"date":"2026-10-01","from":"2026-09-30T21:00:00Z","to":"2026-10-01T10:30:00Z","plan_exists":true,"day":{
-        "blocks":[{"id":1,"title":"Telemetry","start":"2026-10-01T09:00:00Z","end":"2026-10-01T10:00:00Z","state":"planned","closes_distractions":true,"status":"past","tracked":true,"in_plan_minutes":25.5,"distraction_minutes":34.5},
+        "blocks":[{"id":1,"task_id":7,"title":"Telemetry","start":"2026-10-01T09:00:00Z","end":"2026-10-01T10:00:00Z","state":"planned","closes_distractions":true,"status":"past","tracked":true,"in_plan_minutes":25.5,"distraction_minutes":34.5},
                   {"id":2,"title":"Later","start":"2026-10-01T12:00:00Z","end":"2026-10-01T13:00:00Z","state":"planned","closes_distractions":false,"status":"upcoming","in_plan_minutes":0,"distraction_minutes":0}],
         "tasks":[{"id":3,"title":"Dad's album","tracked":true,"minutes":25.5,"agent_minutes":25,"waiting_minutes":30,"your_turn_since":"2026-10-01T10:00:00Z"},{"id":4,"title":"Science fair presentation","tracked":false,"minutes":0}],
         "planned_minutes":120,"in_plan_minutes":25.5,"distraction_minutes":34.5,
@@ -26,6 +26,7 @@ class DayModelTest {
         assertEquals(2, view.blocks.size)
         assertEquals(25.5, view.blocks[0].inPlanMinutes, 0.0)
         assertEquals("upcoming", view.blocks[1].status)
+        assertFalse(view.blocks[0].focusOnly)
         assertEquals(34.5, view.distractionMinutes, 0.0)
         assertEquals(listOf("mac" to 15.0, "phone" to 19.5), view.distractionByDevice)
         assertEquals(DayModel.DISTRACTION, view.chunks[0].kind)

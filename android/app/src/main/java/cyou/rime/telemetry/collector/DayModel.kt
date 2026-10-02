@@ -14,6 +14,8 @@ data class DayBlock(
     val status: String,
     /** The block's task has rules, so [inPlanMinutes] is time on the task itself. */
     val tracked: Boolean,
+    /** A focus block with no task: it only closes distractions and has no time of its own. */
+    val focusOnly: Boolean,
     val inPlanMinutes: Double,
     val distractionMinutes: Double,
 )
@@ -84,7 +86,7 @@ object DayModel {
             to = Instant.parse(root.getString("to")),
             blocks = day.optJSONArray("blocks").each {
                 DayBlock(it.getString("title"), Instant.parse(it.getString("start")), Instant.parse(it.getString("end")), it.getString("status"),
-                    it.optBoolean("tracked"), it.optDouble("in_plan_minutes", 0.0), it.optDouble("distraction_minutes", 0.0))
+                    it.optBoolean("tracked"), it.isNull("task_id") && it.optBoolean("closes_distractions"), it.optDouble("in_plan_minutes", 0.0), it.optDouble("distraction_minutes", 0.0))
             },
             tasks = day.optJSONArray("tasks").each {
                 DayTask(it.optLong("id"), it.getString("title"), it.optBoolean("tracked"), it.optDouble("minutes", 0.0), it.optDouble("agent_minutes", 0.0),
@@ -160,7 +162,10 @@ object DayModel {
         val starts = view.chunks.map { it.start } + view.blocks.map { it.start }
         // A finished day ends at its last activity or block, not at midnight.
         val finished = !view.to.isBefore(view.from.plusSeconds(23 * 3600))
-        val ends = view.blocks.map { it.end } + view.chunks.map { it.end } + (if (finished && view.chunks.isNotEmpty()) emptyList() else listOf(view.to))
+        // A block that only closes distractions, or runs past the day, does not stretch the timeline.
+        val dayEnd = view.from.plusSeconds(24 * 3600)
+        val ends = view.blocks.filter { !it.focusOnly && !it.end.isAfter(dayEnd) }.map { it.end } + view.chunks.map { it.end } +
+            (if (finished && view.chunks.isNotEmpty()) emptyList() else listOf(view.to))
         val first = (starts.minOrNull() ?: view.from).coerceAtLeast(view.from)
         val start = first.atZone(zone).withMinute(0).withSecond(0).withNano(0).toInstant()
         val last = ends.max()

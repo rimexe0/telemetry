@@ -10,7 +10,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -254,7 +253,7 @@ private fun HomeScreen(state: HomeState, days: Map<String, DayView>, onShowDay: 
                     if (state.needsBlocking) Prompt("Blocking is switched off on this phone.", "Turn on", onBlocking)
                 }
                 days[date]?.let { day ->
-                    Plan(day, onPlanner, if (isToday && state.focus == null) onFocus else null)
+                    Plan(day, onPlanner, if (isToday && state.focus == null) onFocus else null, isToday)
                     Totals(day, Modifier.fillMaxWidth().clickable { onDay(date, null) })
                     DayTimeline(day, Instant.now(), names, Modifier.fillMaxWidth(), onChunk = { chunk -> onDay(date, chunk) })
                 }
@@ -318,7 +317,7 @@ private fun Focus(focus: FocusView, onFocus: (String, Long) -> Unit) {
 
 /** Today's blocks and tasks with the time spent on each; opens the planner. */
 @Composable
-private fun Plan(day: DayView, onPlanner: () -> Unit, onFocus: ((String, Long) -> Unit)?) {
+private fun Plan(day: DayView, onPlanner: () -> Unit, onFocus: ((String, Long) -> Unit)?, isToday: Boolean) {
     val zone = ZoneId.systemDefault()
     fun time(at: Instant) = String.format("%02d:%02d", at.atZone(zone).hour, at.atZone(zone).minute)
     Card(
@@ -326,25 +325,31 @@ private fun Plan(day: DayView, onPlanner: () -> Unit, onFocus: ((String, Long) -
         modifier = Modifier.fillMaxWidth().clickable(onClick = onPlanner),
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (day.blocks.isEmpty() && day.tasks.isEmpty()) Text("No plan today", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (day.blocks.isEmpty() && day.tasks.none { isToday || it.minutes >= 1 || it.agentMinutes >= 1 }) {
+                Text(if (isToday) "No plan today" else "No plan that day", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             day.blocks.forEach { block ->
                 val current = block.status == "in_progress"
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("${time(block.start)}–${time(block.end)}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(end = 12.dp))
+                    // A block that ends on another day shows only when it began.
+                    val sameDay = block.end.atZone(zone).toLocalDate() == block.start.atZone(zone).toLocalDate()
+                    Text(if (sameDay) "${time(block.start)}–${time(block.end)}" else "from ${time(block.start)}", style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(end = 12.dp))
                     Text(block.title, fontWeight = if (current) FontWeight.Bold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                     // Dim when the task has no rules: the number is then only time off distractions.
-                    if (block.status != "upcoming") Text(DayModel.clock(block.inPlanMinutes), modifier = Modifier.padding(start = 12.dp),
+                    if (block.status != "upcoming" && !block.focusOnly) Text(DayModel.clock(block.inPlanMinutes), modifier = Modifier.padding(start = 12.dp),
                         color = if (block.tracked) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             // Tasks need no time: each shows the owner's own time on it today. A second
             // line appears only when its agent has something to say.
-            day.tasks.forEach { task ->
+            // An earlier day lists only the tasks that got time that day.
+            day.tasks.filter { isToday || it.minutes >= 1 || it.agentMinutes >= 1 }.forEach { task ->
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(task.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                        if (onFocus != null) TextButton(onClick = { onFocus("start", task.id) }, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("Focus") }
+                        if (onFocus != null) Text("Focus", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.clickable { onFocus("start", task.id) }.padding(horizontal = 10.dp, vertical = 4.dp))
                         Text(if (task.tracked) DayModel.clock(task.minutes) else "—", modifier = Modifier.padding(start = 8.dp),
                             color = if (task.tracked) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
                     }

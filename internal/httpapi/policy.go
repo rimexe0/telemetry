@@ -154,7 +154,8 @@ func (s *Server) policyInputs(ctx context.Context, from, to time.Time) (policy.C
 			if day.Before(alignmentPlanDate(from)) && !blockEnd(block).After(from) {
 				continue
 			}
-			facts.Blocks = append(facts.Blocks, policy.Block{ID: block.ID, Title: block.Title, Start: block.StartTime, End: blockEnd(block), Kind: kind, State: block.State})
+			facts.Blocks = append(facts.Blocks, policy.Block{ID: block.ID, Title: block.Title, Start: block.StartTime, End: blockEnd(block), Kind: kind, State: block.State,
+				HasTask: block.ActivityID != nil})
 		}
 	}
 	openings, err := s.repository.ActiveOpenings(ctx, from)

@@ -83,8 +83,10 @@ func (s *Server) deviceNow(writer http.ResponseWriter, request *http.Request) {
 		}
 	} else {
 		// No session: show the open work block covering now, if exactly known.
+		// A focus block with no task is not a task to start; its reason says
+		// what it does.
 		for _, block := range facts.Blocks {
-			if block.Kind == policy.BlockKindWork && !now.Before(block.Start) && now.Before(block.End) && (block.State == "planned" || block.State == "active") {
+			if block.Kind == policy.BlockKindWork && block.HasTask && !now.Before(block.Start) && now.Before(block.End) && (block.State == "planned" || block.State == "active") {
 				task = &deviceTask{Title: block.Title, State: "not_started", Scheduled: block.Start.Format(time.RFC3339) + "/" + block.End.Format(time.RFC3339)}
 				break
 			}
