@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/rimexe0/telemetry/internal/desktop"
+	"github.com/rimexe0/telemetry/internal/model"
 )
 
 const (
@@ -52,7 +53,9 @@ type Tracker struct {
 	// off-plan notice.
 	turns   map[string]bool
 	offTold time.Time
-	health  Health
+	// host is set by Run; notices are recorded through it.
+	host   *Host
+	health Health
 }
 
 func (*Tracker) Name() string { return "tracker" }
@@ -63,10 +66,49 @@ func (t *Tracker) Status() map[string]any {
 	return status
 }
 
-// Run only waits: the blocker hands over each answer it fetches.
+const trackerGreeted = "tracker:greeted"
+
+// Run only waits: the blocker hands over each answer it fetches. It restores
+// the day already greeted, so a restart does not repeat the day's greeting.
 func (t *Tracker) Run(ctx context.Context, host Host) error {
+	t.mu.Lock()
+	t.host = &host
+	if day, ok, err := host.Queue.LoadCursor(ctx, trackerGreeted); err == nil && ok {
+		t.greeted = day
+	}
+	t.mu.Unlock()
 	<-ctx.Done()
 	return nil
+}
+
+// record keeps every notice and the owner's answer as an observation: what
+// was said, about what, and what they chose. Later this shows which notices
+// bring the owner back and which they ignore.
+func (t *Tracker) record(next notice, options []string, choice int) {
+	t.mu.Lock()
+	host := t.host
+	t.mu.Unlock()
+	if host == nil {
+		return
+	}
+	now := time.Now().UTC()
+	answer := ""
+	if choice >= 0 && choice < len(options) {
+		answer = options[choice]
+	}
+	payload, _ := json.Marshal(map[string]any{"notice": next.kind, "title": next.title, "detail": next.detail, "context": next.context,
+		"task_id": next.task, "options": options, "answer": answer, "answered": choice >= 0})
+	observation := model.Observation{
+		SourceInstanceKey: "telemetry-desktop:" + host.DeviceID + ":notices", SourceKind: "desktop_notice", DeviceID: host.DeviceID,
+		SourceRecordKey: "notice:" + now.Format(time.RFC3339Nano), Kind: "desktop.notice", OccurredAt: now, CollectedAt: now,
+		SourceSchemaVersion: "desktop-notice-1", OriginalPayload: payload,
+	}
+	if observation.Normalize() == nil {
+		host.Queue.Enqueue(context.Background(), observation, now)
+	}
+	if next.kind == "greet" {
+		host.Queue.SaveCursor(context.Background(), trackerGreeted, now.Local().Format("2006-01-02"), now)
+	}
 }
 
 type taskRef struct {
@@ -258,6 +300,13 @@ func (t *Tracker) prompt(title, detail string, options []string, timeout time.Du
 	return desktop.Prompt(title, detail, options, timeout)
 }
 
+// present shows a notice with its buttons and records it with the answer.
+func (t *Tracker) present(next notice, options []string, timeout time.Duration) int {
+	choice := t.prompt(next.title, next.detail, options, timeout)
+	t.record(next, options, choice)
+	return choice
+}
+
 func (t *Tracker) show(next notice, onScreen string) {
 	var err error
 	switch next.kind {
@@ -271,18 +320,18 @@ func (t *Tracker) show(next notice, onScreen string) {
 		for _, option := range options {
 			titles = append(titles, "Focus: "+option.Title)
 		}
-		if choice := t.prompt(next.title, next.detail, append(titles, "OK"), 30*time.Second); choice >= 0 && choice < len(options) {
+		if choice := t.present(next, append(titles, "OK"), 30*time.Second); choice >= 0 && choice < len(options) {
 			err = t.post("/v1/device/focus", map[string]any{"action": "start", "task_id": options[choice].ID})
 		}
 	case "tell":
 		// "Wrong" lets the owner say what it is; no answer means it was right.
-		if t.prompt(next.title, next.detail, []string{"Wrong"}, 8*time.Second) == 0 {
+		if t.present(next, []string{"Wrong"}, 8*time.Second) == 0 {
 			err = t.correct(next)
 		}
 	case "turn":
-		t.prompt(next.title, next.detail, []string{"OK"}, 20*time.Second)
+		t.present(next, []string{"OK"}, 20*time.Second)
 	case "off":
-		switch t.prompt(next.title, next.detail, []string{"OK", "It's part of…", "One-off"}, 30*time.Second) {
+		switch t.present(next, []string{"OK", "It's part of…", "One-off"}, 30*time.Second) {
 		case 1:
 			err = t.remember(next.options, next.context, next.learn)
 		case 2:
@@ -291,9 +340,11 @@ func (t *Tracker) show(next notice, onScreen string) {
 			err = t.post("/v1/device/claims", map[string]any{"task_id": nil, "context": next.context})
 		}
 	case "ask":
-		err = t.answer(*next.focus, t.prompt(next.title, next.detail, []string{"Yes", "Just this time", "No"}, time.Minute))
+		next.context, next.task = next.focus.Context, next.focus.TaskID
+		err = t.answer(*next.focus, t.present(next, []string{"Yes", "Just this time", "No"}, time.Minute))
 	case "back":
-		switch t.prompt(next.title, next.detail, []string{"OK", "It's part of it", "Just this time", "Pause focus"}, 30*time.Second) {
+		next.context, next.task = next.focus.Context, next.focus.TaskID
+		switch t.present(next, []string{"OK", "It's part of it", "Just this time", "Pause focus"}, 30*time.Second) {
 		case 1:
 			err = t.answer(*next.focus, 0)
 		case 2:

@@ -373,6 +373,23 @@ func TestScheduleToolsSetTimesAndOpenForAPurpose(t *testing.T) {
 	}
 }
 
+func TestTaskPatternsToolValidates(t *testing.T) {
+	session := connectPlanning(t, &planningRepository{}, time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC))
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "task_patterns", Arguments: map[string]any{"days": 3}})
+	if err != nil || result.IsError {
+		t.Fatalf("task_patterns = %+v, %v", result, err)
+	}
+	encoded, _ := json.Marshal(result.StructuredContent)
+	var output TaskPatternsOutput
+	json.Unmarshal(encoded, &output)
+	if output.From != "2026-09-30" || output.To != "2026-10-02" {
+		t.Fatalf("range = %s", encoded)
+	}
+	if bad, _ := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "task_patterns", Arguments: map[string]any{"days": 60}}); !bad.IsError {
+		t.Fatal("too many days must be refused")
+	}
+}
+
 func TestFocusAndMemoryToolsValidate(t *testing.T) {
 	session := connectPlanning(t, &planningRepository{}, time.Now())
 	for name, arguments := range map[string]map[string]any{
@@ -434,6 +451,7 @@ func connectPlanning(t *testing.T, repository store.Repository, now time.Time) *
 	addRuleTools(server, repository)
 	addScheduleTools(server, repository, func() time.Time { return now })
 	addFocusTools(server, repository)
+	addPatternTools(server, repository, func() time.Time { return now })
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(context.Background(), serverTransport, nil); err != nil {
 		t.Fatal(err)
