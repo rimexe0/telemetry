@@ -227,7 +227,7 @@ func morningFacts(ctx context.Context, repository store.Repository, config polic
 	case plan == nil:
 		lines = append(lines, "Today has no plan yet.")
 	default:
-		lines = append(lines, fmt.Sprintf("Today already has a plan with %d blocks.", len(plan.Blocks)))
+		lines = append(lines, "Today already has a plan:")
 		for _, block := range plan.Blocks {
 			lines = append(lines, "- "+block.StartTime.In(location).Format("15:04")+" "+block.Title)
 		}
@@ -250,9 +250,13 @@ func offPlan(ctx context.Context, repository store.Repository, config policy.Con
 	day, tracking := activity.BuildDay(input), activity.Track(input)
 	stretch := outreach.Stretch{Excused: tracking.Excused, AgentRunning: tracking.AgentRunning, OpenTasks: len(input.Tasks), Away: true,
 		Leisure: policy.DistractionTime(config, now)}
-	on := map[string]float64{}
+	on, active := map[string]float64{}, map[string]float64{}
 	for _, chunk := range day.Chunks {
-		stretch.Active += time.Duration(chunk.ActiveMinutes * float64(time.Minute))
+		// Two devices in use at once are one stretch of time, not two.
+		active[chunk.Device] += chunk.ActiveMinutes
+		if used := time.Duration(active[chunk.Device] * float64(time.Minute)); used > stretch.Active {
+			stretch.Active = used
+		}
 		stretch.OnTasks += time.Duration(chunk.TaskMinutes * float64(time.Minute))
 		// Away means on no device, not only away from the Mac.
 		if now.Sub(chunk.End) <= 5*time.Minute {
@@ -263,8 +267,8 @@ func offPlan(ctx context.Context, repository store.Repository, config policy.Con
 			if item.Detail != "" {
 				name += " · " + item.Detail
 			}
-			if item.Label != "" {
-				name += " (" + item.Label + ")"
+			if item.Label == policy.LabelDistraction {
+				name += " (distraction)"
 			}
 			on[chunk.Device+": "+name] += item.Minutes
 		}
@@ -287,8 +291,8 @@ func offPlan(ctx context.Context, repository store.Repository, config policy.Con
 	sort.Slice(names, func(i, j int) bool {
 		return on[names[i]] > on[names[j]] || (on[names[i]] == on[names[j]] && names[i] < names[j])
 	})
-	lines := []string{fmt.Sprintf("Now %s. In the last %d minutes: %s at devices, none of it on today's tasks.", now.In(location).Format("15:04"),
-		int(outreach.OffPlanWindow.Minutes()), minutes(stretch.Active.Minutes()))}
+	lines := []string{fmt.Sprintf("Now %s. In the last %d minutes: %s on the Mac, %s on the phone, %s of it on today's tasks.", now.In(location).Format("15:04"),
+		int(outreach.OffPlanWindow.Minutes()), minutes(active[activity.DeviceMac]), minutes(active[activity.DevicePhone]), minutes(stretch.OnTasks.Minutes()))}
 	for i, name := range names {
 		if i == 4 {
 			break
@@ -306,4 +310,45 @@ func offPlan(ctx context.Context, repository store.Repository, config policy.Con
 	lines = append(lines, "Open tasks:")
 	lines = append(lines, taskLines(input.Tasks)...)
 	return stretch, strings.Join(lines, "\n"), nil
+}
+
+// previewOutreach prints what both messages would be written from right
+// now, and their wording when a compose command is given. It sends and
+// stores nothing.
+func previewOutreach(ctx context.Context, repository store.Repository, compose []string) error {
+	now := time.Now().UTC()
+	config, location, err := outreachConfig(ctx, repository)
+	if err != nil {
+		return err
+	}
+	wake, err := store.LoadWakeTime(ctx, repository, now)
+	if err != nil {
+		return err
+	}
+	if wake == nil {
+		fmt.Println("Woke: not shown by the records.")
+		wake = &now
+	} else {
+		fmt.Println("Woke:", wake.In(location).Format("2006-01-02 15:04"))
+	}
+	morning, err := morningFacts(ctx, repository, config, location, *wake, now)
+	if err != nil {
+		return err
+	}
+	stretch, off, err := offPlan(ctx, repository, config, location, now)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("\nMorning facts:\n%s\n\nOff-plan stretch: %+v, due without the cap: %v\nOff-plan facts:\n%s\n", morning, stretch, outreach.OffPlanDue(now, stretch, nil), off)
+	if len(compose) == 0 {
+		return nil
+	}
+	for name, prompt := range map[string]string{"Morning": outreach.MorningPrompt(morning), "Off-plan": outreach.OffPlanPrompt(off)} {
+		answer, err := outreach.Compose(ctx, compose, prompt)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("\n%s message:\n%s\n", name, answer)
+	}
+	return nil
 }

@@ -37,6 +37,7 @@ func main() {
 		panelDir          = flag.String("panel-dir", os.Getenv("TELEMETRY_PANEL_DIR"), "SvelteKit static build directory")
 		panelCookieSecure = flag.Bool("panel-cookie-secure", envBool("TELEMETRY_PANEL_COOKIE_SECURE", true), "mark panel session cookies secure")
 		migrate           = flag.Bool("migrate", false, "apply embedded migrations and exit")
+		outreachPreview   = flag.Bool("outreach-preview", false, "print what would be written to the owner now, send nothing, and exit")
 	)
 	flag.Parse()
 	ingestDeviceTokens := tokenMapEnv("TELEMETRY_INGEST_DEVICE_TOKENS")
@@ -63,6 +64,12 @@ func main() {
 			log.Fatal(err)
 		}
 		fmt.Println("migrations applied")
+		return
+	}
+	if *outreachPreview {
+		if err := previewOutreach(context, database, strings.Fields(os.Getenv("TELEMETRY_OUTREACH_COMPOSE_COMMAND"))); err != nil {
+			log.Fatal(err)
+		}
 		return
 	}
 	clerkKey := os.Getenv("TELEMETRY_CLERK_PUBLISHABLE_KEY")
