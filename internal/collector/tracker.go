@@ -14,9 +14,10 @@ import (
 )
 
 // Tracker tells the owner, at this computer, which task the system thinks
-// they are on, and asks when it cannot tell. Nothing here depends on the
-// owner remembering to start anything: it reads the server's view each time
-// the blocker fetches it.
+// they are on, and lets them say when that is wrong. It does not ask what
+// they are doing: the owner does several things at once, and what is on
+// screen is named by the server from its own records. Nothing here depends
+// on the owner remembering to start anything.
 type Tracker struct {
 	Credentials *Credentials
 	HTTP        *http.Client
@@ -26,7 +27,6 @@ type Tracker struct {
 	mu      sync.Mutex
 	busy    bool
 	told    int64
-	asked   time.Time
 	greeted string
 	health  Health
 }
@@ -52,27 +52,26 @@ type taskRef struct {
 
 type trackingNow struct {
 	Tracking struct {
-		State      string     `json:"state"`
-		TaskID     *int64     `json:"task_id"`
-		Task       string     `json:"task"`
-		Since      *time.Time `json:"since"`
-		Context    string     `json:"context"`
-		Candidates []taskRef  `json:"candidates"`
+		State   string     `json:"state"`
+		TaskID  *int64     `json:"task_id"`
+		Task    string     `json:"task"`
+		Since   *time.Time `json:"since"`
+		Context string     `json:"context"`
 	} `json:"tracking"`
 	Tasks []taskRef `json:"tasks"`
 }
 
 // notice is what to show the owner now, if anything.
 type notice struct {
-	kind    string // "greet", "tell" or "ask"
+	kind    string // "greet" or "tell"
 	title   string
 	detail  string
 	options []taskRef
 }
 
 // decide picks at most one notice and remembers that it was given, so each
-// is shown once: the day's tasks at the first sit-down, a task when it is
-// first recognised, and one question per stretch of unrecognised work.
+// is shown once: the day's tasks at the first sit-down, and a task when it
+// is first recognised or recognised again after another.
 func (t *Tracker) decide(now trackingNow, at time.Time) *notice {
 	tracking := now.Tracking
 	if tracking.State == "" || tracking.State == "away" {
@@ -87,17 +86,9 @@ func (t *Tracker) decide(now trackingNow, at time.Time) *notice {
 		// The greeting names the tasks; what is on right now follows next time.
 		return &notice{kind: "greet", title: "Today", detail: strings.Join(titles, " · ")}
 	}
-	switch tracking.State {
-	case "task":
-		if tracking.TaskID != nil && *tracking.TaskID != t.told {
-			t.told = *tracking.TaskID
-			return &notice{kind: "tell", title: "Tracking: " + tracking.Task, options: now.Tasks}
-		}
-	case "unclear":
-		if tracking.Since != nil && !tracking.Since.Equal(t.asked) && len(tracking.Candidates) > 0 {
-			t.asked = *tracking.Since
-			return &notice{kind: "ask", title: "What are you working on?", detail: tracking.Context, options: tracking.Candidates}
-		}
+	if tracking.State == "task" && tracking.TaskID != nil && *tracking.TaskID != t.told {
+		t.told = *tracking.TaskID
+		return &notice{kind: "tell", title: "Tracking: " + tracking.Task, detail: tracking.Context, options: now.Tasks}
 	}
 	return nil
 }
@@ -141,12 +132,10 @@ func (t *Tracker) show(next notice, onScreen string) {
 	case "greet":
 		prompt(next.title, next.detail, []string{"OK"}, 20*time.Second)
 	case "tell":
-		// "Wrong" leads to the question; no answer means it was right.
-		if prompt(next.title, "", []string{"Wrong"}, 8*time.Second) == 0 {
-			t.ask(notice{title: "What are you working on?", detail: onScreen, options: next.options}, onScreen)
+		// "Wrong" lets the owner say what it is; no answer means it was right.
+		if prompt(next.title, next.detail, []string{"Wrong"}, 8*time.Second) == 0 {
+			t.ask(notice{title: "What is this part of?", detail: onScreen, options: next.options}, onScreen)
 		}
-	case "ask":
-		t.ask(next, onScreen)
 	}
 }
 
@@ -163,7 +152,8 @@ func (t *Tracker) ask(next notice, onScreen string) {
 	for _, option := range options {
 		titles = append(titles, option.Title)
 	}
-	choice := prompt(next.title, next.detail, append(titles, "Not work"), time.Minute)
+	// The last option needs no explanation: it is simply not one of the tasks.
+	choice := prompt(next.title, next.detail, append(titles, "Something else"), time.Minute)
 	if choice < 0 {
 		return
 	}

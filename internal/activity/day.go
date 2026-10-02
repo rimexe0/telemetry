@@ -22,8 +22,11 @@ const (
 	threadReach = 15 * time.Minute
 )
 
-// ThreadMessage is one message the owner sent in a T3 Code thread.
+// ThreadMessage is one message the owner sent to a coding agent, in a T3
+// Code thread or a Codex thread of the ChatGPT app.
 type ThreadMessage struct {
+	// Tool is "t3" or "codex".
+	Tool    string
 	At      time.Time
 	Thread  string
 	Project string
@@ -60,8 +63,9 @@ func onTask(segment Segment, root string, rules []TaskRule) bool {
 	return false
 }
 
-// ThreadMessages lists the owner's T3 messages from every collector machine,
-// in time order. A message is the only record of which thread was in use.
+// ThreadMessages lists the owner's messages to coding agents from every
+// collector machine, in time order. A message is the only record of which
+// thread was in use.
 func ThreadMessages(coding []Record) []ThreadMessage {
 	projects, threads := map[string][2]string{}, map[string][2]string{}
 	for _, record := range coding {
@@ -84,6 +88,25 @@ func ThreadMessages(coding []Record) []ThreadMessage {
 	}
 	messages := []ThreadMessage{}
 	for _, record := range coding {
+		if strings.Contains(record.Source, "aw-watcher-codex") {
+			// A Codex turn starts when the owner sends a message.
+			var event struct {
+				Data struct {
+					Stream     string `json:"event_stream"`
+					Title      string `json:"chat_title"`
+					Path       string `json:"project_path"`
+					IsSubagent bool   `json:"is_subagent"`
+				} `json:"data"`
+			}
+			if json.Unmarshal(record.Payload, &event) == nil && event.Data.Stream == "codex.turn" && !event.Data.IsSubagent {
+				project := event.Data.Path
+				if index := strings.LastIndex(strings.TrimRight(project, "/"), "/"); index >= 0 {
+					project = strings.TrimRight(project, "/")[index+1:]
+				}
+				messages = append(messages, ThreadMessage{Tool: "codex", At: record.Start.UTC(), Thread: event.Data.Title, Project: project, Root: event.Data.Path})
+			}
+			continue
+		}
 		if record.Kind != "t3.turn" {
 			continue
 		}
@@ -97,25 +120,40 @@ func ThreadMessages(coding []Record) []ThreadMessage {
 			continue
 		}
 		project := projects[record.Source+"\x00"+thread[1]]
-		messages = append(messages, ThreadMessage{At: at.UTC(), Thread: thread[0], Project: project[0], Root: project[1]})
+		messages = append(messages, ThreadMessage{Tool: "t3", At: at.UTC(), Thread: thread[0], Project: project[0], Root: project[1]})
 	}
 	sort.SliceStable(messages, func(i, j int) bool { return messages[i].At.Before(messages[j].At) })
 	return messages
 }
 
-func isT3(app string) bool {
-	return strings.HasPrefix(app, "T3 Code") || strings.HasPrefix(app, "com.t3tools.")
+// agentTool names the coding-agent tool an app is: "t3" for T3 Code, "codex"
+// for the ChatGPT app on the Mac (its Codex threads), or none.
+func agentTool(app string) string {
+	switch {
+	case strings.HasPrefix(app, "T3 Code") || strings.HasPrefix(app, "com.t3tools."):
+		return "t3"
+	case app == "ChatGPT" || app == "Codex":
+		return "codex"
+	}
+	return ""
 }
 
-// threadFor names the thread a stretch of T3 Code time most likely belongs
-// to: the one with the message sent closest to it. Empty when no message is
-// near, because then nothing shows which thread was open. It also returns
-// that thread's project folder.
+// threadFor names the thread a stretch of time in an agent app most likely
+// belongs to: the one with the message sent closest to it in that tool.
+// Empty when no message is near, because then nothing shows which thread was
+// open. It also returns that thread's project folder.
 func threadFor(segment Segment, messages []ThreadMessage) (string, string) {
+	tool := agentTool(segment.App)
+	if tool == "" {
+		return "", ""
+	}
 	best, root, bestDistance := "", "", threadReach+1
 	index := sort.Search(len(messages), func(i int) bool { return !messages[i].At.Before(segment.Start.Add(-threadReach)) })
 	for ; index < len(messages) && !messages[index].At.After(segment.End.Add(threadReach)); index++ {
 		message := messages[index]
+		if message.Tool != tool {
+			continue
+		}
 		distance := time.Duration(0)
 		if message.At.Before(segment.Start) {
 			distance = segment.Start.Sub(message.At)
@@ -230,9 +268,10 @@ type TaskInfo struct {
 	Rules []TaskRule
 }
 
-// Claim is the owner's own answer to "what are you working on": from Start,
-// time at the Mac goes to that task, or to none when TaskID is nil. It holds
-// while they stay at the Mac and until the next claim.
+// Claim is the owner's own word about a stretch at the Mac, from Start while
+// they stay there and until the next claim: a task (TaskID), or something
+// that is not on the plan (TaskID nil). It only settles time that no rule
+// decides; time the rules recognise keeps its own task.
 type Claim struct {
 	TaskID *int64
 	Start  time.Time
@@ -340,10 +379,7 @@ func (c classifier) title(id int64) string {
 
 // matches lists the tasks whose rules a segment meets.
 func (c classifier) matches(segment Segment) []int64 {
-	root := ""
-	if isT3(segment.App) {
-		_, root = threadFor(segment, c.messages)
-	}
+	_, root := threadFor(segment, c.messages)
 	ids := []int64{}
 	for _, task := range c.tasks {
 		if onTask(segment, root, task.Rules) {
@@ -354,22 +390,13 @@ func (c classifier) matches(segment Segment) []int64 {
 }
 
 // classify returns a segment's kind and, for task time, the task. The order
-// is: a distraction is always a distraction; then the owner's own claim;
-// then the planned block's task; then the one task whose rules match. Time
-// that matches several tasks with nothing to choose between them is "other".
+// is: a distraction is always a distraction; then the planned block's task;
+// then the one task whose rules match; then, for time no rule decides, the
+// owner's own claim. The owner does several things at once, so one answer
+// never overrides what the rules recognise.
 func (c classifier) classify(segment Segment) (string, int64) {
 	if LabelFor(c.labels, segment) == Distraction {
 		return KindDistraction, 0
-	}
-	if segment.Device == DeviceMac {
-		for _, claim := range c.claims {
-			if !segment.Start.Before(claim.start) && segment.Start.Before(claim.end) {
-				if claim.task == nil {
-					return KindOther, 0
-				}
-				return KindTask, *claim.task
-			}
-		}
 	}
 	matched := c.matches(segment)
 	for _, block := range c.blocks {
@@ -385,7 +412,27 @@ func (c classifier) classify(segment Segment) (string, int64) {
 	if len(matched) == 1 {
 		return KindTask, matched[0]
 	}
+	if segment.Device == DeviceMac {
+		for _, claim := range c.claims {
+			if !segment.Start.Before(claim.start) && segment.Start.Before(claim.end) {
+				// Several matching tasks: the claim chooses only among them.
+				if claim.task == nil || (len(matched) > 1 && !contains(matched, *claim.task)) {
+					return KindOther, 0
+				}
+				return KindTask, *claim.task
+			}
+		}
+	}
 	return KindOther, 0
+}
+
+func contains(ids []int64, id int64) bool {
+	for _, item := range ids {
+		if item == id {
+			return true
+		}
+	}
+	return false
 }
 
 // chunks compresses one device's ordered segments.
@@ -459,10 +506,7 @@ func chunkOf(device string, segments []Segment, c classifier, withSegments bool)
 			chunk.TaskMinutes += minutes
 			perTask[task] += minutes
 		}
-		detail := ""
-		if isT3(segment.App) {
-			detail, _ = threadFor(segment, c.messages)
-		}
+		detail, _ := threadFor(segment, c.messages)
 		key := name + "\x00" + detail
 		if items[key] == nil {
 			items[key] = &DayItem{Name: name, Detail: detail, Label: label}
@@ -611,19 +655,18 @@ func BuildDay(input DayInput) Day {
 	return day
 }
 
-// Tracking is what the owner is on at the Mac right now, for the notice
-// that tells them what is being tracked or asks when that is unclear.
+// Tracking is what the owner is on at the Mac right now, so a device can
+// tell them what is being tracked.
 type Tracking struct {
-	// State is "away" (nothing recent on the Mac), "distraction", "task",
-	// "unclear" (working on something no task claims) or "other".
+	// State is "away" (nothing recent on the Mac), "distraction", "task" or
+	// "other" (something that is not one of the open tasks).
 	State  string     `json:"state"`
 	TaskID *int64     `json:"task_id,omitempty"`
 	Task   string     `json:"task,omitempty"`
 	Since  *time.Time `json:"since,omitempty"`
-	// Context is what is on screen, for the question.
+	// Context is what is on screen: the app or site and, for an agent app,
+	// its project and thread.
 	Context string `json:"context,omitempty"`
-	// Candidates are the tasks to offer when unclear.
-	Candidates []TaskRef `json:"candidates,omitempty"`
 }
 
 type TaskRef struct {
@@ -631,13 +674,8 @@ type TaskRef struct {
 	Title string `json:"title"`
 }
 
-const (
-	// The owner asked to be recognised as soon as they start; this much
-	// unrecognised work at the Mac raises the question.
-	askAfter = 2 * time.Minute
-	// Activity older than this is not "now".
-	trackRecent = 3 * time.Minute
-)
+// Activity older than this is not "now".
+const trackRecent = 3 * time.Minute
 
 // Track reads the Mac's most recent activity in input (up to input.To).
 func Track(input DayInput) Tracking {
@@ -655,7 +693,6 @@ func Track(input DayInput) Tracking {
 	last := mac[len(mac)-1]
 	kind, task := c.classify(last)
 	// The run of the same kind and task leading up to now.
-	var active time.Duration
 	since := last.Start
 	for i := len(mac) - 1; i >= 0; i-- {
 		otherKind, otherTask := c.classify(mac[i])
@@ -663,37 +700,13 @@ func Track(input DayInput) Tracking {
 			break
 		}
 		since = mac[i].Start
-		active += mac[i].Duration()
 	}
-	switch kind {
-	case KindDistraction:
-		return Tracking{State: KindDistraction}
-	case KindTask:
-		return Tracking{State: KindTask, TaskID: &task, Task: c.title(task), Since: &since}
+	tracking := Tracking{State: kind, Since: &since, Context: segmentName(last)}
+	if detail, _ := threadFor(last, c.messages); detail != "" {
+		tracking.Context += " · " + detail
 	}
-	for _, claim := range c.claims {
-		if claim.task == nil && !last.Start.Before(claim.start) && last.Start.Before(claim.end) {
-			return Tracking{State: KindOther}
-		}
-	}
-	if active < askAfter || len(input.Tasks) == 0 {
-		return Tracking{State: KindOther}
-	}
-	tracking := Tracking{State: "unclear", Since: &since, Context: segmentName(last)}
-	if isT3(last.App) {
-		if detail, _ := threadFor(last, c.messages); detail != "" {
-			tracking.Context += " · " + detail
-		}
-	}
-	// Offer the tasks that match when several do, otherwise every open task.
-	offered := map[int64]bool{}
-	for _, id := range c.matches(last) {
-		offered[id] = true
-	}
-	for _, item := range input.Tasks {
-		if len(offered) == 0 || offered[item.ID] {
-			tracking.Candidates = append(tracking.Candidates, TaskRef{ID: item.ID, Title: item.Title})
-		}
+	if kind == KindTask {
+		tracking.TaskID, tracking.Task = &task, c.title(task)
 	}
 	return tracking
 }

@@ -178,37 +178,48 @@ func TestTasksAreTrackedWithoutBlocksAndClaimsSettleWhatRulesCannot(t *testing.T
 		t.Fatalf("claimed = %+v", earlier.Tasks)
 	}
 	notWork := BuildDay(DayInput{Result: result, Tasks: tasks, Claims: []Claim{{Start: at(13, 59)}}, From: at(0, 0), To: at(17, 0)})
-	if notWork.Tasks[0].Minutes != 0 || notWork.Tasks[1].Minutes != 0 {
-		t.Fatalf("\"not work\" holds for the sitting: %+v", notWork.Tasks)
+	// "Not on the plan" settles only what no rule decides: recognised time keeps its task.
+	if notWork.Tasks[0].Minutes != 30 || notWork.Tasks[1].Minutes != 20 {
+		t.Fatalf("a claim must not override the rules: %+v", notWork.Tasks)
+	}
+	// Nor does a claim for one task swallow time the rules give to another.
+	swallow := BuildDay(DayInput{Result: result, Tasks: tasks, Claims: []Claim{{TaskID: &album, Start: at(13, 59)}}, From: at(0, 0), To: at(17, 0)})
+	if swallow.Tasks[0].Minutes != 50 || swallow.Tasks[1].Minutes != 20 {
+		t.Fatalf("one answer must not swallow other tasks: %+v", swallow.Tasks)
 	}
 }
 
-func TestTrackTellsWhatIsOnAndAsksOnlyWhenItCannotTell(t *testing.T) {
+func TestTrackNamesWhatIsOnTheMac(t *testing.T) {
 	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
 	album, slides := int64(3), int64(4)
 	tasks := []TaskInfo{
-		{ID: album, Title: "Dad's album", Rules: []TaskRule{{Signal: "app", Pattern: "T3 Code (Nightly)"}}},
+		{ID: album, Title: "Dad's album", Rules: []TaskRule{{Signal: "path_prefix", Pattern: "/Users/ri/Downloads/WhatsApp Chat - Group"}}},
 		{ID: slides, Title: "Science fair presentation"},
 	}
+	messages := ThreadMessages([]Record{
+		{Source: "activitywatch:mac:aw-watcher-codex_derived_x", Kind: "activitywatch.event", Start: at(14, 5),
+			Payload: []byte(`{"data":{"event_stream":"codex.turn","chat_title":"Create July session PDF","project_path":"/Users/ri/Downloads/WhatsApp Chat - Group"}}`)},
+		{Source: "t3:mac:env", Kind: "t3.project", Payload: []byte(`{"project_id":"p","title":"Telemetry","workspace_root":"/Users/ri/code/personal/Telemetry"}`)},
+		{Source: "t3:mac:env", Kind: "t3.thread", Payload: []byte(`{"thread_id":"a","project_id":"p","title":"Clarify next steps"}`)},
+		{Source: "t3:mac:env", Kind: "t3.turn", Payload: []byte(`{"thread_id":"a","requested_at":"2026-10-02T14:20:00Z"}`)},
+	})
 	mac := func(app string, from, to time.Time) Segment {
 		return Segment{Device: DeviceMac, App: app, Start: from, End: to}
 	}
 	track := func(to time.Time, claims []Claim, segments ...Segment) Tracking {
-		return Track(DayInput{Result: Result{Segments: segments}, Tasks: tasks, Claims: claims, From: at(0, 0), To: to})
+		return Track(DayInput{Result: Result{Segments: segments}, Tasks: tasks, Messages: messages, Claims: claims, From: at(0, 0), To: to})
 	}
-	if got := track(at(14, 10), nil, mac("T3 Code (Nightly)", at(14, 0), at(14, 10))); got.State != KindTask || *got.TaskID != album || got.Task != "Dad's album" || !got.Since.Equal(at(14, 0)) {
-		t.Fatalf("recognised = %+v", got)
+	// The ChatGPT app is the album: its Codex thread works in the album's folder.
+	if got := track(at(14, 10), nil, mac("ChatGPT", at(14, 0), at(14, 10))); got.State != KindTask || *got.TaskID != album ||
+		got.Context != "ChatGPT · WhatsApp Chat - Group · Create July session PDF" || !got.Since.Equal(at(14, 0)) {
+		t.Fatalf("codex thread = %+v", got)
 	}
-	if got := track(at(14, 1), nil, mac("Keynote", at(14, 0), at(14, 1))); got.State != KindOther {
-		t.Fatalf("a minute of something else is not asked about yet: %+v", got)
+	// A T3 thread in another project is named as itself and is no task; nobody is asked.
+	other := track(at(14, 25), nil, mac("T3 Code (Nightly)", at(14, 15), at(14, 25)))
+	if other.State != KindOther || other.Context != "T3 Code (Nightly) · Telemetry · Clarify next steps" {
+		t.Fatalf("off-plan project = %+v", other)
 	}
-	unclear := track(at(14, 3), nil, mac("Keynote", at(14, 0), at(14, 3)))
-	if unclear.State != "unclear" || unclear.Context != "Keynote" || len(unclear.Candidates) != 2 {
-		t.Fatalf("unclear = %+v", unclear)
-	}
-	if got := track(at(14, 3), []Claim{{Start: at(14, 2)}}, mac("Keynote", at(14, 0), at(14, 3))); got.State != KindOther {
-		t.Fatalf("after \"not work\" it does not ask again: %+v", got)
-	}
+	// The owner's word settles what no rule decides, here and now.
 	if got := track(at(14, 3), []Claim{{TaskID: &slides, Start: at(14, 2)}}, mac("Keynote", at(14, 0), at(14, 3))); got.State != KindTask || *got.TaskID != slides {
 		t.Fatalf("after a claim it tracks that task: %+v", got)
 	}

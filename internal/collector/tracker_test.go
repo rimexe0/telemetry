@@ -9,10 +9,10 @@ import (
 	"time"
 )
 
-func trackingBody(state string, task int64, title, context string, since time.Time, candidates ...taskRef) trackingNow {
+func trackingBody(state string, task int64, title, context string, since time.Time) trackingNow {
 	var now trackingNow
 	now.Tasks = []taskRef{{3, "Dad's album"}, {4, "Science fair presentation"}}
-	now.Tracking.State, now.Tracking.Task, now.Tracking.Context, now.Tracking.Candidates = state, title, context, candidates
+	now.Tracking.State, now.Tracking.Task, now.Tracking.Context = state, title, context
 	if task != 0 {
 		now.Tracking.TaskID = &task
 	}
@@ -47,14 +47,9 @@ func TestTrackerShowsEachNoticeOnce(t *testing.T) {
 	if got := tracker.decide(trackingBody("task", 4, "Science fair presentation", "", morning), morning.Add(4*time.Minute)); got == nil || got.kind != "tell" {
 		t.Fatalf("a different task must be told: %+v", got)
 	}
-	// Unrecognised work is asked about once per stretch.
-	since := morning.Add(10 * time.Minute)
-	ask := tracker.decide(trackingBody("unclear", 0, "", "Keynote", since, taskRef{3, "Dad's album"}, taskRef{4, "Science fair presentation"}), since.Add(2*time.Minute))
-	if ask == nil || ask.kind != "ask" || ask.detail != "Keynote" || len(ask.options) != 2 {
-		t.Fatalf("ask = %+v", ask)
-	}
-	if got := tracker.decide(trackingBody("unclear", 0, "", "Keynote", since, taskRef{3, "Dad's album"}), since.Add(3*time.Minute)); got != nil {
-		t.Fatalf("asked twice about one stretch: %+v", got)
+	// Work that is no task is named by the server and never asked about.
+	if got := tracker.decide(trackingBody("other", 0, "", "T3 Code (Nightly) · Telemetry · Clarify next steps", morning), morning.Add(10*time.Minute)); got != nil {
+		t.Fatalf("off-plan work must not raise a question: %+v", got)
 	}
 	// The next day greets again.
 	if got := tracker.decide(trackingBody("other", 0, "", "", time.Time{}), morning.Add(24*time.Hour)); got == nil || got.kind != "greet" {
@@ -75,7 +70,7 @@ func TestTrackerRecordsTheAnswer(t *testing.T) {
 	}))
 	defer server.Close()
 	shown := []string{}
-	answers := []int{1}
+	answers := []int{}
 	tracker := &Tracker{Credentials: &Credentials{BaseURL: server.URL, DeviceID: "mac-1", Secret: "secret"},
 		Prompt: func(title, detail string, options []string, _ time.Duration) int {
 			shown = append(shown, title)
@@ -84,14 +79,16 @@ func TestTrackerRecordsTheAnswer(t *testing.T) {
 			return answer
 		}}
 	options := []taskRef{{3, "Dad's album"}, {4, "Science fair presentation"}}
-	tracker.show(notice{kind: "ask", title: "What are you working on?", detail: "Keynote", options: options}, "Keynote")
+	// "Wrong" on a told task lets the owner pick the right one.
+	answers = []int{0, 1}
+	tracker.show(notice{kind: "tell", title: "Tracking: Dad's album", options: options}, "Keynote")
 	if received["task_id"] != float64(4) || received["context"] != "Keynote" || tracker.told != 4 {
 		t.Fatalf("claim = %+v told = %d", received, tracker.told)
 	}
-	// "Wrong" on a told task opens the question; "Not work" is the last option.
+	// "Something else" is the last option and needs no explanation.
 	answers = []int{0, 2}
 	tracker.show(notice{kind: "tell", title: "Tracking: Dad's album", options: options}, "Finder")
-	if len(shown) != 3 || shown[2] != "What are you working on?" || received["task_id"] != nil || received["context"] != "Finder" {
+	if len(shown) != 4 || shown[3] != "What is this part of?" || received["task_id"] != nil || received["context"] != "Finder" {
 		t.Fatalf("shown = %v claim = %+v", shown, received)
 	}
 }
