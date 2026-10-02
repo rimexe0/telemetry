@@ -187,14 +187,28 @@ func (t *Tracker) decide(now trackingNow, at time.Time) *notice {
 	if tracking.State == "other" && !tracking.Excused && !tracking.AgentRunning && len(now.Tasks) > 0 && tracking.Since != nil &&
 		at.Sub(*tracking.Since) >= offPlanAfter && at.Sub(t.offTold) >= offPlanAfter {
 		t.offTold = at
-		detail := "It is not one of today's tasks."
+		// The stretch may span several things; the title gives its length and
+		// the detail names what is on screen now.
+		detail := "Now: " + tracking.Context + "."
 		if len(tracking.YourTurn) > 0 {
-			detail = "Waiting for you: " + tracking.YourTurn[0].Task + "."
+			detail += " Waiting for you: " + tracking.YourTurn[0].Task + "."
 		}
-		return &notice{kind: "off", title: fmt.Sprintf("%d min on %s", int(at.Sub(*tracking.Since).Minutes()), tracking.Context), detail: detail,
+		return &notice{kind: "off", title: span(at.Sub(*tracking.Since)) + " outside today's tasks", detail: detail,
 			options: now.Tasks, context: tracking.Context, learn: tracking.LearnContext}
 	}
 	return nil
+}
+
+// span words a length of time for a notice: "12 min", "1 h 35 min".
+func span(elapsed time.Duration) string {
+	minutes := int(elapsed.Minutes())
+	if minutes < 60 {
+		return fmt.Sprintf("%d min", minutes)
+	}
+	if minutes%60 == 0 {
+		return fmt.Sprintf("%d h", minutes/60)
+	}
+	return fmt.Sprintf("%d h %d min", minutes/60, minutes%60)
 }
 
 // ago words a duration for a notice: "just now", "4 min ago", "2 h ago".

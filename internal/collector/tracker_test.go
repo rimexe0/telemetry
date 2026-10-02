@@ -77,7 +77,8 @@ func TestTrackerInMultitaskWork(t *testing.T) {
 		t.Fatalf("nine minutes is not mentioned: %+v", got)
 	}
 	off := tracker.decide(body, start.Add(10*time.Minute))
-	if off == nil || off.kind != "off" || off.title != "10 min on T3 Code (Nightly) · Telemetry · Clarify next steps" || off.detail != "Waiting for you: Dad's album." ||
+	if off == nil || off.kind != "off" || off.title != "10 min outside today's tasks" ||
+		off.detail != "Now: T3 Code (Nightly) · Telemetry · Clarify next steps. Waiting for you: Dad's album." ||
 		off.learn != "T3 Code (Nightly) · Telemetry" {
 		t.Fatalf("off plan = %+v", off)
 	}
