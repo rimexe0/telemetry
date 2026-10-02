@@ -116,14 +116,29 @@ object DayModel {
         else -> device
     }
 
-    /** Whether the answer is for the current day; the server names the day. */
-    fun isToday(view: DayView, now: Instant, zone: ZoneId = ZoneId.systemDefault()): Boolean =
-        view.date == now.atZone(zone).toLocalDate().toString()
+    /** "Today", "Yesterday" or "Tue 30 Sep" for a YYYY-MM-DD date. */
+    fun dayLabel(date: String, now: Instant, zone: ZoneId = ZoneId.systemDefault()): String {
+        val day = runCatching { java.time.LocalDate.parse(date) }.getOrNull() ?: return date
+        val current = now.atZone(zone).toLocalDate()
+        return when (day) {
+            current -> "Today"
+            current.minusDays(1) -> "Yesterday"
+            else -> day.format(java.time.format.DateTimeFormatter.ofPattern("EEE d MMM", java.util.Locale.ENGLISH))
+        }
+    }
+
+    /** The owner's current day, as the server names days. */
+    fun today(now: Instant, zone: ZoneId = ZoneId.systemDefault()): String = now.atZone(zone).toLocalDate().toString()
+
+    /** Whether the answer is for the current day. */
+    fun isToday(view: DayView, now: Instant, zone: ZoneId = ZoneId.systemDefault()): Boolean = view.date == today(now, zone)
 
     /** The hours the timeline spans: from the first activity or block to now or the last block. */
     fun window(view: DayView, zone: ZoneId): Pair<Instant, Instant> {
         val starts = view.chunks.map { it.start } + view.blocks.map { it.start }
-        val ends = view.blocks.map { it.end } + view.to
+        // A finished day ends at its last activity or block, not at midnight.
+        val finished = !view.to.isBefore(view.from.plusSeconds(23 * 3600))
+        val ends = view.blocks.map { it.end } + view.chunks.map { it.end } + (if (finished && view.chunks.isNotEmpty()) emptyList() else listOf(view.to))
         val first = (starts.minOrNull() ?: view.from).coerceAtLeast(view.from)
         val start = first.atZone(zone).withMinute(0).withSecond(0).withNano(0).toInstant()
         val last = ends.max()
@@ -133,27 +148,32 @@ object DayModel {
     }
 }
 
-/** The last day answer without segments, shared by the home screen and kept for offline. */
+/** Day answers without segments, by date, shared by the home screen and kept for offline. */
 object DayCache {
-    private const val PREFS = "telemetry-day"
-    private const val KEY_JSON = "json"
+    private const val PREFS = "telemetry-days"
+    private const val KEEP = 14
 
-    fun read(context: Context): DayView? {
-        val json = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_JSON, null) ?: return null
-        return runCatching { DayModel.parse(json) }.getOrNull()
+    /** The cached answer for a date (YYYY-MM-DD), if it is for that date. */
+    fun read(context: Context, date: String): DayView? {
+        val json = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(date, null) ?: return null
+        return runCatching { DayModel.parse(json) }.getOrNull()?.takeIf { it.date == date }
     }
 
-    /** Fetches and stores today; null when offline or unpaired. Blocking IO. */
-    fun refresh(context: Context): DayView? {
-        val body = DeviceApi.get(context, "/v1/device/day") ?: return null
-        val view = runCatching { DayModel.parse(body) }.getOrNull() ?: return null
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_JSON, body).apply()
+    /** Fetches and stores a date; null when offline or unpaired. Blocking IO. */
+    fun refresh(context: Context, date: String): DayView? {
+        val body = DeviceApi.get(context, "/v1/device/day?date=$date") ?: return null
+        val view = runCatching { DayModel.parse(body) }.getOrNull()?.takeIf { it.date == date } ?: return null
+        val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val editor = preferences.edit().putString(date, body)
+        // Dates sort as text; only the most recent ones are kept.
+        (preferences.all.keys + date).sortedDescending().drop(KEEP).forEach { editor.remove(it) }
+        editor.apply()
         return view
     }
 
-    /** Today with every record behind each chunk, for the details page. Not cached. Blocking IO. */
-    fun details(context: Context): DayView? =
-        DeviceApi.get(context, "/v1/device/day?segments=1")?.let { runCatching { DayModel.parse(it) }.getOrNull() }
+    /** A date with every record behind each chunk, for the details page. Not cached. Blocking IO. */
+    fun details(context: Context, date: String): DayView? =
+        DeviceApi.get(context, "/v1/device/day?date=$date&segments=1")?.let { runCatching { DayModel.parse(it) }.getOrNull() }
 }
 
 /** This phone's names for installed apps; other names are shown as recorded. */

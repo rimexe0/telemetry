@@ -60,9 +60,11 @@ class DayActivity : ComponentActivity() {
     companion object {
         private const val DEVICE = "device"
         private const val START = "start"
+        private const val DATE = "date"
 
-        /** The whole day, or one stretch of it. */
-        fun intent(context: Context, chunk: DayChunk?): Intent = Intent(context, DayActivity::class.java).apply {
+        /** A whole day (YYYY-MM-DD), or one stretch of it. */
+        fun intent(context: Context, date: String, chunk: DayChunk?): Intent = Intent(context, DayActivity::class.java).apply {
+            putExtra(DATE, date)
             if (chunk != null) {
                 putExtra(DEVICE, chunk.device)
                 putExtra(START, chunk.start.toEpochMilli())
@@ -77,16 +79,18 @@ class DayActivity : ComponentActivity() {
         enableEdgeToEdge(SystemBarStyle.dark(AndroidColor.TRANSPARENT), SystemBarStyle.dark(AndroidColor.TRANSPARENT))
         super.onCreate(savedInstanceState)
         // The cached day shows the totals at once; the visits arrive with the full answer.
-        view = DayCache.read(this)?.takeIf { DayModel.isToday(it, Instant.now()) }
+        view = DayCache.read(this, date)
         setContent { TelemetryTheme { Screen() } }
         lifecycleScope.launch {
-            val full = withContext(Dispatchers.IO) { DayCache.details(this@DayActivity) }
+            val full = withContext(Dispatchers.IO) { DayCache.details(this@DayActivity, date) }
             if (full != null) view = full
             message = if (view == null) "The server could not be reached." else ""
         }
     }
 
     private val zone = ZoneId.systemDefault()
+
+    private val date: String by lazy { intent.getStringExtra(DATE) ?: DayModel.today(Instant.now()) }
 
     private fun time(at: Instant) = String.format("%02d:%02d", at.atZone(zone).hour, at.atZone(zone).minute)
 
@@ -107,7 +111,7 @@ class DayActivity : ComponentActivity() {
         val whole = intent.getStringExtra(DEVICE) == null
         Scaffold(topBar = {
             TopAppBar(
-                title = { Text(if (whole || chunks.isEmpty()) "Today" else "${time(chunks.first().start)}–${time(chunks.last().end)} · ${DayModel.deviceName(chunks.first().device)}") },
+                title = { Text(if (whole || chunks.isEmpty()) DayModel.dayLabel(date, Instant.now()) else "${time(chunks.first().start)}–${time(chunks.last().end)} · ${DayModel.deviceName(chunks.first().device)}") },
                 navigationIcon = { IconButton(onClick = ::finish) { Icon(painterResource(R.drawable.ic_back), contentDescription = "Back") } },
             )
         }) { padding ->

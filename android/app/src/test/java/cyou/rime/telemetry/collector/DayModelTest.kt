@@ -57,6 +57,20 @@ class DayModelTest {
     }
 
     @Test
+    fun aFinishedDayEndsAtItsLastActivityAndIsNamed() {
+        val finished = DayModel.parse(json.replace(""""to":"2026-10-01T10:30:00Z"""", """"to":"2026-10-01T21:00:00Z"""")
+            .replace(""""blocks":[{""", """"blocks":[],"ignored":[{"""))
+        val (start, end) = DayModel.window(finished, zone)
+        // The only chunk runs 09:20-09:40 local, so the strip is 09:00-10:00, not up to midnight.
+        assertEquals(Instant.parse("2026-10-01T06:00:00Z"), start)
+        assertEquals(Instant.parse("2026-10-01T07:00:00Z"), end)
+        val now = Instant.parse("2026-10-02T09:00:00Z")
+        assertEquals("Today", DayModel.dayLabel("2026-10-02", now, zone))
+        assertEquals("Yesterday", DayModel.dayLabel("2026-10-01", now, zone))
+        assertEquals("Tue 29 Sep", DayModel.dayLabel("2026-09-29", now, zone))
+    }
+
+    @Test
     fun formatsDurationsAndKnowsTheDay() {
         assertEquals("30s", DayModel.clock(0.5))
         assertEquals("41m", DayModel.clock(41.2))

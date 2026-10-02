@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
@@ -28,6 +30,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,6 +54,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 
 /** What the home screen shows. */
@@ -63,7 +68,6 @@ data class HomeState(
     val footer: String? = null,
     val needsSetup: Boolean = false,
     val needsBlocking: Boolean = false,
-    val day: DayView? = null,
     val followUps: List<FollowUp> = emptyList(),
 )
 
@@ -80,6 +84,9 @@ class MainActivity : ComponentActivity() {
 
     private var state by mutableStateOf(HomeState())
 
+    /** Loaded days by date (YYYY-MM-DD); swiping asks for more. */
+    private val days = mutableStateMapOf<String, DayView>()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge(SystemBarStyle.dark(AndroidColor.TRANSPARENT), SystemBarStyle.dark(AndroidColor.TRANSPARENT))
         super.onCreate(savedInstanceState)
@@ -89,7 +96,9 @@ class MainActivity : ComponentActivity() {
                     state = state,
                     onSettings = { startActivity(Intent(this, SettingsActivity::class.java)) },
                     onPlanner = { startActivity(Intent(this, PanelActivity::class.java)) },
-                    onDay = { chunk -> startActivity(DayActivity.intent(this, chunk)) },
+                    days = days,
+                    onShowDay = ::loadDay,
+                    onDay = { date, chunk -> startActivity(DayActivity.intent(this, date, chunk)) },
                     onSetup = ::openSetup,
                     onBlocking = { startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
                     onDone = ::done,
@@ -98,7 +107,7 @@ class MainActivity : ComponentActivity() {
         }
         showCached()
         showFollowUps()
-        showDay(DayCache.read(this))
+        DayModel.today(Instant.now()).let { today -> DayCache.read(this, today)?.let { days[today] = it } }
         if (savedInstanceState == null && SetupActivity.needsSetup(this)) openSetup()
         CollectionStarter.ensureRunning(this)
 
@@ -144,7 +153,8 @@ class MainActivity : ComponentActivity() {
             problem("No plan information yet", "The server could not be reached and nothing is cached. Nothing is assumed.")
         }
         showFollowUps()
-        showDay(withContext(Dispatchers.IO) { DayCache.refresh(this@MainActivity) } ?: DayCache.read(this))
+        val today = DayModel.today(Instant.now())
+        withContext(Dispatchers.IO) { DayCache.refresh(this@MainActivity, today) }?.let { days[today] = it }
     }
 
     /** Shows the cached state, following its timeline while offline. */
@@ -159,9 +169,12 @@ class MainActivity : ComponentActivity() {
         return true
     }
 
-    /** Yesterday's answer is not shown as today. */
-    private fun showDay(view: DayView?) {
-        state = state.copy(day = view?.takeIf { DayModel.isToday(it, Instant.now()) })
+    /** Shows a day from the cache at once, then from the server. */
+    private fun loadDay(date: String) {
+        lifecycleScope.launch {
+            if (date !in days) DayCache.read(this@MainActivity, date)?.let { days[date] = it }
+            withContext(Dispatchers.IO) { DayCache.refresh(this@MainActivity, date) }?.let { days[date] = it }
+        }
     }
 
     private fun render(view: NowView) {
@@ -179,45 +192,62 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun HomeScreen(state: HomeState, onSettings: () -> Unit, onPlanner: () -> Unit, onDay: (DayChunk?) -> Unit, onSetup: () -> Unit, onBlocking: () -> Unit,
-    onDone: (FollowUp) -> Unit) {
+private fun HomeScreen(state: HomeState, days: Map<String, DayView>, onShowDay: (String) -> Unit, onSettings: () -> Unit, onPlanner: () -> Unit,
+    onDay: (String, DayChunk?) -> Unit, onSetup: () -> Unit, onBlocking: () -> Unit, onDone: (FollowUp) -> Unit) {
     val context = LocalContext.current
     val names = remember { AppNames(context) }
+    // Today is the last page; swiping right goes back a day at a time.
+    val pager = rememberPagerState(initialPage = DAYS_BACK - 1) { DAYS_BACK }
+    val today = LocalDate.now()
+    fun dateOf(page: Int) = today.minusDays((DAYS_BACK - 1 - page).toLong()).toString()
+    LaunchedEffect(pager.settledPage) { if (pager.settledPage != DAYS_BACK - 1) onShowDay(dateOf(pager.settledPage)) }
     Scaffold(
         topBar = {
-            TopAppBar(title = {}, actions = {
+            TopAppBar(title = {
+                // Today needs no name; an earlier day says which one it is.
+                if (pager.currentPage != DAYS_BACK - 1) Text(DayModel.dayLabel(dateOf(pager.currentPage), Instant.now()), style = MaterialTheme.typography.titleMedium)
+            }, actions = {
                 IconButton(onClick = onSettings) { Icon(painterResource(R.drawable.ic_settings), contentDescription = "Settings") }
             })
         },
     ) { padding ->
-        Column(
-            modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            FollowUps(state.followUps, onDone)
-            state.title?.let { Text(it, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold) }
-            state.taskState?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            state.next?.let { Text("Next: $it", style = MaterialTheme.typography.titleMedium) }
-            state.resume?.let {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh), modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(14.dp)) {
-                        Text("RETURN HERE", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(it, style = MaterialTheme.typography.bodyLarge)
+        HorizontalPager(pager, Modifier.fillMaxSize().padding(padding), beyondViewportPageCount = 0) { page ->
+            val date = dateOf(page)
+            val isToday = page == DAYS_BACK - 1
+            Column(
+                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                if (isToday) {
+                    FollowUps(state.followUps, onDone)
+                    state.title?.let { Text(it, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold) }
+                    state.taskState?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    state.next?.let { Text("Next: $it", style = MaterialTheme.typography.titleMedium) }
+                    state.resume?.let {
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh), modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(14.dp)) {
+                                Text("RETURN HERE", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(it, style = MaterialTheme.typography.bodyLarge)
+                            }
+                        }
                     }
+                    state.reason?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    if (state.needsSetup) Prompt("This phone is not fully set up.", "Finish setup", onSetup)
+                    if (state.needsBlocking) Prompt("Blocking is switched off on this phone.", "Turn on", onBlocking)
                 }
+                days[date]?.let { day ->
+                    Plan(day, onPlanner)
+                    Totals(day, Modifier.fillMaxWidth().clickable { onDay(date, null) })
+                    DayTimeline(day, Instant.now(), names, Modifier.fillMaxWidth(), onChunk = { chunk -> onDay(date, chunk) })
+                }
+                if (isToday) state.footer?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
-            state.reason?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            if (state.needsSetup) Prompt("This phone is not fully set up.", "Finish setup", onSetup)
-            if (state.needsBlocking) Prompt("Blocking is switched off on this phone.", "Turn on", onBlocking)
-            state.day?.let { day ->
-                Plan(day, onPlanner)
-                Totals(day, Modifier.fillMaxWidth().clickable { onDay(null) })
-                DayTimeline(day, Instant.now(), names, Modifier.fillMaxWidth(), onChunk = onDay)
-            }
-            state.footer?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
     }
 }
+
+/** How many days the home screen can swipe back through. */
+private const val DAYS_BACK = 60
 
 @Composable
 private fun Prompt(text: String, action: String, onClick: () -> Unit) {
