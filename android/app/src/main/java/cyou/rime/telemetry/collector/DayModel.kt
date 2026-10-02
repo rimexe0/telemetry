@@ -162,9 +162,10 @@ object DayModel {
         val starts = view.chunks.map { it.start } + view.blocks.map { it.start }
         // A finished day ends at its last activity or block, not at midnight.
         val finished = !view.to.isBefore(view.from.plusSeconds(23 * 3600))
-        // A block that only closes distractions, or runs past the day, does not stretch the timeline.
+        // The timeline runs to the end of everything planned, so no block is cut
+        // off at its bottom; a block that runs past the day ends at midnight.
         val dayEnd = view.from.plusSeconds(24 * 3600)
-        val ends = view.blocks.filter { !it.focusOnly && !it.end.isAfter(dayEnd) }.map { it.end } + view.chunks.map { it.end } +
+        val ends = view.blocks.map { if (it.end.isAfter(dayEnd)) dayEnd else it.end } + view.chunks.map { it.end } +
             (if (finished && view.chunks.isNotEmpty()) emptyList() else listOf(view.to))
         val first = (starts.minOrNull() ?: view.from).coerceAtLeast(view.from)
         val start = first.atZone(zone).withMinute(0).withSecond(0).withNano(0).toInstant()

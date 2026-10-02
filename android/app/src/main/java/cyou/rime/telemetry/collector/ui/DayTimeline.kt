@@ -19,6 +19,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -67,7 +68,8 @@ fun DayTimeline(view: DayView, now: Instant, names: AppNames, modifier: Modifier
             }
         }
         Row(
-            Modifier.fillMaxWidth().height(down(end)).drawWithContent {
+            // A block that runs past the day is cut at midnight, the timeline's end.
+            Modifier.fillMaxWidth().height(down(end)).clipToBounds().drawWithContent {
                 hours.forEach { drawLine(line, Offset(HoursWidth.toPx(), down(it).toPx()), Offset(size.width, down(it).toPx())) }
                 drawContent()
                 if (!now.isBefore(start) && !now.isAfter(end)) {

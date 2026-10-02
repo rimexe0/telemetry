@@ -74,6 +74,14 @@ class DayModelTest {
     }
 
     @Test
+    fun aBlockPastTheDayRunsTheTimelineToMidnightAndNoFurther() {
+        // A 24-hour block from 13:35 local: the timeline must reach the end of the day so the block is not cut off.
+        val view = DayModel.parse(json.replace(""""start":"2026-10-01T12:00:00Z","end":"2026-10-01T13:00:00Z"""", """"start":"2026-10-01T10:35:00Z","end":"2026-10-02T10:35:00Z""""))
+        val (_, end) = DayModel.window(view, zone)
+        assertEquals(Instant.parse("2026-10-01T21:00:00Z"), end)
+    }
+
+    @Test
     fun formatsDurationsAndKnowsTheDay() {
         assertEquals("30s", DayModel.clock(0.5))
         assertEquals("41m", DayModel.clock(41.2))
