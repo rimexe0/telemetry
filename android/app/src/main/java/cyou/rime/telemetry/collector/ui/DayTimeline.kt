@@ -4,7 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,7 +19,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -46,7 +44,6 @@ fun kindColor(kind: String): Color = when (kind) {
 }
 
 private val HourHeight = 64.dp
-private val HeaderHeight = 22.dp
 private val HoursWidth = 40.dp
 private val LabelFrom = 18.dp
 
@@ -58,33 +55,19 @@ private val LabelFrom = 18.dp
 @Composable
 fun DayTimeline(view: DayView, now: Instant, names: AppNames, modifier: Modifier = Modifier, zone: ZoneId = ZoneId.systemDefault(), onChunk: (DayChunk) -> Unit) {
     val (start, end) = DayModel.window(view, zone)
-    BoxWithConstraints(modifier) {
-        // Given a height, the whole day is scaled to fit it, so now is always in view.
-        val hour = if (constraints.hasBoundedHeight) {
-            ((maxHeight - HeaderHeight) / (Duration.between(start, end).toMillis() / 3_600_000f).coerceAtLeast(1f)).coerceAtMost(HourHeight)
-        } else {
-            HourHeight
-        }
-        Timeline(view, now, names, zone, start, end, hour, onChunk)
-    }
-}
-
-@Composable
-private fun Timeline(view: DayView, now: Instant, names: AppNames, zone: ZoneId, start: Instant, end: Instant, hour: Dp, onChunk: (DayChunk) -> Unit) {
-    fun down(at: Instant): Dp = hour * (Duration.between(start, at).toMillis() / 3_600_000f)
+    fun down(at: Instant): Dp = HourHeight * (Duration.between(start, at).toMillis() / 3_600_000f)
     val hours = generateSequence(start) { it.plusSeconds(3600) }.takeWhile { !it.isAfter(end) }.toList()
     val line = MaterialTheme.colorScheme.outlineVariant
     val marker = MaterialTheme.colorScheme.onSurface
-    Column {
-        Row(Modifier.height(HeaderHeight)) {
+    Column(modifier) {
+        Row {
             Spacer(Modifier.width(HoursWidth))
             listOf("plan", "mac", "phone").forEach {
                 Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f).padding(start = 4.dp, bottom = 4.dp))
             }
         }
         Row(
-            // A block that runs past the day is cut at the timeline's end.
-            Modifier.fillMaxWidth().height(down(end)).clipToBounds().drawWithContent {
+            Modifier.fillMaxWidth().height(down(end)).drawWithContent {
                 hours.forEach { drawLine(line, Offset(HoursWidth.toPx(), down(it).toPx()), Offset(size.width, down(it).toPx())) }
                 drawContent()
                 if (!now.isBefore(start) && !now.isAfter(end)) {

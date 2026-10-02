@@ -9,12 +9,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
@@ -232,40 +230,34 @@ private fun HomeScreen(state: HomeState, days: Map<String, DayView>, onShowDay: 
         HorizontalPager(pager, Modifier.fillMaxSize().padding(padding), beyondViewportPageCount = 0) { page ->
             val date = dateOf(page)
             val isToday = page == DAYS_BACK - 1
-            // Everything fits one screen: what is above the timeline takes the room it
-            // needs (and scrolls by itself if that is a lot), the timeline gets the rest.
-            BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 20.dp).padding(bottom = 12.dp)) {
-                val above = maxHeight * 0.55f
-                Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Column(Modifier.heightIn(max = above).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        if (isToday) {
-                            FollowUps(state.followUps, onDone)
-                            state.focus?.let { Focus(it, onFocus) }
-                            state.title?.let { Text(it, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold) }
-                            state.taskState?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                            state.next?.let { Text("Next: $it", style = MaterialTheme.typography.titleMedium) }
-                            state.resume?.let {
-                                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh), modifier = Modifier.fillMaxWidth()) {
-                                    Column(Modifier.padding(14.dp)) {
-                                        Text("RETURN HERE", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        Text(it, style = MaterialTheme.typography.bodyLarge)
-                                    }
-                                }
+            Column(
+                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                if (isToday) {
+                    FollowUps(state.followUps, onDone)
+                    state.focus?.let { Focus(it, onFocus) }
+                    state.title?.let { Text(it, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold) }
+                    state.taskState?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    state.next?.let { Text("Next: $it", style = MaterialTheme.typography.titleMedium) }
+                    state.resume?.let {
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh), modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(14.dp)) {
+                                Text("RETURN HERE", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(it, style = MaterialTheme.typography.bodyLarge)
                             }
-                            state.reason?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                            if (state.needsSetup) Prompt("This phone is not fully set up.", "Finish setup", onSetup)
-                            if (state.needsBlocking) Prompt("Blocking is switched off on this phone.", "Turn on", onBlocking)
-                            state.footer?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                        }
-                        days[date]?.let { day ->
-                            Plan(day, onPlanner, if (isToday && state.focus == null) onFocus else null, isToday)
-                            Totals(day, Modifier.fillMaxWidth().clickable { onDay(date, null) })
                         }
                     }
-                    days[date]?.let { day ->
-                        DayTimeline(day, Instant.now(), names, Modifier.fillMaxWidth().weight(1f), onChunk = { chunk -> onDay(date, chunk) })
-                    }
+                    state.reason?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    if (state.needsSetup) Prompt("This phone is not fully set up.", "Finish setup", onSetup)
+                    if (state.needsBlocking) Prompt("Blocking is switched off on this phone.", "Turn on", onBlocking)
                 }
+                days[date]?.let { day ->
+                    Plan(day, onPlanner, if (isToday && state.focus == null) onFocus else null, isToday)
+                    Totals(day, Modifier.fillMaxWidth().clickable { onDay(date, null) })
+                    DayTimeline(day, Instant.now(), names, Modifier.fillMaxWidth(), onChunk = { chunk -> onDay(date, chunk) })
+                }
+                if (isToday) state.footer?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
         }
     }
