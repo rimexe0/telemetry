@@ -93,3 +93,17 @@ func TestPolicySuggestionsAreOwnerOnly(t *testing.T) {
 		t.Fatalf("suggestions = %d %v", response2.Code, payload)
 	}
 }
+
+func TestLockUntilPlannedDoesNotLockWhenWakingIsNotKnown(t *testing.T) {
+	repository := &fakeRepository{}
+	repository.policies = []store.PolicyVersion{{ID: 1}}
+	repository.policies[0].Config.PlanGate.FromWake = true
+	repository.policies[0].Config.PlanGate.LockAll = true
+	server := ownerTestServer(t, repository)
+	_, payload := serve(t, server, http.MethodGet, "/v1/policy/current", "")
+	decision := payload["decision"].(map[string]any)
+	// The fake has no records, so there is no wake time: missing evidence locks nothing.
+	if decision["mode"] == "plan_gate" || decision["block_all"] == true {
+		t.Fatalf("decision = %v", decision)
+	}
+}

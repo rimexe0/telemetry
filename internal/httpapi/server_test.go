@@ -656,6 +656,14 @@ func (f *fakeRepository) ListTaskEvidence(context.Context) ([]store.TaskEvidence
 	return nil, nil
 }
 
+func (f *fakeRepository) AddOutreach(_ context.Context, outreach store.Outreach) (store.Outreach, error) {
+	return outreach, nil
+}
+
+func (f *fakeRepository) ListOutreach(context.Context, time.Time) ([]store.Outreach, error) {
+	return nil, nil
+}
+
 func (f *fakeRepository) AddPlanBlock(context.Context, time.Time, store.PlanBlockSpec, string) (store.AgentChange, store.Plan, error) {
 	return store.AgentChange{}, store.Plan{}, nil
 }

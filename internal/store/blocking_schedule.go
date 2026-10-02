@@ -26,6 +26,9 @@ type ScheduleChange struct {
 	OpenAddresses       *[]string `json:"open_addresses,omitempty"`
 	AddOpenAddresses    []string  `json:"add_open_addresses,omitempty"`
 	RemoveOpenAddresses []string  `json:"remove_open_addresses,omitempty"`
+	// LockUntilPlanned closes everything but the essentials from when the
+	// owner wakes until the day has a plan.
+	LockUntilPlanned *bool `json:"lock_until_planned,omitempty"`
 }
 
 // applyScheduleTx writes a new policy version and returns the change that
@@ -46,7 +49,11 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 		}
 	}
 	closed, times, addresses := config.ClosedByDefault, append([]policy.Window{}, config.DistractionTimes...), append([]string{}, config.OpenAddresses...)
-	previous := ScheduleChange{ClosedByDefault: &closed, DistractionTimes: &times, OpenAddresses: &addresses}
+	locked := config.PlanGate.FromWake
+	previous := ScheduleChange{ClosedByDefault: &closed, DistractionTimes: &times, OpenAddresses: &addresses, LockUntilPlanned: &locked}
+	if change.LockUntilPlanned != nil {
+		config.PlanGate.FromWake, config.PlanGate.LockAll = *change.LockUntilPlanned, *change.LockUntilPlanned
+	}
 	if change.ClosedByDefault != nil {
 		config.ClosedByDefault = *change.ClosedByDefault
 	}

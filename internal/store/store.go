@@ -111,6 +111,8 @@ type Repository interface {
 	ActiveOpenings(context.Context, time.Time) ([]Opening, error)
 	AddTaskEvidence(context.Context, TaskEvidence) (TaskEvidence, error)
 	ListTaskEvidence(context.Context) ([]TaskEvidence, error)
+	AddOutreach(context.Context, Outreach) (Outreach, error)
+	ListOutreach(context.Context, time.Time) ([]Outreach, error)
 	AddTaskClaim(context.Context, TaskClaim) (TaskClaim, error)
 	ListTaskClaims(context.Context, time.Time, time.Time) ([]TaskClaim, error)
 	ApplyTaskRuleChanges(context.Context, []TaskRuleChange, string) (AgentChange, []ActivityContextRule, error)

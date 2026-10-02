@@ -46,6 +46,12 @@ type PlanGateConfig struct {
 	// EndsAt is an optional local "HH:MM" after which a missing plan no
 	// longer blocks anything that day.
 	EndsAt string `json:"ends_at,omitempty"`
+	// FromWake starts the gate when the owner wakes instead of at midnight,
+	// so being up past midnight does not lock anything.
+	FromWake bool `json:"from_wake,omitempty"`
+	// LockAll closes everything but the essentials until the day is planned,
+	// not only the distractions.
+	LockAll bool `json:"lock_all,omitempty"`
 }
 
 // Window is a daily stretch of local time, "HH:MM" to "HH:MM". An end at or
@@ -157,6 +163,8 @@ type Facts struct {
 	Gates      []Gate     `json:"gates,omitempty"`
 	Urgent     *Urgent    `json:"urgent,omitempty"`
 	Openings   []Opening  `json:"openings,omitempty"`
+	// WakeAt is when the owner's day started, when that is known.
+	WakeAt     *time.Time `json:"wake_at,omitempty"`
 	Emergency  *Emergency `json:"emergency,omitempty"`
 	BreakSince *time.Time `json:"break_since,omitempty"`
 }
@@ -411,8 +419,10 @@ func evaluate(config Config, version int64, facts Facts, at time.Time) Decision 
 		blockDistractions(nil)
 		return decision
 	}
-	if config.PlanGate.Enabled && !facts.PlanExists && !planGateEnded(config, location, at) {
+	if config.PlanGate.Enabled && !facts.PlanExists && !planGateEnded(config, location, at) && planGateStarted(config, facts, location, at) {
 		decision.Mode = ModePlanGate
+		// With no essentials there would be no way left to plan the day.
+		decision.BlockAll = config.PlanGate.LockAll && len(config.Essentials) > 0
 		decision.Reason = "No plan for today yet. Plan your day to open everything up."
 		decision.Basis = append(decision.Basis, "plan_gate")
 		blockDistractions(nil)
@@ -439,6 +449,21 @@ func evaluate(config Config, version int64, facts Facts, at time.Time) Decision 
 	decision.Reason = "Free time. Nothing is blocked."
 	decision.Blocked = emptyTargets()
 	return decision
+}
+
+// DistractionTime reports whether at falls inside one of the owner's daily
+// distraction times.
+func DistractionTime(config Config, at time.Time) bool {
+	location, err := time.LoadLocation(config.Timezone)
+	if err != nil {
+		location = time.UTC
+	}
+	for _, bound := range windowBounds(config, location, at) {
+		if !at.Before(bound[0]) && at.Before(bound[1]) {
+			return true
+		}
+	}
+	return false
 }
 
 // windowBounds returns every start and end of the distraction times on the
@@ -504,6 +529,19 @@ func openWorkBlock(blocks []Block, at time.Time) *Block {
 
 func executionActive(execution *Execution) bool {
 	return execution != nil && (execution.State == "active" || execution.State == "waiting_external")
+}
+
+// planGateStarted reports whether the gate applies yet. From wake, it starts
+// when the owner woke today; with no known wake it does not start, because
+// missing evidence must not lock anything.
+func planGateStarted(config Config, facts Facts, location *time.Location, at time.Time) bool {
+	if !config.PlanGate.FromWake {
+		return true
+	}
+	if facts.WakeAt == nil || at.Before(*facts.WakeAt) {
+		return false
+	}
+	return facts.WakeAt.In(location).Format("2006-01-02") == at.In(location).Format("2006-01-02")
 }
 
 func planGateEnded(config Config, location *time.Location, at time.Time) bool {

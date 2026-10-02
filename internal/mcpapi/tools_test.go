@@ -152,6 +152,11 @@ type planningRepository struct {
 	rules     []store.TaskRuleChange
 	schedule  store.ScheduleChange
 	opening   store.Opening
+	labels    []store.ActivityLabel
+}
+
+func (r *planningRepository) ListActivityLabels(context.Context) ([]store.ActivityLabel, error) {
+	return r.labels, nil
 }
 
 func (r *planningRepository) ApplyDayPlan(_ context.Context, date time.Time, input store.PlanInput, _ string) (store.AgentChange, store.Plan, error) {
@@ -323,6 +328,7 @@ func TestChangeTaskRulesPassesRulesThrough(t *testing.T) {
 func (r *planningRepository) ApplyBlockingSchedule(_ context.Context, change store.ScheduleChange, _ string) (store.AgentChange, policy.Config, error) {
 	r.schedule = change
 	config := policy.Config{ClosedByDefault: change.ClosedByDefault != nil && *change.ClosedByDefault, OpenAddresses: change.AddOpenAddresses}
+	config.PlanGate.FromWake = change.LockUntilPlanned != nil && *change.LockUntilPlanned
 	if change.DistractionTimes != nil {
 		config.DistractionTimes = *change.DistractionTimes
 	}
@@ -370,6 +376,44 @@ func TestScheduleToolsSetTimesAndOpenForAPurpose(t *testing.T) {
 	listed, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "blocking_schedule", Arguments: map[string]any{}})
 	if err != nil || listed.IsError {
 		t.Fatalf("blocking_schedule = %+v, %v", listed, err)
+	}
+}
+
+func TestLockUntilPlannedNeedsAWayToReachTheAssistant(t *testing.T) {
+	repository := &planningRepository{}
+	session := connectPlanning(t, repository, time.Date(2026, 10, 2, 8, 0, 0, 0, time.UTC))
+	lock := map[string]any{"lock_until_planned": true, "reason": "the systems should be locked until i plan the day out"}
+	refused, _ := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "set_blocking_schedule", Arguments: lock})
+	if !refused.IsError || repository.schedule.LockUntilPlanned != nil {
+		t.Fatal("with nothing labelled essential the owner could not reach the assistant, so the lock must be refused")
+	}
+	repository.labels = []store.ActivityLabel{{Kind: "app", Match: "tw.nekomimi.nekogram", Label: "essential"}}
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "set_blocking_schedule", Arguments: lock})
+	if err != nil || result.IsError || repository.schedule.LockUntilPlanned == nil || !*repository.schedule.LockUntilPlanned {
+		t.Fatalf("set_blocking_schedule = %+v, %v", result, err)
+	}
+	encoded, _ := json.Marshal(result.StructuredContent)
+	var schedule SetBlockingScheduleOutput
+	json.Unmarshal(encoded, &schedule)
+	if !schedule.Schedule.LockUntilPlanned || len(schedule.Schedule.Essentials) != 1 || schedule.Schedule.Essentials[0] != "tw.nekomimi.nekogram" {
+		t.Fatalf("schedule = %s", encoded)
+	}
+}
+
+func TestOutreachLogShowsWhatWasSentInLocalTime(t *testing.T) {
+	session := connectPlanning(t, &planningRepository{}, time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC))
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "outreach_log", Arguments: map[string]any{}})
+	if err != nil || result.IsError {
+		t.Fatalf("outreach_log = %+v, %v", result, err)
+	}
+	encoded, _ := json.Marshal(result.StructuredContent)
+	var output OutreachLogOutput
+	json.Unmarshal(encoded, &output)
+	if len(output.Messages) != 2 || output.Messages[1].At != "2026-10-02 08:28" || output.Messages[1].Message != "You woke at 08:26." || output.Messages[0].Message != "" {
+		t.Fatalf("log = %s", encoded)
+	}
+	if bad, _ := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "outreach_log", Arguments: map[string]any{"hours": 999}}); !bad.IsError {
+		t.Fatal("too many hours must be refused")
 	}
 }
 
@@ -452,6 +496,7 @@ func connectPlanning(t *testing.T, repository store.Repository, now time.Time) *
 	addScheduleTools(server, repository, func() time.Time { return now })
 	addFocusTools(server, repository)
 	addPatternTools(server, repository, func() time.Time { return now })
+	addOutreachTools(server, repository, func() time.Time { return now })
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(context.Background(), serverTransport, nil); err != nil {
 		t.Fatal(err)

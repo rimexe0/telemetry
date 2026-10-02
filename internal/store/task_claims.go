@@ -56,6 +56,17 @@ func (p *Postgres) ListTaskClaims(ctx context.Context, from, to time.Time) ([]Ta
 // for [from, to): recorded activity, labels, agent messages, the owner's
 // open tasks with their rules and memory, their claims, their focus
 // sessions, and the plan for planDate.
+// LoadWakeTime finds when the owner woke, from the records up to at. It is
+// nil when the records do not show it.
+func LoadWakeTime(ctx context.Context, repository Repository, at time.Time) (*time.Time, error) {
+	from := at.Add(-activity.WakeLookback)
+	records, _, err := repository.ActivityRecords(ctx, from, at)
+	if err != nil {
+		return nil, err
+	}
+	return activity.WakeTime(activity.Build(records, from, at), from, at), nil
+}
+
 func LoadDayInput(ctx context.Context, repository Repository, planDate, from, to time.Time, withSegments bool) (activity.DayInput, *Plan, error) {
 	input := activity.DayInput{From: from, To: to, WithSegments: withSegments}
 	records, _, err := repository.ActivityRecords(ctx, from, to)

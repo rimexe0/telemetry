@@ -44,6 +44,9 @@ func Timeline(config Config, version int64, facts Facts, from, to time.Time) []S
 		add(facts.Emergency.StartedAt)
 		add(facts.Emergency.Until)
 	}
+	if facts.WakeAt != nil {
+		add(*facts.WakeAt)
+	}
 	if facts.BreakSince != nil {
 		add(*facts.BreakSince)
 	}

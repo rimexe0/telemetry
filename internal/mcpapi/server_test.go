@@ -296,6 +296,17 @@ func (fakeRepository) ListTaskEvidence(context.Context) ([]store.TaskEvidence, e
 	return nil, nil
 }
 
+func (fakeRepository) AddOutreach(_ context.Context, outreach store.Outreach) (store.Outreach, error) {
+	return outreach, nil
+}
+
+func (fakeRepository) ListOutreach(context.Context, time.Time) ([]store.Outreach, error) {
+	return []store.Outreach{
+		{ID: 2, Kind: "off_plan", Facts: "resting", CreatedAt: time.Date(2026, 10, 2, 11, 0, 0, 0, time.UTC)},
+		{ID: 1, Kind: "morning", Message: "You woke at 08:26.", Delivered: true, CreatedAt: time.Date(2026, 10, 2, 5, 28, 0, 0, time.UTC)},
+	}, nil
+}
+
 func (fakeRepository) AddPlanBlock(context.Context, time.Time, store.PlanBlockSpec, string) (store.AgentChange, store.Plan, error) {
 	return store.AgentChange{}, store.Plan{}, nil
 }

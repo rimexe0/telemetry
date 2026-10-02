@@ -79,7 +79,11 @@ type ActivityNowOutput struct {
 	OpenIncidents []store.CollectionIncident `json:"open_collection_incidents"`
 	Timezone      string                     `json:"timezone"`
 	Devices       []DeviceNow                `json:"devices"`
-	Notes         string                     `json:"notes"`
+	// WokeAt is the first use of a device after the last stretch of at least
+	// three hours with none, local "YYYY-MM-DD HH:MM"; empty when the
+	// records do not show one.
+	WokeAt string `json:"woke_at,omitempty" jsonschema:"when the owner's day started, from the records; never ask them for it"`
+	Notes  string `json:"notes"`
 }
 
 type CollectionIncidentsInput struct {
@@ -182,8 +186,15 @@ func addActivityTools(server *mcp.Server, repository store.Repository, now func(
 			return nil, ActivityNowOutput{}, err
 		}
 		summaries := activity.Summarize(result, 10, store.LabelsForSummary(labels))
+		wake, err := store.LoadWakeTime(ctx, repository, current)
+		if err != nil {
+			return nil, ActivityNowOutput{}, err
+		}
 		output := ActivityNowOutput{Now: current, Timezone: location.String(), Notes: activityNotes, OpenIncidents: []store.CollectionIncident{},
 			Coding: activity.CodingThreads(coding, from, current)}
+		if wake != nil {
+			output.WokeAt = wake.In(location).Format("2006-01-02 15:04")
+		}
 		incidents, err := repository.ListCollectionIncidents(ctx, current, 50)
 		if err != nil {
 			return nil, ActivityNowOutput{}, err

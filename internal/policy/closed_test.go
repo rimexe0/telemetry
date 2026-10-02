@@ -129,3 +129,32 @@ func TestOpeningsLiftOnlyWhatTheyName(t *testing.T) {
 		t.Fatalf("open everything = %+v", all)
 	}
 }
+
+func TestPlanGateFromWakeLocksEverythingUntilPlanned(t *testing.T) {
+	config := testConfig()
+	config.PlanGate = PlanGateConfig{Enabled: true, FromWake: true, LockAll: true}
+	istanbul, _ := time.LoadLocation("Europe/Istanbul")
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 3, hour, minute, 0, 0, istanbul) }
+	wake := at(8, 26)
+	// Up past midnight, not yet slept: yesterday's wake does not lock today.
+	yesterday := at(8, 26).AddDate(0, 0, -1)
+	if got := Evaluate(config, 1, Facts{WakeAt: &yesterday}, at(0, 30)); got.Mode != ModeLeisure || got.BlockAll {
+		t.Fatalf("after midnight, before sleeping = %+v", got)
+	}
+	// No known wake: nothing is locked on missing evidence.
+	if got := Evaluate(config, 1, Facts{}, at(9, 0)); got.Mode != ModeLeisure {
+		t.Fatalf("no wake known = %+v", got)
+	}
+	locked := Evaluate(config, 1, Facts{WakeAt: &wake}, at(8, 30))
+	if locked.Mode != ModePlanGate || !locked.BlockAll || len(locked.AlwaysAllowed.AndroidPackages) == 0 {
+		t.Fatalf("after waking, no plan = %+v", locked)
+	}
+	if got := Evaluate(config, 1, Facts{WakeAt: &wake, PlanExists: true}, at(8, 40)); got.Mode != ModeLeisure || got.BlockAll {
+		t.Fatalf("planned = %+v", got)
+	}
+	// The timeline changes at the wake time.
+	segments := Timeline(config, 1, Facts{WakeAt: &wake}, at(8, 0), at(9, 0))
+	if len(segments) != 2 || segments[0].Decision.Mode != ModeLeisure || segments[1].Decision.Mode != ModePlanGate || !segments[1].From.Equal(wake) {
+		t.Fatalf("timeline = %+v", segments)
+	}
+}

@@ -154,6 +154,10 @@ func main() {
 	// The assistant that judges unknown things in a focus session: a command
 	// that takes the prompt as its last argument, such as "hermes --ignore-rules -z".
 	go runJudge(context, database, strings.Fields(os.Getenv("TELEMETRY_JUDGE_COMMAND")))
+	// The assistant writing to the owner without being asked: one command
+	// that sends its standard input, such as "hermes send -t telegram -q",
+	// and one that words the message, taking the prompt as its last argument.
+	go runOutreach(context, database, strings.Fields(os.Getenv("TELEMETRY_OUTREACH_COMPOSE_COMMAND")), strings.Fields(os.Getenv("TELEMETRY_OUTREACH_SEND_COMMAND")))
 	log.Printf("Telemetry core listening on %s", *listen)
 	if err := httpServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)

@@ -132,6 +132,7 @@ func New(repository store.Repository, readToken string, publicHosts ...string) (
 	addScheduleTools(server, repository, time.Now)
 	addFocusTools(server, repository)
 	addPatternTools(server, repository, time.Now)
+	addOutreachTools(server, repository, time.Now)
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{
 		Stateless:                    true,
 		JSONResponse:                 true,

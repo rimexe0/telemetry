@@ -15,7 +15,10 @@ const scheduleNotes = "When closed_by_default is on, everything labelled \"distr
 	"open_addresses are single pages that stay open while their site is closed, such as one music stream on YouTube; they apply in the browser only. " +
 	"The owner chose fixed daily times and ruled out a daily budget of minutes: a budget spent early leaves nothing for the rest of the day. " +
 	"An opening lifts the block on named sites or apps for a stated purpose for a limited time; use open_now when the owner needs something that is closed, " +
-	"and say back what you opened and until when. Times are the owner's local time."
+	"and say back what you opened and until when. Times are the owner's local time. " +
+	"lock_until_planned closes everything except what is labelled \"essential\" on every device from the moment the owner wakes (taken from the records, never asked) " +
+	"until the day has a plan; set_day_plan for that day opens it, and a day with no fixed times is planned with an empty list of blocks once its tasks are agreed. " +
+	"It cannot be turned on until the owner's way to reach you is labelled essential."
 
 type WindowIO struct {
 	Start string `json:"start" jsonschema:"local HH:MM"`
@@ -37,6 +40,8 @@ type BlockingScheduleOutput struct {
 	ClosedByDefault  bool            `json:"closed_by_default"`
 	DistractionTimes []WindowIO      `json:"distraction_times"`
 	OpenAddresses    []string        `json:"open_addresses"`
+	LockUntilPlanned bool            `json:"lock_until_planned"`
+	Essentials       []string        `json:"essentials" jsonschema:"what stays open while the day is locked"`
 	Openings         []OpeningOutput `json:"openings" jsonschema:"openings in force now"`
 	Timezone         string          `json:"timezone"`
 	Notes            string          `json:"notes"`
@@ -47,6 +52,7 @@ type SetBlockingScheduleInput struct {
 	DistractionTimes    *[]WindowIO `json:"distraction_times,omitempty" jsonschema:"the whole list of daily distraction times; replaces the current one"`
 	AddOpenAddresses    []string    `json:"add_open_addresses,omitempty" jsonschema:"page addresses to keep open, such as https://www.youtube.com/watch?v=..."`
 	RemoveOpenAddresses []string    `json:"remove_open_addresses,omitempty"`
+	LockUntilPlanned    *bool       `json:"lock_until_planned,omitempty" jsonschema:"lock everything but the essentials from waking until the day is planned"`
 	Reason              string      `json:"reason" jsonschema:"the owner's words where possible"`
 }
 
@@ -83,7 +89,16 @@ func scheduleOutput(ctx context.Context, repository store.Repository, config pol
 		return BlockingScheduleOutput{}, err
 	}
 	output := BlockingScheduleOutput{ClosedByDefault: config.ClosedByDefault, DistractionTimes: []WindowIO{}, OpenAddresses: []string{}, Openings: []OpeningOutput{},
-		Timezone: config.Timezone, Notes: scheduleNotes}
+		LockUntilPlanned: config.PlanGate.FromWake, Essentials: []string{}, Timezone: config.Timezone, Notes: scheduleNotes}
+	labels, err := repository.ListActivityLabels(ctx)
+	if err != nil {
+		return BlockingScheduleOutput{}, err
+	}
+	for _, label := range labels {
+		if label.Label == policy.LabelEssential {
+			output.Essentials = append(output.Essentials, label.Match)
+		}
+	}
 	for _, window := range config.DistractionTimes {
 		output.DistractionTimes = append(output.DistractionTimes, WindowIO{Start: window.Start, End: window.End})
 	}
@@ -126,8 +141,22 @@ func addScheduleTools(server *mcp.Server, repository store.Repository, now func(
 			}
 			change.DistractionTimes = &windows
 		}
-		if change.ClosedByDefault == nil && change.DistractionTimes == nil && len(change.AddOpenAddresses)+len(change.RemoveOpenAddresses) == 0 {
+		change.LockUntilPlanned = input.LockUntilPlanned
+		if change.ClosedByDefault == nil && change.DistractionTimes == nil && change.LockUntilPlanned == nil && len(change.AddOpenAddresses)+len(change.RemoveOpenAddresses) == 0 {
 			return nil, SetBlockingScheduleOutput{}, errors.New("nothing to change")
+		}
+		if change.LockUntilPlanned != nil && *change.LockUntilPlanned {
+			labels, err := repository.ListActivityLabels(ctx)
+			if err != nil {
+				return nil, SetBlockingScheduleOutput{}, err
+			}
+			reachable := false
+			for _, label := range labels {
+				reachable = reachable || label.Label == policy.LabelEssential
+			}
+			if !reachable {
+				return nil, SetBlockingScheduleOutput{}, errors.New("nothing is labelled essential, so the owner could not reach you to plan the day; label their messaging app essential first (change_activity_labels)")
+			}
 		}
 		logged, config, err := repository.ApplyBlockingSchedule(ctx, change, input.Reason)
 		if err != nil {

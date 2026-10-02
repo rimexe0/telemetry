@@ -131,7 +131,8 @@ func (s *Server) policyInputs(ctx context.Context, from, to time.Time) (policy.C
 		return config, 0, policy.Facts{}, err
 	}
 	// The existing panel setting is the single switch for the plan gate.
-	config.PlanGate.Enabled = settings.DailyPlanGateEnabled
+	// Locking until planned is set with the blocking schedule.
+	config.PlanGate.Enabled = settings.DailyPlanGateEnabled || config.PlanGate.FromWake
 
 	facts := policy.Facts{PlanDate: alignmentPlanDate(from).Format("2006-01-02")}
 	// The day before is read too: a block that starts late can run past midnight.
@@ -156,6 +157,12 @@ func (s *Server) policyInputs(ctx context.Context, from, to time.Time) (policy.C
 			}
 			facts.Blocks = append(facts.Blocks, policy.Block{ID: block.ID, Title: block.Title, Start: block.StartTime, End: blockEnd(block), Kind: kind, State: block.State,
 				HasTask: block.ActivityID != nil})
+		}
+	}
+	if config.PlanGate.FromWake && !facts.PlanExists {
+		// The gate starts when the owner wakes, which the records show.
+		if facts.WakeAt, err = store.LoadWakeTime(ctx, s.repository, from); err != nil {
+			return config, 0, policy.Facts{}, err
 		}
 	}
 	openings, err := s.repository.ActiveOpenings(ctx, from)
