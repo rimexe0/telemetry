@@ -184,6 +184,40 @@ type threadRef struct {
 	label, project, root string
 }
 
+// openCuts are the times a T3 client of the device's kind changed project.
+func (c classifier) openCuts(device string) []time.Time {
+	cuts := []time.Time{}
+	for _, span := range c.open {
+		if span.Kind == openKind(device) {
+			cuts = append(cuts, span.Start, span.End)
+		}
+	}
+	sort.Slice(cuts, func(i, j int) bool { return cuts[i].Before(cuts[j]) })
+	return cuts
+}
+
+// threadFor names the agent thread behind a segment. T3 Code's own report of
+// the open project wins; the thread inside it is the one messaged nearest in
+// time in that project. Without a report, it falls back to the nearest
+// message in the tool.
+func (c classifier) threadFor(segment Segment) threadRef {
+	open := openFor(segment, c.open)
+	if open == nil {
+		return threadFor(segment, c.messages)
+	}
+	ref := threadRef{label: open.Project, project: open.Project, root: open.Root}
+	var inProject []ThreadMessage
+	for _, message := range c.messages {
+		if message.Tool == "t3" && message.Project == open.Project {
+			inProject = append(inProject, message)
+		}
+	}
+	if near := threadFor(segment, inProject); near.label != "" {
+		ref.label = near.label
+	}
+	return ref
+}
+
 // threadFor names the thread a stretch of time in an agent app most likely
 // belongs to: the one with the message sent closest to it in that tool.
 // Empty when no message is near, because then nothing shows which thread was
@@ -456,10 +490,13 @@ type DayInput struct {
 	// Messages, from ThreadMessages, name the thread behind T3 Code time.
 	Messages []ThreadMessage
 	// Turns, from AgentTurns, say when each task's agent ran and stopped.
-	Turns    []AgentTurn
-	Tasks    []TaskInfo
-	Claims   []Claim
-	Focus    []FocusSpan
+	Turns  []AgentTurn
+	Tasks  []TaskInfo
+	Claims []Claim
+	Focus  []FocusSpan
+	// Open, from OpenSpans, says which project T3 Code showed; without it
+	// the project is guessed from Messages.
+	Open     []OpenSpan
 	From, To time.Time
 	// WithSegments keeps every record behind each chunk.
 	WithSegments bool
@@ -477,7 +514,7 @@ type claimSpan struct {
 // contextOf names what a segment shows, the way Tracking.Context does.
 func (c classifier) contextOf(segment Segment) string {
 	name := segmentName(segment)
-	if detail := threadFor(segment, c.messages).label; detail != "" {
+	if detail := c.threadFor(segment).label; detail != "" {
 		name += " · " + detail
 	}
 	return name
@@ -488,7 +525,7 @@ func (c classifier) contextOf(segment Segment) string {
 // answer covers every thread of that project.
 func (c classifier) learnContext(segment Segment) string {
 	name := segmentName(segment)
-	if project := threadFor(segment, c.messages).project; project != "" {
+	if project := c.threadFor(segment).project; project != "" {
 		name += " · " + project
 	}
 	return name
@@ -521,7 +558,7 @@ func (c classifier) related(task TaskInfo, segment Segment) bool {
 	case "unrelated":
 		return false
 	}
-	return onTask(segment, threadFor(segment, c.messages).root, task.Rules)
+	return onTask(segment, c.threadFor(segment).root, task.Rules)
 }
 
 // claimedFor reports whether the owner said, for this sitting, that what the
@@ -581,7 +618,7 @@ func (c classifier) focusVerdict(task TaskInfo, segment Segment) string {
 	case "unrelated":
 		return FocusOff
 	}
-	if onTask(segment, threadFor(segment, c.messages).root, task.Rules) {
+	if onTask(segment, c.threadFor(segment).root, task.Rules) {
 		return FocusOn
 	}
 	for _, other := range c.tasks {
@@ -600,10 +637,11 @@ type classifier struct {
 	tasks    []TaskInfo
 	claims   []claimSpan
 	focus    []FocusSpan
+	open     []OpenSpan
 }
 
 func newClassifier(input DayInput) classifier {
-	c := classifier{labels: input.Labels, messages: input.Messages, blocks: input.Blocks, tasks: input.Tasks, focus: input.Focus}
+	c := classifier{labels: input.Labels, messages: input.Messages, blocks: input.Blocks, tasks: input.Tasks, focus: input.Focus, open: input.Open}
 	var mac []Segment
 	for _, segment := range input.Result.Segments {
 		if segment.Device == DeviceMac {
@@ -664,6 +702,16 @@ func (c classifier) splitAtClaims(segments []Segment) []Segment {
 			}
 		}
 		split(cuts)
+		// T3 Code time changes project where its client says so.
+		if agentTool(segment.App) == "t3" {
+			var again []Segment
+			for _, part := range parts {
+				parts = []Segment{part}
+				split(c.openCuts(segment.Device))
+				again = append(again, parts...)
+			}
+			parts = again
+		}
 		if segment.Device == DeviceMac {
 			var again []Segment
 			for _, part := range parts {
@@ -821,7 +869,7 @@ func chunkOf(device string, segments []Segment, c classifier, withSegments bool)
 			chunk.TaskMinutes += minutes
 			perTask[task] += minutes
 		}
-		detail := threadFor(segment, c.messages).label
+		detail := c.threadFor(segment).label
 		key := name + "\x00" + detail
 		if items[key] == nil {
 			items[key] = &DayItem{Name: name, Detail: detail, Label: label}

@@ -3,6 +3,7 @@ module github.com/rimexe0/telemetry
 go 1.27.0
 
 require (
+	github.com/coder/websocket v1.8.15
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	modernc.org/sqlite v1.58.0

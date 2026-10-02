@@ -58,6 +58,9 @@ func TestOffPlanNeedsALongStretchAndRespectsTheCap(t *testing.T) {
 	if OffPlanDue(now, off, []Sent{{Kind: KindMorning, At: now.Add(-30 * time.Minute)}}) {
 		t.Fatal("one unasked message an hour, whatever its kind")
 	}
+	if !OffPlanDue(now, off, []Sent{{Kind: KindCollection, At: now.Add(-time.Minute)}}) {
+		t.Fatal("a notice about collection does not count against the cap")
+	}
 	if !OffPlanDue(now, off, []Sent{{Kind: KindOffPlan, At: now.Add(-61 * time.Minute)}}) {
 		t.Fatal("an hour later: due again")
 	}

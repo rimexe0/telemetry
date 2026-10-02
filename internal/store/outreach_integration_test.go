@@ -34,11 +34,14 @@ func TestPostgresLockUntilPlannedAndOutreachLog(t *testing.T) {
 	if _, err := database.AddOutreach(ctx, Outreach{Kind: "off_plan", Facts: "resting"}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := database.AddOutreach(ctx, Outreach{Kind: "collection", Message: "T3 changed", Facts: "incident 4", Delivered: true}); err != nil {
+		t.Fatalf("collection notice: %v", err)
+	}
 	if _, err := database.AddOutreach(ctx, Outreach{Kind: "nagging"}); err == nil {
 		t.Fatal("an unknown kind must be refused")
 	}
 	entries, err := database.ListOutreach(ctx, time.Now().Add(-time.Hour))
-	if err != nil || len(entries) != 2 || entries[0].Kind != "off_plan" || entries[0].Message != "" || !entries[1].Delivered {
+	if err != nil || len(entries) != 3 || entries[0].Kind != "collection" || entries[1].Kind != "off_plan" || entries[1].Message != "" || !entries[2].Delivered {
 		t.Fatalf("list = %+v, %v", entries, err)
 	}
 	if none, _ := database.ListOutreach(ctx, time.Now().Add(time.Hour)); len(none) != 0 {

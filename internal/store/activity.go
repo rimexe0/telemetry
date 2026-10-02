@@ -94,7 +94,8 @@ func (p *Postgres) CodingRecords(ctx context.Context, from time.Time) ([]activit
 		JOIN observation_revisions r ON r.id = o.effective_revision_id
 		JOIN source_instances si ON si.source_instance_key = o.source_instance_key
 		WHERE (si.source_kind = 't3' AND (o.kind IN ('t3.project', 't3.thread')
-			OR (o.kind = 't3.turn' AND (o.occurred_at >= $1 OR o.ended_at IS NULL OR o.ended_at >= $1))))
+			OR (o.kind = 't3.turn' AND (o.occurred_at >= $1 OR o.ended_at IS NULL OR o.ended_at >= $1))
+			OR (o.kind = 't3.open' AND o.ended_at >= $1)))
 			OR (o.source_instance_key LIKE 'activitywatch:%:aw-watcher-codex%' AND o.occurred_at >= $1)
 		LIMIT $2`, from, maxActivityRecord+1)
 	if err != nil {

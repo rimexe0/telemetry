@@ -17,6 +17,9 @@ import (
 const (
 	KindMorning = "morning"
 	KindOffPlan = "off_plan"
+	// KindCollection tells the owner that something Telemetry reads changed
+	// its format and needs fixing. It is not counted against the hourly cap.
+	KindCollection = "collection"
 
 	// MorningWithin is how long after waking the morning message is still
 	// sent; later than that it is no longer the start of the day.
@@ -78,7 +81,7 @@ func OffPlanDue(now time.Time, stretch Stretch, sent []Sent) bool {
 		return false
 	}
 	for _, earlier := range sent {
-		if now.Sub(earlier.At) < Between {
+		if earlier.Kind != KindCollection && now.Sub(earlier.At) < Between {
 			return false
 		}
 	}
@@ -105,6 +108,22 @@ func OffPlanPrompt(facts string) string {
 		"If the plan says they are resting or the facts show nothing they need to get back to, answer exactly NOTHING. " +
 		"Otherwise say how long it has been, and offer the next smallest concrete step of one task, or to make today's plan smaller. " +
 		"They may be avoiding a task they dread: do not say so; make the step small enough to start. Two sentences at most.\n\nFacts:\n" + facts
+}
+
+// Watched are the collector modules that read T3 Code's internal formats;
+// the owner asked to be told when an update breaks them.
+var Watched = map[string]string{
+	"module_failing:t3":      "T3 Code's database",
+	"module_failing:t3-open": "which project T3 Code has open",
+}
+
+// CollectionMessage tells the owner that reading T3 Code broke.
+func CollectionMessage(what, device, since, problem string) string {
+	if len(problem) > 300 {
+		problem = problem[:300]
+	}
+	return "Telemetry can no longer read " + what + " on " + device + " (since " + since + "). T3 Code probably changed it in an update. " +
+		"Until it is fixed, T3 Code time is guessed from your messages.\nError: " + problem
 }
 
 // Message cleans a composed answer. It is empty when the assistant chose to
