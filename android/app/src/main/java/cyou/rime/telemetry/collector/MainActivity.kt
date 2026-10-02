@@ -10,6 +10,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -28,6 +29,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -69,6 +71,7 @@ data class HomeState(
     val needsSetup: Boolean = false,
     val needsBlocking: Boolean = false,
     val followUps: List<FollowUp> = emptyList(),
+    val focus: FocusView? = null,
 )
 
 /**
@@ -102,6 +105,7 @@ class MainActivity : ComponentActivity() {
                     onSetup = ::openSetup,
                     onBlocking = { startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
                     onDone = ::done,
+                    onFocus = ::focus,
                 )
             }
         }
@@ -124,7 +128,20 @@ class MainActivity : ComponentActivity() {
     private fun openSetup() = startActivity(Intent(this, SetupActivity::class.java))
 
     private fun showFollowUps() {
-        state = state.copy(followUps = FollowUpWatch.open(this, NowCache.read(this)?.json))
+        val json = NowCache.read(this)?.json
+        state = state.copy(followUps = FollowUpWatch.open(this, json), focus = json?.let { runCatching { TrackingModel.parse(it).focus }.getOrNull() })
+    }
+
+    /** Starts, pauses or ends a focus session, then shows the server's new state. */
+    private fun focus(action: String, taskId: Long) {
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                DeviceApi.post(this@MainActivity, "/v1/device/focus", org.json.JSONObject().put("action", action).put("task_id", taskId).toString())
+                NowCache.refresh(this@MainActivity)
+            }
+            showCached()
+            showFollowUps()
+        }
     }
 
     private fun done(followUp: FollowUp) {
@@ -193,7 +210,7 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun HomeScreen(state: HomeState, days: Map<String, DayView>, onShowDay: (String) -> Unit, onSettings: () -> Unit, onPlanner: () -> Unit,
-    onDay: (String, DayChunk?) -> Unit, onSetup: () -> Unit, onBlocking: () -> Unit, onDone: (FollowUp) -> Unit) {
+    onDay: (String, DayChunk?) -> Unit, onSetup: () -> Unit, onBlocking: () -> Unit, onDone: (FollowUp) -> Unit, onFocus: (String, Long) -> Unit) {
     val context = LocalContext.current
     val names = remember { AppNames(context) }
     // Today is the last page; swiping right goes back a day at a time.
@@ -220,6 +237,7 @@ private fun HomeScreen(state: HomeState, days: Map<String, DayView>, onShowDay: 
             ) {
                 if (isToday) {
                     FollowUps(state.followUps, onDone)
+                    state.focus?.let { Focus(it, onFocus) }
                     state.title?.let { Text(it, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold) }
                     state.taskState?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     state.next?.let { Text("Next: $it", style = MaterialTheme.typography.titleMedium) }
@@ -236,7 +254,7 @@ private fun HomeScreen(state: HomeState, days: Map<String, DayView>, onShowDay: 
                     if (state.needsBlocking) Prompt("Blocking is switched off on this phone.", "Turn on", onBlocking)
                 }
                 days[date]?.let { day ->
-                    Plan(day, onPlanner)
+                    Plan(day, onPlanner, if (isToday && state.focus == null) onFocus else null)
                     Totals(day, Modifier.fillMaxWidth().clickable { onDay(date, null) })
                     DayTimeline(day, Instant.now(), names, Modifier.fillMaxWidth(), onChunk = { chunk -> onDay(date, chunk) })
                 }
@@ -281,9 +299,26 @@ private fun FollowUps(followUps: List<FollowUp>, onDone: (FollowUp) -> Unit) {
     }
 }
 
-/** Today's blocks with the time spent inside each; opens the planner. */
+/** The running focus session: the one task, how it stands, and the way to pause or end it. */
 @Composable
-private fun Plan(day: DayView, onPlanner: () -> Unit) {
+private fun Focus(focus: FocusView, onFocus: (String, Long) -> Unit) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(start = 14.dp, end = 8.dp, top = 12.dp, bottom = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("FOCUS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(focus.task, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(TrackingModel.focusLine(focus, Instant.now()), color = if (focus.on == "off" || focus.on == "unknown") DistractionColor else MaterialTheme.colorScheme.onSurfaceVariant)
+            focus.nextAction?.let { Text("Next: $it") }
+            Row {
+                TextButton(onClick = { onFocus("pause", focus.taskId) }) { Text("Pause") }
+                TextButton(onClick = { onFocus("done", focus.taskId) }) { Text("End") }
+            }
+        }
+    }
+}
+
+/** Today's blocks and tasks with the time spent on each; opens the planner. */
+@Composable
+private fun Plan(day: DayView, onPlanner: () -> Unit, onFocus: ((String, Long) -> Unit)?) {
     val zone = ZoneId.systemDefault()
     fun time(at: Instant) = String.format("%02d:%02d", at.atZone(zone).hour, at.atZone(zone).minute)
     Card(
@@ -303,12 +338,22 @@ private fun Plan(day: DayView, onPlanner: () -> Unit) {
                         color = if (block.tracked) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            // Tasks need no time: each shows the time recognised as it today.
+            // Tasks need no time: each shows the owner's own time on it today. A second
+            // line appears only when its agent has something to say.
             day.tasks.forEach { task ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(task.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                    Text(if (task.tracked) DayModel.clock(task.minutes) else "not tracked", modifier = Modifier.padding(start = 12.dp),
-                        color = if (task.tracked) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(task.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                        if (onFocus != null) TextButton(onClick = { onFocus("start", task.id) }, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("Focus") }
+                        Text(if (task.tracked) DayModel.clock(task.minutes) else "—", modifier = Modifier.padding(start = 8.dp),
+                            color = if (task.tracked) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    val turn = task.yourTurnSince
+                    when {
+                        turn != null -> Text("Your turn since ${time(turn)}", style = MaterialTheme.typography.bodySmall, color = DistractionColor)
+                        task.agentMinutes >= 1 -> Text("agent ${DayModel.clock(task.agentMinutes)} · waited ${DayModel.clock(task.waitingMinutes)}",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
         }

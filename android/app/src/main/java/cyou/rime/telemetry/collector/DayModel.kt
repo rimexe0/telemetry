@@ -19,7 +19,18 @@ data class DayBlock(
 )
 
 /** One of the owner's open tasks with the time recognised as it; untracked tasks have no rules yet. */
-data class DayTask(val title: String, val tracked: Boolean, val minutes: Double)
+data class DayTask(
+    val id: Long,
+    val title: String,
+    val tracked: Boolean,
+    /** The owner's own attention on it. */
+    val minutes: Double,
+    /** Its agent's runtime, and how long the agent sat stopped until the owner came back. */
+    val agentMinutes: Double = 0.0,
+    val waitingMinutes: Double = 0.0,
+    /** Set while its agent has stopped and waits for the owner. */
+    val yourTurnSince: Instant? = null,
+)
 
 /** Time on one app or site; [detail] narrows it, such as the T3 Code project and thread. */
 data class DayItem(val name: String, val detail: String?, val label: String, val minutes: Double, val visits: Int, val device: String = "")
@@ -75,7 +86,10 @@ object DayModel {
                 DayBlock(it.getString("title"), Instant.parse(it.getString("start")), Instant.parse(it.getString("end")), it.getString("status"),
                     it.optBoolean("tracked"), it.optDouble("in_plan_minutes", 0.0), it.optDouble("distraction_minutes", 0.0))
             },
-            tasks = day.optJSONArray("tasks").each { DayTask(it.getString("title"), it.optBoolean("tracked"), it.optDouble("minutes", 0.0)) },
+            tasks = day.optJSONArray("tasks").each {
+                DayTask(it.optLong("id"), it.getString("title"), it.optBoolean("tracked"), it.optDouble("minutes", 0.0), it.optDouble("agent_minutes", 0.0),
+                    it.optDouble("waiting_minutes", 0.0), it.optString("your_turn_since").ifBlank { null }?.let(Instant::parse))
+            },
             plannedMinutes = day.optDouble("planned_minutes", 0.0),
             inPlanMinutes = day.optDouble("in_plan_minutes", 0.0),
             distractionMinutes = day.optDouble("distraction_minutes", 0.0),

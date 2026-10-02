@@ -12,7 +12,7 @@ class DayModelTest {
     private val json = """{"date":"2026-10-01","from":"2026-09-30T21:00:00Z","to":"2026-10-01T10:30:00Z","plan_exists":true,"day":{
         "blocks":[{"id":1,"title":"Telemetry","start":"2026-10-01T09:00:00Z","end":"2026-10-01T10:00:00Z","state":"planned","closes_distractions":true,"status":"past","tracked":true,"in_plan_minutes":25.5,"distraction_minutes":34.5},
                   {"id":2,"title":"Later","start":"2026-10-01T12:00:00Z","end":"2026-10-01T13:00:00Z","state":"planned","closes_distractions":false,"status":"upcoming","in_plan_minutes":0,"distraction_minutes":0}],
-        "tasks":[{"id":3,"title":"Dad's album","tracked":true,"minutes":25.5},{"id":4,"title":"Science fair presentation","tracked":false,"minutes":0}],
+        "tasks":[{"id":3,"title":"Dad's album","tracked":true,"minutes":25.5,"agent_minutes":25,"waiting_minutes":30,"your_turn_since":"2026-10-01T10:00:00Z"},{"id":4,"title":"Science fair presentation","tracked":false,"minutes":0}],
         "planned_minutes":120,"in_plan_minutes":25.5,"distraction_minutes":34.5,
         "distraction_by_device":[{"device":"mac","minutes":15},{"device":"phone","minutes":19.5}],
         "chunks":[{"device":"phone","start":"2026-10-01T06:20:00Z","end":"2026-10-01T06:40:00Z","kind":"distraction","active_minutes":20,"distraction_minutes":19.5,
@@ -34,7 +34,7 @@ class DayModelTest {
         assertEquals(2, view.chunks[0].items.size)
         assertEquals(1, view.chunks[0].segments.size)
         assertEquals(1, view.gaps.size)
-        assertEquals(listOf(DayTask("Dad's album", true, 25.5), DayTask("Science fair presentation", false, 0.0)), view.tasks)
+        assertEquals(listOf(DayTask(3, "Dad's album", true, 25.5, 25.0, 30.0, Instant.parse("2026-10-01T10:00:00Z")), DayTask(4, "Science fair presentation", false, 0.0)), view.tasks)
     }
 
     @Test
