@@ -373,6 +373,28 @@ func TestScheduleToolsSetTimesAndOpenForAPurpose(t *testing.T) {
 	}
 }
 
+func TestFocusAndMemoryToolsValidate(t *testing.T) {
+	session := connectPlanning(t, &planningRepository{}, time.Now())
+	for name, arguments := range map[string]map[string]any{
+		"focus_session":     {},
+		"task_memory":       {},
+		"remember_for_task": {"task_id": 4, "context": "trendyol.com", "verdict": "unrelated", "reason": "that was shopping"},
+	} {
+		result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: arguments})
+		if err != nil || result.IsError {
+			t.Fatalf("%s = %+v, %v", name, result, err)
+		}
+	}
+	bad, _ := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "focus_session", Arguments: map[string]any{"action": "start"}})
+	if !bad.IsError {
+		t.Fatal("start without a task must be refused")
+	}
+	unsure, _ := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "remember_for_task", Arguments: map[string]any{"task_id": 4, "context": "x", "verdict": "unsure", "reason": "x"}})
+	if !unsure.IsError {
+		t.Fatal("the owner's answer cannot be unsure")
+	}
+}
+
 func TestSetDayPlanUsesTheOwnersLocalTime(t *testing.T) {
 	repository := &planningRepository{}
 	// 22:30 UTC on Sep 30 is already Oct 1 in Istanbul.
@@ -411,6 +433,7 @@ func connectPlanning(t *testing.T, repository store.Repository, now time.Time) *
 	addFollowUpTools(server, repository, func() time.Time { return now })
 	addRuleTools(server, repository)
 	addScheduleTools(server, repository, func() time.Time { return now })
+	addFocusTools(server, repository)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(context.Background(), serverTransport, nil); err != nil {
 		t.Fatal(err)

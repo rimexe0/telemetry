@@ -138,16 +138,22 @@ func agentTool(app string) string {
 	return ""
 }
 
+// threadRef is the agent thread behind a stretch of time: its label
+// ("project · thread"), its project name and its project folder.
+type threadRef struct {
+	label, project, root string
+}
+
 // threadFor names the thread a stretch of time in an agent app most likely
 // belongs to: the one with the message sent closest to it in that tool.
 // Empty when no message is near, because then nothing shows which thread was
-// open. It also returns that thread's project folder.
-func threadFor(segment Segment, messages []ThreadMessage) (string, string) {
+// open.
+func threadFor(segment Segment, messages []ThreadMessage) threadRef {
 	tool := agentTool(segment.App)
 	if tool == "" {
-		return "", ""
+		return threadRef{}
 	}
-	best, root, bestDistance := "", "", threadReach+1
+	best, bestDistance := threadRef{}, threadReach+1
 	index := sort.Search(len(messages), func(i int) bool { return !messages[i].At.Before(segment.Start.Add(-threadReach)) })
 	for ; index < len(messages) && !messages[index].At.After(segment.End.Add(threadReach)); index++ {
 		message := messages[index]
@@ -162,13 +168,13 @@ func threadFor(segment Segment, messages []ThreadMessage) (string, string) {
 		}
 		if distance < bestDistance {
 			bestDistance = distance
-			best, root = message.Thread, message.Root
+			best = threadRef{label: message.Thread, project: message.Project, root: message.Root}
 			if message.Project != "" {
-				best = message.Project + " · " + message.Thread
+				best.label = message.Project + " · " + message.Thread
 			}
 		}
 	}
-	return best, root
+	return best
 }
 
 // DayItem totals one app or site inside a chunk.
@@ -261,21 +267,35 @@ func segmentName(segment Segment) string {
 	return segment.App
 }
 
-// TaskInfo is one of the owner's open tasks with what counts as doing it.
+// TaskInfo is one of the owner's open tasks with what counts as doing it:
+// its rules, and its memory of what the owner or the judge said is and is
+// not part of it.
 type TaskInfo struct {
-	ID    int64
-	Title string
-	Rules []TaskRule
+	ID         int64
+	Title      string
+	NextAction string
+	Rules      []TaskRule
+	Related    []string
+	Unrelated  []string
 }
 
-// Claim is the owner's own word about a stretch at the Mac, from Start while
-// they stay there and until the next claim: a task (TaskID), or something
-// that is not on the plan (TaskID nil). It only settles time that no rule
-// decides; time the rules recognise keeps its own task.
-type Claim struct {
-	TaskID *int64
+// FocusSpan is a stretch in which the owner chose to do one task only.
+type FocusSpan struct {
+	TaskID int64
 	Start  time.Time
-	End    *time.Time
+	End    time.Time
+}
+
+// Claim is the owner's own word about one thing on screen: from Start, while
+// they stay at the Mac and until the next claim, Context (an app or site,
+// with its project and thread for an agent app) is part of a task (TaskID),
+// or of nothing on the plan (TaskID nil). It only settles time that no rule
+// decides, and only for that thing: other things keep their own reading.
+type Claim struct {
+	TaskID  *int64
+	Context string
+	Start   time.Time
+	End     *time.Time
 }
 
 // DayInput is everything BuildDay and Track read.
@@ -287,6 +307,7 @@ type DayInput struct {
 	Messages []ThreadMessage
 	Tasks    []TaskInfo
 	Claims   []Claim
+	Focus    []FocusSpan
 	From, To time.Time
 	// WithSegments keeps every record behind each chunk.
 	WithSegments bool
@@ -297,7 +318,126 @@ const claimPause = 5 * time.Minute
 
 type claimSpan struct {
 	span
-	task *int64
+	task    *int64
+	context string
+}
+
+// contextOf names what a segment shows, the way Tracking.Context does.
+func (c classifier) contextOf(segment Segment) string {
+	name := segmentName(segment)
+	if detail := threadFor(segment, c.messages).label; detail != "" {
+		name += " · " + detail
+	}
+	return name
+}
+
+// LearnContext is the level at which an answer about a segment is
+// remembered: the app or site, and for an agent app its project, so one
+// answer covers every thread of that project.
+func (c classifier) learnContext(segment Segment) string {
+	name := segmentName(segment)
+	if project := threadFor(segment, c.messages).project; project != "" {
+		name += " · " + project
+	}
+	return name
+}
+
+// learned returns what the task's memory says about a segment: "related",
+// "unrelated" or "" when it has nothing. The most specific entry wins.
+func (c classifier) learned(task TaskInfo, segment Segment) string {
+	for _, context := range []string{c.contextOf(segment), c.learnContext(segment), segmentName(segment)} {
+		for _, known := range task.Unrelated {
+			if strings.EqualFold(known, context) {
+				return "unrelated"
+			}
+		}
+		for _, known := range task.Related {
+			if strings.EqualFold(known, context) {
+				return "related"
+			}
+		}
+	}
+	return ""
+}
+
+// related reports whether a segment counts as the task by its rules or its
+// memory. A memory of "unrelated" overrides a rule: the owner said so.
+func (c classifier) related(task TaskInfo, segment Segment) bool {
+	switch c.learned(task, segment) {
+	case "related":
+		return true
+	case "unrelated":
+		return false
+	}
+	return onTask(segment, threadFor(segment, c.messages).root, task.Rules)
+}
+
+// claimedFor reports whether the owner said, for this sitting, that what the
+// segment shows is part of the task.
+func (c classifier) claimedFor(task int64, segment Segment) bool {
+	if segment.Device != DeviceMac {
+		return false
+	}
+	for _, claim := range c.claims {
+		if claim.task != nil && *claim.task == task && !segment.Start.Before(claim.start) && segment.Start.Before(claim.end) && claim.context == c.contextOf(segment) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c classifier) task(id int64) TaskInfo {
+	for _, task := range c.tasks {
+		if task.ID == id {
+			return task
+		}
+	}
+	return TaskInfo{ID: id}
+}
+
+// focusAt returns the focus session covering a moment, if any.
+func (c classifier) focusAt(at time.Time) *FocusSpan {
+	for i := range c.focus {
+		if !at.Before(c.focus[i].Start) && at.Before(c.focus[i].End) {
+			return &c.focus[i]
+		}
+	}
+	return nil
+}
+
+// Verdicts on what is on screen during a focus session.
+const (
+	FocusOn      = "on"
+	FocusOff     = "off"
+	FocusUnknown = "unknown"
+)
+
+// focusVerdict judges a segment against the task in focus. In a focus
+// session only the task itself counts: another planned task is off too.
+// What nothing decides stays unknown, to be judged or asked about; it is
+// never assumed to be drift.
+func (c classifier) focusVerdict(task TaskInfo, segment Segment) string {
+	if LabelFor(c.labels, segment) == Distraction {
+		return FocusOff
+	}
+	if c.claimedFor(task.ID, segment) {
+		return FocusOn
+	}
+	switch c.learned(task, segment) {
+	case "related":
+		return FocusOn
+	case "unrelated":
+		return FocusOff
+	}
+	if onTask(segment, threadFor(segment, c.messages).root, task.Rules) {
+		return FocusOn
+	}
+	for _, other := range c.tasks {
+		if other.ID != task.ID && c.related(other, segment) {
+			return FocusOff
+		}
+	}
+	return FocusUnknown
 }
 
 // classifier decides each segment's kind, and its task, for one day.
@@ -307,10 +447,11 @@ type classifier struct {
 	blocks   []PlannedBlock
 	tasks    []TaskInfo
 	claims   []claimSpan
+	focus    []FocusSpan
 }
 
 func newClassifier(input DayInput) classifier {
-	c := classifier{labels: input.Labels, messages: input.Messages, blocks: input.Blocks, tasks: input.Tasks}
+	c := classifier{labels: input.Labels, messages: input.Messages, blocks: input.Blocks, tasks: input.Tasks, focus: input.Focus}
 	var mac []Segment
 	for _, segment := range input.Result.Segments {
 		if segment.Device == DeviceMac {
@@ -339,29 +480,46 @@ func newClassifier(input DayInput) classifier {
 			end = earlier(end, claims[i+1].Start)
 		}
 		if end = earlier(end, input.To); end.After(claim.Start) {
-			c.claims = append(c.claims, claimSpan{span: span{start: claim.Start, end: end}, task: claim.TaskID})
+			c.claims = append(c.claims, claimSpan{span: span{start: claim.Start, end: end}, task: claim.TaskID, context: claim.Context})
 		}
 	}
 	return c
 }
 
-// splitAtClaims cuts Mac segments where a claim starts or ends, so a claim
-// made in the middle of one long window takes effect from that moment.
+// splitAtClaims cuts segments where a claim or a focus session starts or
+// ends, so either takes effect from that moment inside one long window.
 func (c classifier) splitAtClaims(segments []Segment) []Segment {
+	var macCuts, cuts []time.Time
+	for _, claim := range c.claims {
+		macCuts = append(macCuts, claim.start, claim.end)
+	}
+	for _, span := range c.focus {
+		cuts = append(cuts, span.Start, span.End)
+	}
+	sort.Slice(macCuts, func(i, j int) bool { return macCuts[i].Before(macCuts[j]) })
+	sort.Slice(cuts, func(i, j int) bool { return cuts[i].Before(cuts[j]) })
 	result := []Segment{}
 	for _, segment := range segments {
 		parts := []Segment{segment}
-		if segment.Device == DeviceMac {
-			for _, claim := range c.claims {
-				for _, cut := range []time.Time{claim.start, claim.end} {
-					last := parts[len(parts)-1]
-					if cut.After(last.Start) && cut.Before(last.End) {
-						first, second := last, last
-						first.End, second.Start = cut, cut
-						parts = append(parts[:len(parts)-1], first, second)
-					}
+		split := func(list []time.Time) {
+			for _, cut := range list {
+				last := parts[len(parts)-1]
+				if cut.After(last.Start) && cut.Before(last.End) {
+					first, second := last, last
+					first.End, second.Start = cut, cut
+					parts = append(parts[:len(parts)-1], first, second)
 				}
 			}
+		}
+		split(cuts)
+		if segment.Device == DeviceMac {
+			var again []Segment
+			for _, part := range parts {
+				parts = []Segment{part}
+				split(macCuts)
+				again = append(again, parts...)
+			}
+			parts = again
 		}
 		result = append(result, parts...)
 	}
@@ -379,10 +537,9 @@ func (c classifier) title(id int64) string {
 
 // matches lists the tasks whose rules a segment meets.
 func (c classifier) matches(segment Segment) []int64 {
-	_, root := threadFor(segment, c.messages)
 	ids := []int64{}
 	for _, task := range c.tasks {
-		if onTask(segment, root, task.Rules) {
+		if c.related(task, segment) {
 			ids = append(ids, task.ID)
 		}
 	}
@@ -397,6 +554,12 @@ func (c classifier) matches(segment Segment) []int64 {
 func (c classifier) classify(segment Segment) (string, int64) {
 	if LabelFor(c.labels, segment) == Distraction {
 		return KindDistraction, 0
+	}
+	if span := c.focusAt(segment.Start); span != nil {
+		if c.focusVerdict(c.task(span.TaskID), segment) == FocusOn {
+			return KindTask, span.TaskID
+		}
+		return KindOther, 0
 	}
 	matched := c.matches(segment)
 	for _, block := range c.blocks {
@@ -414,7 +577,7 @@ func (c classifier) classify(segment Segment) (string, int64) {
 	}
 	if segment.Device == DeviceMac {
 		for _, claim := range c.claims {
-			if !segment.Start.Before(claim.start) && segment.Start.Before(claim.end) {
+			if !segment.Start.Before(claim.start) && segment.Start.Before(claim.end) && claim.context == c.contextOf(segment) {
 				// Several matching tasks: the claim chooses only among them.
 				if claim.task == nil || (len(matched) > 1 && !contains(matched, *claim.task)) {
 					return KindOther, 0
@@ -506,7 +669,7 @@ func chunkOf(device string, segments []Segment, c classifier, withSegments bool)
 			chunk.TaskMinutes += minutes
 			perTask[task] += minutes
 		}
-		detail, _ := threadFor(segment, c.messages)
+		detail := threadFor(segment, c.messages).label
 		key := name + "\x00" + detail
 		if items[key] == nil {
 			items[key] = &DayItem{Name: name, Detail: detail, Label: label}
@@ -667,6 +830,26 @@ type Tracking struct {
 	// Context is what is on screen: the app or site and, for an agent app,
 	// its project and thread.
 	Context string `json:"context,omitempty"`
+	// Focus is set while a focus session is running.
+	Focus *FocusNow `json:"focus,omitempty"`
+}
+
+// FocusNow is the running focus session and how what is on screen stands
+// against its task.
+type FocusNow struct {
+	TaskID     int64     `json:"task_id"`
+	Task       string    `json:"task"`
+	NextAction string    `json:"next_action,omitempty"`
+	Since      time.Time `json:"since"`
+	// On is "on", "off", "unknown" or "away" (nothing recent on the Mac).
+	On string `json:"on"`
+	// Context is what is on screen; LearnContext is what an answer about it
+	// would be remembered as; Title is the window or page title.
+	Context      string `json:"context,omitempty"`
+	LearnContext string `json:"learn_context,omitempty"`
+	Title        string `json:"title,omitempty"`
+	// OffSince is when the current stretch away from the task began.
+	OffSince *time.Time `json:"off_since,omitempty"`
 }
 
 type TaskRef struct {
@@ -687,10 +870,30 @@ func Track(input DayInput) Tracking {
 		}
 	}
 	sort.SliceStable(mac, func(i, j int) bool { return mac[i].Start.Before(mac[j].Start) })
+	var focus *FocusNow
+	if span := c.focusAt(input.To.Add(-time.Nanosecond)); span != nil {
+		info := c.task(span.TaskID)
+		focus = &FocusNow{TaskID: info.ID, Task: info.Title, NextAction: info.NextAction, Since: span.Start, On: "away"}
+	}
 	if len(mac) == 0 || input.To.Sub(lastEnd(mac)) > trackRecent {
-		return Tracking{State: "away"}
+		return Tracking{State: "away", Focus: focus}
 	}
 	last := mac[len(mac)-1]
+	if focus != nil {
+		info := c.task(focus.TaskID)
+		focus.On, focus.Context, focus.LearnContext, focus.Title = c.focusVerdict(info, last), c.contextOf(last), c.learnContext(last), last.Title
+		if focus.On != FocusOn {
+			// The stretch away from the task that leads up to now.
+			off := last.Start
+			for i := len(mac) - 1; i >= 0; i-- {
+				if mac[i].Start.Before(focus.Since) || c.focusVerdict(info, mac[i]) == FocusOn || off.Sub(mac[i].End) > claimPause {
+					break
+				}
+				off = mac[i].Start
+			}
+			focus.OffSince = &off
+		}
+	}
 	kind, task := c.classify(last)
 	// The run of the same kind and task leading up to now.
 	since := last.Start
@@ -701,10 +904,7 @@ func Track(input DayInput) Tracking {
 		}
 		since = mac[i].Start
 	}
-	tracking := Tracking{State: kind, Since: &since, Context: segmentName(last)}
-	if detail, _ := threadFor(last, c.messages); detail != "" {
-		tracking.Context += " · " + detail
-	}
+	tracking := Tracking{State: kind, Since: &since, Context: c.contextOf(last), Focus: focus}
 	if kind == KindTask {
 		tracking.TaskID, tracking.Task = &task, c.title(task)
 	}

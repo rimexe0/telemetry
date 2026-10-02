@@ -169,23 +169,24 @@ func TestTasksAreTrackedWithoutBlocksAndClaimsSettleWhatRulesCannot(t *testing.T
 	}
 	// At 14:52 the owner says Keynote is the presentation. It holds while they
 	// stay at the Mac, and not after they have been away.
-	claimed := BuildDay(DayInput{Result: result, Tasks: tasks, Claims: []Claim{{TaskID: &slides, Start: at(14, 52)}}, From: at(0, 0), To: at(17, 0)})
+	claimed := BuildDay(DayInput{Result: result, Tasks: tasks, Claims: []Claim{{TaskID: &slides, Context: "Keynote", Start: at(14, 52)}}, From: at(0, 0), To: at(17, 0)})
 	if claimed.Tasks[1].Minutes != 38 || claimed.Tasks[0].Minutes != 30 {
 		t.Fatalf("a claim takes effect in the middle of a window: %+v", claimed.Tasks)
 	}
-	earlier := BuildDay(DayInput{Result: result, Tasks: tasks, Claims: []Claim{{TaskID: &slides, Start: at(14, 50)}}, From: at(0, 0), To: at(17, 0)})
+	earlier := BuildDay(DayInput{Result: result, Tasks: tasks, Claims: []Claim{{TaskID: &slides, Context: "Keynote", Start: at(14, 50)}}, From: at(0, 0), To: at(17, 0)})
 	if earlier.Tasks[1].Minutes != 40 || earlier.Tasks[0].Minutes != 30 {
 		t.Fatalf("claimed = %+v", earlier.Tasks)
 	}
-	notWork := BuildDay(DayInput{Result: result, Tasks: tasks, Claims: []Claim{{Start: at(13, 59)}}, From: at(0, 0), To: at(17, 0)})
+	notWork := BuildDay(DayInput{Result: result, Tasks: tasks, Claims: []Claim{{Context: "Keynote", Start: at(13, 59)}}, From: at(0, 0), To: at(17, 0)})
 	// "Not on the plan" settles only what no rule decides: recognised time keeps its task.
 	if notWork.Tasks[0].Minutes != 30 || notWork.Tasks[1].Minutes != 20 {
 		t.Fatalf("a claim must not override the rules: %+v", notWork.Tasks)
 	}
 	// Nor does a claim for one task swallow time the rules give to another.
-	swallow := BuildDay(DayInput{Result: result, Tasks: tasks, Claims: []Claim{{TaskID: &album, Start: at(13, 59)}}, From: at(0, 0), To: at(17, 0)})
-	if swallow.Tasks[0].Minutes != 50 || swallow.Tasks[1].Minutes != 20 {
-		t.Fatalf("one answer must not swallow other tasks: %+v", swallow.Tasks)
+	// A claim is about the one thing that was on screen, never about everything else.
+	swallow := BuildDay(DayInput{Result: result, Tasks: tasks, Claims: []Claim{{TaskID: &album, Context: "Finder", Start: at(13, 59)}}, From: at(0, 0), To: at(17, 0)})
+	if swallow.Tasks[0].Minutes != 30 || swallow.Tasks[1].Minutes != 20 {
+		t.Fatalf("one answer must not swallow other things: %+v", swallow.Tasks)
 	}
 }
 
@@ -220,10 +221,99 @@ func TestTrackNamesWhatIsOnTheMac(t *testing.T) {
 		t.Fatalf("off-plan project = %+v", other)
 	}
 	// The owner's word settles what no rule decides, here and now.
-	if got := track(at(14, 3), []Claim{{TaskID: &slides, Start: at(14, 2)}}, mac("Keynote", at(14, 0), at(14, 3))); got.State != KindTask || *got.TaskID != slides {
+	if got := track(at(14, 3), []Claim{{TaskID: &slides, Context: "Keynote", Start: at(14, 2)}}, mac("Keynote", at(14, 0), at(14, 3))); got.State != KindTask || *got.TaskID != slides {
 		t.Fatalf("after a claim it tracks that task: %+v", got)
 	}
 	if got := track(at(15, 0), nil, mac("Keynote", at(14, 0), at(14, 30))); got.State != "away" {
 		t.Fatalf("nothing recent = %+v", got)
+	}
+}
+
+func TestFocusSessionCountsOnlyTheTaskAndLeavesTheUnknownUnknown(t *testing.T) {
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
+	album, slides := int64(3), int64(4)
+	tasks := []TaskInfo{
+		{ID: album, Title: "Dad's album", Rules: []TaskRule{{Signal: "app", Pattern: "T3 Code (Nightly)"}}},
+		{ID: slides, Title: "Science fair presentation", NextAction: "Outline the three sections",
+			Related: []string{"docs.google.com", "ChatGPT"}, Unrelated: []string{"trendyol.com"}},
+	}
+	labels := []Label{{Kind: LabelKindSite, Match: "youtube.com", Label: Distraction}}
+	mac := func(app, domain string, from, to time.Time) Segment {
+		return Segment{Device: DeviceMac, App: app, Domain: domain, Start: from, End: to}
+	}
+	segments := []Segment{
+		mac("Helium", "docs.google.com", at(15, 0), at(15, 20)),   // learned: part of it
+		mac("ChatGPT", "", at(15, 20), at(15, 30)),                // learned: part of it
+		mac("T3 Code (Nightly)", "", at(15, 30), at(15, 40)),      // another planned task: off in a focus session
+		mac("Helium", "trendyol.com", at(15, 40), at(15, 45)),     // learned: not part of it
+		mac("Helium", "en.wikipedia.org", at(15, 45), at(15, 50)), // nothing known
+		mac("Helium", "www.youtube.com", at(15, 50), at(15, 52)),
+	}
+	focus := []FocusSpan{{TaskID: slides, Start: at(15, 0), End: at(16, 0)}}
+	day := BuildDay(DayInput{Result: Result{Segments: segments}, Labels: labels, Tasks: tasks, Focus: focus, From: at(0, 0), To: at(16, 0)})
+	// 30 minutes on the presentation; T3 Code is the album's by rule but does not count while focusing on something else.
+	if day.Tasks[1].Minutes != 30 || day.Tasks[0].Minutes != 0 {
+		t.Fatalf("tasks = %+v", day.Tasks)
+	}
+	now := func(to time.Time, claims ...Claim) *FocusNow {
+		var upTo []Segment
+		for _, segment := range segments {
+			if segment.Start.Before(to) {
+				segment.End = earlier(segment.End, to)
+				upTo = append(upTo, segment)
+			}
+		}
+		return Track(DayInput{Result: Result{Segments: upTo}, Labels: labels, Tasks: tasks, Focus: []FocusSpan{{TaskID: slides, Start: at(15, 0), End: to}},
+			Claims: claims, From: at(0, 0), To: to}).Focus
+	}
+	if got := now(at(15, 25)); got.On != FocusOn || got.Task != "Science fair presentation" || got.NextAction != "Outline the three sections" || got.OffSince != nil {
+		t.Fatalf("on task = %+v", got)
+	}
+	if got := now(at(15, 44)); got.On != FocusOff || got.Context != "trendyol.com" || !got.OffSince.Equal(at(15, 30)) {
+		t.Fatalf("left the task at 15:30: %+v", got)
+	}
+	unknown := now(at(15, 48))
+	if unknown.On != FocusUnknown || unknown.Context != "en.wikipedia.org" || unknown.LearnContext != "en.wikipedia.org" {
+		t.Fatalf("unknown = %+v", unknown)
+	}
+	// "Just this time": the owner's word for this sitting makes it part of the task without teaching anything.
+	if got := now(at(15, 48), Claim{TaskID: &slides, Context: "en.wikipedia.org", Start: at(15, 46)}); got.On != FocusOn {
+		t.Fatalf("just this time = %+v", got)
+	}
+	if got := now(at(15, 51)); got.On != FocusOff {
+		t.Fatalf("a distraction is off: %+v", got)
+	}
+	if got := Track(DayInput{Result: Result{Segments: segments[:1]}, Tasks: tasks, Focus: []FocusSpan{{TaskID: slides, Start: at(15, 0), End: at(15, 40)}},
+		From: at(0, 0), To: at(15, 40)}); got.State != "away" || got.Focus == nil || got.Focus.On != "away" {
+		t.Fatalf("away during focus = %+v %+v", got, got.Focus)
+	}
+}
+
+func TestLearnedMemoryAppliesAtProjectLevelAndCanOverrideARule(t *testing.T) {
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
+	album := int64(3)
+	messages := ThreadMessages([]Record{
+		{Source: "t3:mac:env", Kind: "t3.project", Payload: []byte(`{"project_id":"p","title":"album-site","workspace_root":"/Users/ri/code/album-site"}`)},
+		{Source: "t3:mac:env", Kind: "t3.thread", Payload: []byte(`{"thread_id":"a","project_id":"p","title":"Fix the grid"}`)},
+		{Source: "t3:mac:env", Kind: "t3.thread", Payload: []byte(`{"thread_id":"b","project_id":"p","title":"Add captions"}`)},
+		{Source: "t3:mac:env", Kind: "t3.turn", Payload: []byte(`{"thread_id":"a","requested_at":"2026-10-02T14:05:00Z"}`)},
+		{Source: "t3:mac:env", Kind: "t3.turn", Payload: []byte(`{"thread_id":"b","requested_at":"2026-10-02T14:35:00Z"}`)},
+	})
+	segments := []Segment{
+		{Device: DeviceMac, App: "T3 Code (Nightly)", Start: at(14, 0), End: at(14, 10)},
+		{Device: DeviceMac, App: "T3 Code (Nightly)", Start: at(14, 30), End: at(14, 40)},
+		{Device: DeviceMac, App: "Finder", Start: at(14, 40), End: at(14, 45)},
+	}
+	// One "yes" about the project covers both of its threads.
+	tasks := []TaskInfo{{ID: album, Title: "Dad's album", Related: []string{"T3 Code (Nightly) · album-site"}, Rules: []TaskRule{{Signal: "app", Pattern: "Finder"}}}}
+	day := BuildDay(DayInput{Result: Result{Segments: segments}, Messages: messages, Tasks: tasks, From: at(0, 0), To: at(15, 0)})
+	if day.Tasks[0].Minutes != 25 {
+		t.Fatalf("project-level memory = %+v", day.Tasks)
+	}
+	// The owner later says Finder is not part of it: that beats the rule.
+	tasks[0].Unrelated = []string{"Finder"}
+	day = BuildDay(DayInput{Result: Result{Segments: segments}, Messages: messages, Tasks: tasks, From: at(0, 0), To: at(15, 0)})
+	if day.Tasks[0].Minutes != 20 {
+		t.Fatalf("an owner's no must override a rule: %+v", day.Tasks)
 	}
 }

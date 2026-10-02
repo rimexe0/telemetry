@@ -53,8 +53,9 @@ func (p *Postgres) ListTaskClaims(ctx context.Context, from, to time.Time) ([]Ta
 }
 
 // LoadDayInput gathers what the day view and the current-task reading need
-// for [from, to): recorded activity, labels, T3 messages, the owner's open
-// tasks with their rules, their claims, and the plan for planDate.
+// for [from, to): recorded activity, labels, agent messages, the owner's
+// open tasks with their rules and memory, their claims, their focus
+// sessions, and the plan for planDate.
 func LoadDayInput(ctx context.Context, repository Repository, planDate, from, to time.Time, withSegments bool) (activity.DayInput, *Plan, error) {
 	input := activity.DayInput{From: from, To: to, WithSegments: withSegments}
 	records, _, err := repository.ActivityRecords(ctx, from, to)
@@ -81,11 +82,30 @@ func LoadDayInput(ctx context.Context, repository Repository, planDate, from, to
 		return input, nil, err
 	}
 	byTask := TaskRules(rules)
+	evidence, err := repository.ListTaskEvidence(ctx)
+	if err != nil {
+		return input, nil, err
+	}
 	for _, item := range activities {
 		if item.Status == "done" || item.Status == "completed" || item.Status == "abandoned" {
 			continue
 		}
-		input.Tasks = append(input.Tasks, activity.TaskInfo{ID: item.ID, Title: item.Title, Rules: byTask[item.ID]})
+		info := activity.TaskInfo{ID: item.ID, Title: item.Title, NextAction: item.NextAction, Rules: byTask[item.ID]}
+		for _, known := range evidence {
+			if known.TaskID != item.ID {
+				continue
+			}
+			switch known.Verdict {
+			case EvidenceRelated:
+				info.Related = append(info.Related, known.Context)
+			case EvidenceUnrelated:
+				info.Unrelated = append(info.Unrelated, known.Context)
+			}
+		}
+		input.Tasks = append(input.Tasks, info)
+	}
+	if input.Focus, err = LoadFocusSpans(ctx, repository, from, to); err != nil {
+		return input, nil, err
 	}
 	// A claim made before from can still hold at from.
 	claims, err := repository.ListTaskClaims(ctx, from.Add(-12*time.Hour), to)
@@ -93,7 +113,7 @@ func LoadDayInput(ctx context.Context, repository Repository, planDate, from, to
 		return input, nil, err
 	}
 	for _, claim := range claims {
-		input.Claims = append(input.Claims, activity.Claim{TaskID: claim.TaskID, Start: claim.StartedAt})
+		input.Claims = append(input.Claims, activity.Claim{TaskID: claim.TaskID, Context: claim.Context, Start: claim.StartedAt})
 	}
 	plan, err := repository.LatestPlan(ctx, planDate)
 	if err != nil {

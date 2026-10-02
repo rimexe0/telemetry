@@ -648,6 +648,14 @@ func (f *fakeRepository) ListTaskClaims(context.Context, time.Time, time.Time) (
 	return nil, nil
 }
 
+func (f *fakeRepository) AddTaskEvidence(_ context.Context, evidence store.TaskEvidence) (store.TaskEvidence, error) {
+	return evidence, nil
+}
+
+func (f *fakeRepository) ListTaskEvidence(context.Context) ([]store.TaskEvidence, error) {
+	return nil, nil
+}
+
 func (f *fakeRepository) AddPlanBlock(context.Context, time.Time, store.PlanBlockSpec, string) (store.AgentChange, store.Plan, error) {
 	return store.AgentChange{}, store.Plan{}, nil
 }

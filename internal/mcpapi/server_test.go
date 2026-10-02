@@ -288,6 +288,14 @@ func (fakeRepository) ListTaskClaims(context.Context, time.Time, time.Time) ([]s
 	return nil, nil
 }
 
+func (fakeRepository) AddTaskEvidence(_ context.Context, evidence store.TaskEvidence) (store.TaskEvidence, error) {
+	return evidence, nil
+}
+
+func (fakeRepository) ListTaskEvidence(context.Context) ([]store.TaskEvidence, error) {
+	return nil, nil
+}
+
 func (fakeRepository) AddPlanBlock(context.Context, time.Time, store.PlanBlockSpec, string) (store.AgentChange, store.Plan, error) {
 	return store.AgentChange{}, store.Plan{}, nil
 }

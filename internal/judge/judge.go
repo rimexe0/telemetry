@@ -1,0 +1,107 @@
+// Package judge asks an assistant whether something on screen is part of a
+// task, when the task's own memory and rules cannot tell. The assistant is
+// any command that takes a prompt as its last argument and prints an answer:
+// Hermes in one-shot mode, or another agent CLI.
+package judge
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os/exec"
+	"strings"
+)
+
+const (
+	Related   = "related"
+	Unrelated = "unrelated"
+	Unsure    = "unsure"
+)
+
+// Question is what the judge is shown. It carries titles and names only,
+// never page or message contents.
+type Question struct {
+	Task       string
+	Notes      string
+	NextAction string
+	// Related and Unrelated are what the task has already learned.
+	Related   []string
+	Unrelated []string
+	// Context is the app or site, with its project and thread for a coding
+	// agent; Title is the window or page title.
+	Context string
+	Title   string
+}
+
+type Verdict struct {
+	Verdict string `json:"verdict"`
+	Reason  string `json:"reason"`
+}
+
+// Prompt words the question. It asks for "unsure" whenever the judge cannot
+// tell: this owner does tasks in their own and often unexpected way, so
+// something unfamiliar is not thereby unrelated.
+func Prompt(question Question) string {
+	lines := []string{
+		"You judge whether what is on a person's computer screen is part of the one task they chose to focus on right now.",
+		"This person does tasks in their own, often unexpected way, and uses general tools (chat assistants, search, odd sites) for almost anything.",
+		"So: something unfamiliar is NOT thereby unrelated. Say \"unrelated\" only when it clearly has nothing to do with the task. Say \"unsure\" whenever you cannot tell; they will then be asked.",
+		"",
+		"Task: " + question.Task,
+	}
+	if question.Notes != "" {
+		lines = append(lines, "Task notes: "+question.Notes)
+	}
+	if question.NextAction != "" {
+		lines = append(lines, "Next step of the task: "+question.NextAction)
+	}
+	if len(question.Related) > 0 {
+		lines = append(lines, "Already known to be part of this task: "+strings.Join(question.Related, "; "))
+	}
+	if len(question.Unrelated) > 0 {
+		lines = append(lines, "Already known NOT to be part of this task: "+strings.Join(question.Unrelated, "; "))
+	}
+	lines = append(lines, "", "On screen now: "+question.Context)
+	if question.Title != "" {
+		lines = append(lines, "Window or page title: "+question.Title)
+	}
+	lines = append(lines, "", "Do not use any tools. Answer with exactly one line of JSON and nothing else:",
+		`{"verdict":"related|unrelated|unsure","reason":"a few words"}`)
+	return strings.Join(lines, "\n")
+}
+
+// Parse reads the verdict from the judge's output: the last line that holds
+// a JSON object with a known verdict.
+func Parse(output string) (Verdict, error) {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	for index := len(lines) - 1; index >= 0; index-- {
+		line := strings.TrimSpace(lines[index])
+		start, end := strings.Index(line, "{"), strings.LastIndex(line, "}")
+		if start < 0 || end <= start {
+			continue
+		}
+		var verdict Verdict
+		if json.Unmarshal([]byte(line[start:end+1]), &verdict) != nil {
+			continue
+		}
+		verdict.Verdict = strings.ToLower(strings.TrimSpace(verdict.Verdict))
+		if verdict.Verdict == Related || verdict.Verdict == Unrelated || verdict.Verdict == Unsure {
+			return verdict, nil
+		}
+	}
+	return Verdict{}, errors.New("the judge gave no verdict")
+}
+
+// Ask runs the command with the prompt as its last argument.
+func Ask(ctx context.Context, command []string, question Question) (Verdict, error) {
+	if len(command) == 0 {
+		return Verdict{}, errors.New("no judge command is configured")
+	}
+	arguments := append(append([]string{}, command[1:]...), Prompt(question))
+	output, err := exec.CommandContext(ctx, command[0], arguments...).Output()
+	if err != nil {
+		return Verdict{}, fmt.Errorf("judge command: %w", err)
+	}
+	return Parse(string(output))
+}

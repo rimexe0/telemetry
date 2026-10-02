@@ -176,6 +176,18 @@ func (s *Server) policyInputs(ctx context.Context, from, to time.Time) (policy.C
 				execution.Title = block.Title
 			}
 		}
+		// A focus session started without a block is named by its task.
+		if execution.Title == "" {
+			activities, err := s.repository.ListActivities(ctx, store.ActivityFilter{Limit: 500})
+			if err != nil {
+				return config, 0, policy.Facts{}, err
+			}
+			for _, activity := range activities {
+				if activity.ID == primary.ActivityID {
+					execution.Title = activity.Title
+				}
+			}
+		}
 		facts.Execution = execution
 	}
 	return config, version, facts, nil

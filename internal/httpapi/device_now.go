@@ -203,3 +203,63 @@ func (s *Server) deviceClaim(writer http.ResponseWriter, request *http.Request) 
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"claim": claim})
 }
+
+// deviceFocus lets the owner start, pause, resume or end a focus session
+// from a paired device.
+func (s *Server) deviceFocus(writer http.ResponseWriter, request *http.Request) {
+	if !s.pairedDeviceAuthorized(request) {
+		writeError(writer, http.StatusUnauthorized, "unauthorized", "a paired device credential is required")
+		return
+	}
+	request.Body = http.MaxBytesReader(writer, request.Body, s.config.MaxRequestSize)
+	var input struct {
+		Action string `json:"action"`
+		TaskID int64  `json:"task_id"`
+	}
+	if err := decodeExecutionJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_json", "request body must contain one focus action")
+		return
+	}
+	session, err := store.ChangeFocus(request.Context(), s.repository, input.Action, input.TaskID)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		writeError(writer, http.StatusNotFound, "not_found", "task does not exist")
+	case errors.Is(err, store.ErrInvalidExecutionInput), errors.Is(err, store.ErrInvalidExecutionTransition), errors.Is(err, store.ErrExecutionConflict):
+		writeError(writer, http.StatusBadRequest, "invalid_focus", err.Error())
+	case err != nil:
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+	default:
+		writeJSON(writer, http.StatusOK, map[string]any{"session": session})
+	}
+}
+
+// deviceEvidence records the owner's answer, on a paired device, that
+// something is or is not part of a task. The task remembers it.
+func (s *Server) deviceEvidence(writer http.ResponseWriter, request *http.Request) {
+	if !s.pairedDeviceAuthorized(request) {
+		writeError(writer, http.StatusUnauthorized, "unauthorized", "a paired device credential is required")
+		return
+	}
+	request.Body = http.MaxBytesReader(writer, request.Body, s.config.MaxRequestSize)
+	var input struct {
+		TaskID  int64  `json:"task_id"`
+		Context string `json:"context"`
+		Verdict string `json:"verdict"`
+	}
+	if err := decodeExecutionJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_json", "request body must contain one answer")
+		return
+	}
+	evidence, err := s.repository.AddTaskEvidence(request.Context(), store.TaskEvidence{TaskID: input.TaskID, Context: input.Context, Verdict: input.Verdict,
+		Source: store.EvidenceOwner, DeviceID: strings.TrimSpace(request.Header.Get("X-Telemetry-Device-ID"))})
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		writeError(writer, http.StatusNotFound, "not_found", "task does not exist")
+	case errors.Is(err, store.ErrInvalidEvidence):
+		writeError(writer, http.StatusBadRequest, "invalid_evidence", err.Error())
+	case err != nil:
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+	default:
+		writeJSON(writer, http.StatusOK, map[string]any{"evidence": evidence})
+	}
+}

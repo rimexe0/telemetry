@@ -57,20 +57,66 @@ func TestTrackerShowsEachNoticeOnce(t *testing.T) {
 	}
 }
 
-func TestTrackerRecordsTheAnswer(t *testing.T) {
-	var received map[string]any
+func TestTrackerInAFocusSession(t *testing.T) {
+	tracker := &Tracker{greeted: time.Date(2026, 10, 2, 15, 0, 0, 0, time.Local).Format("2006-01-02")}
+	start := time.Date(2026, 10, 2, 15, 0, 0, 0, time.Local)
+	body := func(on, context string, off time.Duration) trackingNow {
+		now := trackingBody("other", 0, "", context, time.Time{})
+		focus := &focusNow{TaskID: 4, Task: "Science fair presentation", NextAction: "Outline the three sections", Since: start, On: on, Context: context, LearnContext: context}
+		if on != "on" {
+			since := start.Add(off)
+			focus.OffSince = &since
+		}
+		now.Tracking.Focus = focus
+		return now
+	}
+	if got := tracker.decide(body("on", "docs.google.com", 0), start.Add(5*time.Minute)); got != nil {
+		t.Fatalf("on the task: %+v", got)
+	}
+	// A minute away is not mentioned; two minutes is.
+	if got := tracker.decide(body("off", "trendyol.com", 10*time.Minute), start.Add(11*time.Minute)); got != nil {
+		t.Fatalf("one minute away: %+v", got)
+	}
+	back := tracker.decide(body("off", "trendyol.com", 10*time.Minute), start.Add(12*time.Minute))
+	if back == nil || back.kind != "back" || back.title != "Back to: Science fair presentation" || back.detail != "2 min on trendyol.com. Next: Outline the three sections" {
+		t.Fatalf("back = %+v", back)
+	}
+	if got := tracker.decide(body("off", "trendyol.com", 10*time.Minute), start.Add(14*time.Minute)); got != nil {
+		t.Fatalf("reminded again too soon: %+v", got)
+	}
+	if got := tracker.decide(body("off", "trendyol.com", 10*time.Minute), start.Add(17*time.Minute)); got == nil || got.kind != "back" {
+		t.Fatalf("still away after five more minutes: %+v", got)
+	}
+	// Something unknown is asked about once, not treated as drift.
+	ask := tracker.decide(body("unknown", "en.wikipedia.org", 20*time.Minute), start.Add(23*time.Minute))
+	if ask == nil || ask.kind != "ask" || ask.title != "Is this part of Science fair presentation?" || ask.detail != "en.wikipedia.org" {
+		t.Fatalf("ask = %+v", ask)
+	}
+	if got := tracker.decide(body("unknown", "en.wikipedia.org", 20*time.Minute), start.Add(24*time.Minute)); got != nil {
+		t.Fatalf("asked twice about one thing: %+v", got)
+	}
+}
+
+func TestTrackerRecordsAnswers(t *testing.T) {
+	type call struct {
+		path string
+		body map[string]any
+	}
+	var calls []call
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/v1/device/claims" || request.Header.Get("X-Telemetry-Device-ID") != "mac-1" || request.Header.Get("Authorization") != "Bearer secret" {
+		if request.Header.Get("X-Telemetry-Device-ID") != "mac-1" || request.Header.Get("Authorization") != "Bearer secret" {
 			writer.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		body, _ := io.ReadAll(request.Body)
-		json.Unmarshal(body, &received)
+		raw, _ := io.ReadAll(request.Body)
+		var body map[string]any
+		json.Unmarshal(raw, &body)
+		calls = append(calls, call{request.URL.Path, body})
 		writer.Write([]byte(`{}`))
 	}))
 	defer server.Close()
 	shown := []string{}
-	answers := []int{}
+	var answers []int
 	tracker := &Tracker{Credentials: &Credentials{BaseURL: server.URL, DeviceID: "mac-1", Secret: "secret"},
 		Prompt: func(title, detail string, options []string, _ time.Duration) int {
 			shown = append(shown, title)
@@ -79,16 +125,54 @@ func TestTrackerRecordsTheAnswer(t *testing.T) {
 			return answer
 		}}
 	options := []taskRef{{3, "Dad's album"}, {4, "Science fair presentation"}}
-	// "Wrong" on a told task lets the owner pick the right one.
+	last := func() call { return calls[len(calls)-1] }
+
+	// "Wrong" on a told task lets the owner pick the right one; "Something else" needs no explanation.
 	answers = []int{0, 1}
 	tracker.show(notice{kind: "tell", title: "Tracking: Dad's album", options: options}, "Keynote")
-	if received["task_id"] != float64(4) || received["context"] != "Keynote" || tracker.told != 4 {
-		t.Fatalf("claim = %+v told = %d", received, tracker.told)
+	if last().path != "/v1/device/claims" || last().body["task_id"] != float64(4) || last().body["context"] != "Keynote" || tracker.told != 4 {
+		t.Fatalf("pick = %+v told = %d", last(), tracker.told)
 	}
-	// "Something else" is the last option and needs no explanation.
 	answers = []int{0, 2}
 	tracker.show(notice{kind: "tell", title: "Tracking: Dad's album", options: options}, "Finder")
-	if len(shown) != 4 || shown[3] != "What is this part of?" || received["task_id"] != nil || received["context"] != "Finder" {
-		t.Fatalf("shown = %v claim = %+v", shown, received)
+	if last().body["task_id"] != nil || shown[len(shown)-1] != "What is this part of?" {
+		t.Fatalf("something else = %+v shown = %v", last(), shown)
+	}
+	// Starting a focus session from the day's greeting.
+	answers = []int{1}
+	tracker.show(notice{kind: "greet", title: "Today", options: options}, "")
+	if last().path != "/v1/device/focus" || last().body["action"] != "start" || last().body["task_id"] != float64(4) {
+		t.Fatalf("start focus = %+v", last())
+	}
+	focus := &focusNow{TaskID: 4, Task: "Science fair presentation", Context: "T3 Code (Nightly) · Telemetry · Clarify next steps", LearnContext: "T3 Code (Nightly) · Telemetry"}
+	// Yes is remembered at project level; "just this time" is a claim on exactly what is on screen; no is remembered.
+	answers = []int{0}
+	tracker.show(notice{kind: "ask", title: "Is this part of Science fair presentation?", focus: focus}, "")
+	if last().path != "/v1/device/evidence" || last().body["verdict"] != "related" || last().body["context"] != "T3 Code (Nightly) · Telemetry" {
+		t.Fatalf("yes = %+v", last())
+	}
+	answers = []int{1}
+	tracker.show(notice{kind: "ask", focus: focus}, "")
+	if last().path != "/v1/device/claims" || last().body["context"] != "T3 Code (Nightly) · Telemetry · Clarify next steps" || last().body["task_id"] != float64(4) {
+		t.Fatalf("just this time = %+v", last())
+	}
+	answers = []int{2}
+	tracker.show(notice{kind: "ask", focus: focus}, "")
+	if last().path != "/v1/device/evidence" || last().body["verdict"] != "unrelated" {
+		t.Fatalf("no = %+v", last())
+	}
+	// From the reminder: pause the session, or say it is part of the task.
+	answers = []int{3}
+	tracker.show(notice{kind: "back", focus: focus}, "")
+	if last().path != "/v1/device/focus" || last().body["action"] != "pause" {
+		t.Fatalf("pause = %+v", last())
+	}
+	before := len(calls)
+	answers = []int{0}
+	tracker.show(notice{kind: "back", focus: focus}, "")
+	answers = []int{-1}
+	tracker.show(notice{kind: "ask", focus: focus}, "")
+	if len(calls) != before {
+		t.Fatalf("OK and an unanswered question must record nothing: %+v", calls[before:])
 	}
 }

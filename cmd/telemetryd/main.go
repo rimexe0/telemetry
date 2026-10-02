@@ -151,6 +151,9 @@ func main() {
 		_ = httpServer.Shutdown(shutdownContext)
 	}()
 	go runSilenceChecker(context, database)
+	// The assistant that judges unknown things in a focus session: a command
+	// that takes the prompt as its last argument, such as "hermes --ignore-rules -z".
+	go runJudge(context, database, strings.Fields(os.Getenv("TELEMETRY_JUDGE_COMMAND")))
 	log.Printf("Telemetry core listening on %s", *listen)
 	if err := httpServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
