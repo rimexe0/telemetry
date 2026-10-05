@@ -111,3 +111,85 @@ func TestT3ReportsASchemaChangeInsteadOfGuessing(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// fakeT3V2 is a T3 userdata directory after the move to orchestration v2:
+// state.sqlite is left behind and statev2.sqlite holds the current state.
+func fakeT3V2(t *testing.T) string {
+	t.Helper()
+	dir, _ := fakeT3(t)
+	db, err := sql.Open("sqlite", filepath.Join(dir, "statev2.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, statement := range []string{
+		`CREATE TABLE projection_projects (project_id TEXT, title TEXT, workspace_root TEXT, created_at TEXT, updated_at TEXT, deleted_at TEXT)`,
+		`CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT, project_id TEXT, title TEXT, default_provider TEXT, runtime_mode TEXT,
+			interaction_mode TEXT, active_provider_thread_id TEXT, created_at TEXT, updated_at TEXT, archived_at TEXT, deleted_at TEXT, payload_json TEXT)`,
+		`CREATE TABLE orchestration_v2_projection_runs (run_id TEXT, thread_id TEXT, ordinal INTEGER, provider TEXT, provider_thread_id TEXT, status TEXT,
+			requested_at TEXT, completed_at TEXT, payload_json TEXT)`,
+		`CREATE TABLE orchestration_v2_projection_messages (message_id TEXT, thread_id TEXT, run_id TEXT, node_id TEXT, role TEXT, streaming INTEGER,
+			created_at TEXT, updated_at TEXT, payload_json TEXT)`,
+		`CREATE TABLE orchestration_v2_projection_runtime_requests (runtime_request_id TEXT, thread_id TEXT, node_id TEXT, provider_turn_id TEXT,
+			kind TEXT, status TEXT, created_at TEXT, resolved_at TEXT, payload_json TEXT)`,
+		`CREATE TABLE orchestration_v2_projection_provider_sessions (provider_session_id TEXT, thread_id TEXT, provider TEXT, status TEXT, model TEXT,
+			updated_at TEXT, payload_json TEXT)`,
+		`INSERT INTO projection_projects VALUES ('p1', 'Telemetry', '/code/telemetry', '2026-09-01T10:00:00.000Z', '2026-09-01T10:00:00.000Z', NULL)`,
+		`INSERT INTO orchestration_v2_projection_threads VALUES ('t1', 'p1', 'Fix the collector', 'claudeAgent', 'full-access', 'default', NULL,
+			'2026-09-30T09:00:00.000Z', '2026-10-05T10:00:00.000Z', NULL, NULL,
+			'{"branch":"main","worktreePath":null,"modelSelection":{"instanceId":"claudeAgent","model":"claude-opus-5-5"}}')`,
+		`INSERT INTO orchestration_v2_projection_messages VALUES ('m1', 't1', 'r1', NULL, 'user', 0, '2026-10-05T09:00:00.000Z', '2026-10-05T09:00:00.000Z', '{"text":"secret"}')`,
+		`INSERT INTO orchestration_v2_projection_messages VALUES ('m2', 't1', 'r2', NULL, 'user', 0, '2026-10-05T10:00:00.000Z', '2026-10-05T10:00:00.000Z', '{"text":"secret"}')`,
+		`INSERT INTO orchestration_v2_projection_runtime_requests VALUES ('q1', 't1', 'n1', NULL, 'user_input', 'pending', '2026-10-05T10:01:00.000Z', NULL, '{}')`,
+		`INSERT INTO orchestration_v2_projection_runtime_requests VALUES ('q2', 't1', 'n1', NULL, 'command', 'resolved', '2026-10-05T09:01:00.000Z', NULL, '{}')`,
+		`INSERT INTO orchestration_v2_projection_provider_sessions VALUES ('s1', 't1', 'claudeAgent', 'closed', NULL, '2026-10-04T10:00:00.000Z', '{}')`,
+		`INSERT INTO orchestration_v2_projection_provider_sessions VALUES ('s2', 't1', 'claudeAgent', 'running', NULL, '2026-10-05T10:00:00.000Z', '{}')`,
+		`INSERT INTO orchestration_v2_projection_runs VALUES ('r1', 't1', 1, 'claudeAgent', NULL, 'completed', '2026-10-05T09:00:00.000Z', '2026-10-05T09:20:00.000Z',
+			'{"startedAt":"2026-10-05T09:00:01.000Z"}')`,
+		`INSERT INTO orchestration_v2_projection_runs VALUES ('r2', 't1', 2, 'claudeAgent', NULL, 'waiting', '2026-10-05T10:00:00.000Z', NULL,
+			'{"startedAt":"2026-10-05T10:00:01.000Z"}')`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+func TestT3ReadsOrchestrationV2WhenPresent(t *testing.T) {
+	dir := fakeT3V2(t)
+	q, _ := queue.Open(filepath.Join(t.TempDir(), "q.sqlite3"))
+	defer q.Close()
+	module := &T3{Dir: dir, queued: map[string]string{}}
+	now := time.Date(2026, 10, 5, 10, 5, 0, 0, time.UTC)
+	if err := module.collect(context.Background(), Host{Queue: q, DeviceID: "mac-1"}, now); err != nil {
+		t.Fatal(err)
+	}
+	items, _ := q.Claim(context.Background(), 100, time.Minute, now)
+	found := map[string]map[string]any{}
+	for _, item := range items {
+		if item.Observation.SourceSchemaVersion != t3SchemaVersionV2 {
+			t.Fatalf("schema = %s", item.Observation.SourceSchemaVersion)
+		}
+		var payload map[string]any
+		json.Unmarshal(item.Observation.OriginalPayload, &payload)
+		found[item.Observation.SourceRecordKey] = payload
+	}
+	thread := found["thread:t1"]
+	if len(found) != 4 || thread["title"] != "Fix the collector" || thread["branch"] != "main" || thread["model"] != "claude-opus-5-5" ||
+		thread["latest_user_message_at"] != "2026-10-05T10:00:00.000Z" || thread["pending_user_input_count"] != float64(1) ||
+		thread["pending_approval_count"] != float64(0) || thread["session_status"] != "running" || thread["active_turn_id"] != "r2" {
+		t.Fatalf("found = %+v", found)
+	}
+	if done, waiting := found["turn:t1:r1"], found["turn:t1:r2"]; done["state"] != "completed" || done["started_at"] != "2026-10-05T09:00:01.000Z" ||
+		waiting["state"] != "running" || waiting["run_status"] != "waiting" {
+		t.Fatalf("turns = %+v / %+v", done, waiting)
+	}
+	for _, payload := range found {
+		for _, value := range payload {
+			if value == "secret" {
+				t.Fatal("message content must not be recorded")
+			}
+		}
+	}
+}

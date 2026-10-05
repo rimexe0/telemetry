@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -115,6 +116,47 @@ func OffPlanPrompt(facts string) string {
 var Watched = map[string]string{
 	"module_failing:t3":      "T3 Code's database",
 	"module_failing:t3-open": "which project T3 Code has open",
+}
+
+// A collection problem is told only once it has lasted CollectionGrace, so
+// a module that recovers by itself says nothing, and the same problem on the
+// same machine is told at most once per CollectionRepeat. An incident closes
+// while its machine sleeps or loses its network and opens again when it
+// returns; that is still the same problem.
+const (
+	CollectionGrace  = 30 * time.Minute
+	CollectionRepeat = 24 * time.Hour
+)
+
+// Told is a collection message already delivered.
+type Told struct {
+	Facts string
+	At    time.Time
+}
+
+// CollectionMarker is logged as the facts of a collection message.
+func CollectionMarker(id int64, device, kind string) string {
+	return fmt.Sprintf("incident %d %s %s", id, device, kind)
+}
+
+// CollectionDue reports whether an open incident should be told now.
+func CollectionDue(id int64, device, kind string, started, now time.Time, told []Told) bool {
+	if now.Sub(started) < CollectionGrace {
+		return false
+	}
+	for _, entry := range told {
+		fields := strings.Fields(entry.Facts)
+		if len(fields) < 2 || fields[0] != "incident" {
+			continue
+		}
+		if fields[1] == strconv.FormatInt(id, 10) {
+			return false
+		}
+		if len(fields) == 4 && fields[2] == device && fields[3] == kind && now.Sub(entry.At) < CollectionRepeat {
+			return false
+		}
+	}
+	return true
 }
 
 // CollectionMessage tells the owner that reading T3 Code broke.

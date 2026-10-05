@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -42,9 +44,31 @@ type T3Open struct {
 	spans   map[string]*t3OpenSpan
 	conn    *websocket.Conn
 	request int
+	// protocol is the orchestration protocol version T3's server requires
+	// on connect; a server that asks for another one is followed.
+	protocol string
 }
 
 const t3OpenSchemaVersion = "t3-background-policy-1"
+
+// t3OpenProtocol is the orchestration protocol version T3 Code's server
+// required when this was written (October 2026); without it the server
+// answers 426.
+const t3OpenProtocol = "2"
+
+// t3RequiredProtocol reads the protocol version from T3's 426 answer.
+func t3RequiredProtocol(response *http.Response) string {
+	if response.Body == nil {
+		return ""
+	}
+	var answer struct {
+		Version json.Number `json:"orchestrationProtocolVersion"`
+	}
+	if json.NewDecoder(io.LimitReader(response.Body, 1024)).Decode(&answer) != nil {
+		return ""
+	}
+	return answer.Version.String()
+}
 
 // t3OpenRefresh is how often an open span's end is sent again while it lasts.
 const t3OpenRefresh = time.Minute
@@ -112,11 +136,24 @@ func (t *T3Open) poll(ctx context.Context, host Host, now time.Time) (string, er
 		if err != nil {
 			return "", fmt.Errorf("T3 session token: %w", err)
 		}
-		dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		conn, response, err := websocket.Dial(dialCtx, "ws"+strings.TrimPrefix(origin, "http")+"/ws", &websocket.DialOptions{
-			HTTPHeader: http.Header{"Authorization": []string{"Bearer " + strings.TrimSpace(string(token))}},
-		})
-		cancel()
+		if t.protocol == "" {
+			t.protocol = t3OpenProtocol
+		}
+		dial := func() (*websocket.Conn, *http.Response, error) {
+			dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			return websocket.Dial(dialCtx, "ws"+strings.TrimPrefix(origin, "http")+"/ws?orchestrationProtocol="+url.QueryEscape(t.protocol), &websocket.DialOptions{
+				HTTPHeader: http.Header{"Authorization": []string{"Bearer " + strings.TrimSpace(string(token))}},
+			})
+		}
+		conn, response, err := dial()
+		if err != nil && response != nil && response.StatusCode == http.StatusUpgradeRequired {
+			// T3 names the protocol version it wants; follow it once.
+			if wanted := t3RequiredProtocol(response); wanted != "" && wanted != t.protocol {
+				t.protocol = wanted
+				conn, response, err = dial()
+			}
+		}
 		if err != nil {
 			var refused *net.OpError
 			if errors.As(err, &refused) {

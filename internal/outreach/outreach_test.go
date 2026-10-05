@@ -84,3 +84,32 @@ func TestMessageAndCommands(t *testing.T) {
 		t.Fatal("a failing send must be reported")
 	}
 }
+
+// The Mac sleeping without saying so closes the incident and waking opens a
+// new one; that is the same problem and is told once.
+func TestCollectionProblemIsToldOnce(t *testing.T) {
+	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	kind := "module_failing:t3-open"
+	if CollectionDue(1, "mac", kind, now.Add(-20*time.Minute), now, nil) {
+		t.Fatal("a problem that may still fix itself is not told yet")
+	}
+	if !CollectionDue(1, "mac", kind, now.Add(-40*time.Minute), now, nil) {
+		t.Fatal("a lasting problem is told")
+	}
+	told := []Told{{Facts: CollectionMarker(1, "mac", kind), At: now.Add(-3 * time.Hour)}}
+	if CollectionDue(1, "mac", kind, now.Add(-4*time.Hour), now, told) {
+		t.Fatal("the same incident is told once")
+	}
+	if CollectionDue(2, "mac", kind, now.Add(-time.Hour), now, told) {
+		t.Fatal("the same problem reopened after sleep is not told again")
+	}
+	if !CollectionDue(2, "fedora", kind, now.Add(-time.Hour), now, told) {
+		t.Fatal("another machine is another problem")
+	}
+	if !CollectionDue(2, "mac", kind, now.Add(-time.Hour), now.Add(25*time.Hour), told) {
+		t.Fatal("a problem still there a day later is told again")
+	}
+	if CollectionDue(7, "mac", kind, now.Add(-time.Hour), now, []Told{{Facts: "incident 7", At: now}}) {
+		t.Fatal("messages logged before the device and kind were recorded still count")
+	}
+}

@@ -21,6 +21,10 @@ import (
 // its projects, threads and turns. Every client (desktop, web, phone) works
 // through a T3 server, so reading each machine's server covers them all.
 // Message contents are never read.
+//
+// T3 Code moved its state to statev2.sqlite (orchestration v2) in October
+// 2026: threads and agent runs live in new tables there, and state.sqlite
+// stops changing. The newer database is read when it exists.
 type T3 struct {
 	// Dir is T3's userdata directory, normally ~/.t3/userdata.
 	Dir      string
@@ -35,7 +39,22 @@ type T3 struct {
 	checked time.Time
 }
 
-const t3SchemaVersion = "t3-state-projection-1"
+const (
+	t3SchemaVersion   = "t3-state-projection-1"
+	t3SchemaVersionV2 = "t3-state-projection-2"
+)
+
+// t3Database is one layout of T3's state database and how to read it.
+type t3Database struct {
+	file    string
+	version string
+	readers []func(context.Context, *sql.DB) ([]t3Row, error)
+}
+
+var t3Databases = []t3Database{
+	{"statev2.sqlite", t3SchemaVersionV2, []func(context.Context, *sql.DB) ([]t3Row, error){readT3Projects, readT3ThreadsV2, readT3RunsV2}},
+	{"state.sqlite", t3SchemaVersion, []func(context.Context, *sql.DB) ([]t3Row, error){readT3Projects, readT3Threads, readT3Turns}},
+}
 
 func (*T3) Name() string { return "t3" }
 
@@ -72,9 +91,17 @@ func (t *T3) Status() map[string]any {
 }
 
 func (t *T3) collect(ctx context.Context, host Host, now time.Time) error {
-	path := filepath.Join(t.Dir, "state.sqlite")
-	if _, err := os.Stat(path); err != nil {
-		return fmt.Errorf("T3 state database: %w", err)
+	var database t3Database
+	var path string
+	for _, candidate := range t3Databases {
+		path = filepath.Join(t.Dir, candidate.file)
+		if _, err := os.Stat(path); err == nil {
+			database = candidate
+			break
+		}
+	}
+	if database.file == "" {
+		return fmt.Errorf("T3 state database: none of statev2.sqlite or state.sqlite in %s", t.Dir)
 	}
 	environment, err := os.ReadFile(filepath.Join(t.Dir, "environment-id"))
 	if err != nil {
@@ -89,7 +116,7 @@ func (t *T3) collect(ctx context.Context, host Host, now time.Time) error {
 	db.SetMaxOpenConns(1)
 
 	rows := []t3Row{}
-	for _, read := range []func(context.Context, *sql.DB) ([]t3Row, error){readT3Projects, readT3Threads, readT3Turns} {
+	for _, read := range database.readers {
 		found, err := read(ctx, db)
 		if err != nil {
 			return fmt.Errorf("read T3 state (its schema may have changed in an update): %w", err)
@@ -111,7 +138,7 @@ func (t *T3) collect(ctx context.Context, host Host, now time.Time) error {
 			OccurredAt:          row.occurred,
 			EndedAt:             row.ended,
 			CollectedAt:         now,
-			SourceSchemaVersion: t3SchemaVersion,
+			SourceSchemaVersion: database.version,
 			OriginalPayload:     payload,
 		}
 		if err := observation.Normalize(); err != nil {
@@ -247,6 +274,109 @@ func readT3Turns(ctx context.Context, db *sql.DB) ([]t3Row, error) {
 		}
 		rows = append(rows, t3Row{kind: "t3.turn", key: "turn:" + thread.String + ":" + turn.String, occurred: *requestedAt, ended: completedAt, payload: map[string]any{
 			"thread_id": thread.String, "turn_id": turn.String, "state": text(state),
+			"requested_at": text(requested), "started_at": text(started), "completed_at": text(completed),
+		}})
+	}
+	return rows, result.Err()
+}
+
+// readT3ThreadsV2 reads orchestration v2 threads into the same fields as
+// readT3Threads. Thread ids carried over from state.sqlite are unchanged, so
+// these are later revisions of the same records.
+func readT3ThreadsV2(ctx context.Context, db *sql.DB) ([]t3Row, error) {
+	result, err := db.QueryContext(ctx, `
+		SELECT t.thread_id, t.project_id, t.title, t.created_at, t.updated_at, t.archived_at, t.deleted_at, t.runtime_mode, t.interaction_mode,
+			t.payload_json,
+			(SELECT max(m.created_at) FROM orchestration_v2_projection_messages m WHERE m.thread_id = t.thread_id AND m.role = 'user'),
+			(SELECT count(*) FROM orchestration_v2_projection_runtime_requests r WHERE r.thread_id = t.thread_id AND r.status = 'pending'
+				AND r.kind NOT IN ('user_input', 'dynamic_tool_call')),
+			(SELECT count(*) FROM orchestration_v2_projection_runtime_requests r WHERE r.thread_id = t.thread_id AND r.status = 'pending'
+				AND r.kind = 'user_input'),
+			s.status, s.provider, s.updated_at,
+			(SELECT r.run_id FROM orchestration_v2_projection_runs r WHERE r.thread_id = t.thread_id
+				AND r.status IN ('preparing', 'queued', 'starting', 'running', 'waiting') ORDER BY r.ordinal DESC LIMIT 1)
+		FROM orchestration_v2_projection_threads t
+		LEFT JOIN orchestration_v2_projection_provider_sessions s ON s.provider_session_id = (
+			SELECT provider_session_id FROM orchestration_v2_projection_provider_sessions WHERE thread_id = t.thread_id ORDER BY updated_at DESC LIMIT 1)`)
+	if err != nil {
+		return nil, err
+	}
+	defer result.Close()
+	rows := []t3Row{}
+	for result.Next() {
+		var id, project, title, created, updated, archived, deleted, runtime, interaction, payloadJSON, latestUser, status, provider, sessionUpdated, activeRun sql.NullString
+		var approvals, inputs sql.NullInt64
+		if err := result.Scan(&id, &project, &title, &created, &updated, &archived, &deleted, &runtime, &interaction, &payloadJSON,
+			&latestUser, &approvals, &inputs, &status, &provider, &sessionUpdated, &activeRun); err != nil {
+			return nil, err
+		}
+		createdAt, err := parseT3Time(created)
+		if err != nil || createdAt == nil {
+			return nil, errors.Join(errors.New("thread without created_at"), err)
+		}
+		var payload struct {
+			Branch    *string `json:"branch"`
+			Worktree  *string `json:"worktreePath"`
+			Selection struct {
+				InstanceID string `json:"instanceId"`
+				Model      string `json:"model"`
+			} `json:"modelSelection"`
+		}
+		if err := json.Unmarshal([]byte(payloadJSON.String), &payload); err != nil {
+			return nil, fmt.Errorf("thread %s payload: %w", id.String, err)
+		}
+		optional := func(value *string) any {
+			if value == nil {
+				return nil
+			}
+			return *value
+		}
+		rows = append(rows, t3Row{kind: "t3.thread", key: "thread:" + id.String, occurred: *createdAt, payload: map[string]any{
+			"thread_id": id.String, "project_id": text(project), "title": text(title), "branch": optional(payload.Branch), "worktree_path": optional(payload.Worktree),
+			"created_at": text(created), "updated_at": text(updated), "archived_at": text(archived), "deleted_at": text(deleted),
+			"latest_user_message_at": text(latestUser), "pending_approval_count": approvals.Int64, "pending_user_input_count": inputs.Int64,
+			"runtime_mode": text(runtime), "interaction_mode": text(interaction), "provider_instance": payload.Selection.InstanceID, "model": payload.Selection.Model,
+			"session_status": text(status), "session_provider": text(provider), "active_turn_id": text(activeRun), "session_updated_at": text(sessionUpdated),
+		}})
+	}
+	return rows, result.Err()
+}
+
+// t3RunStates maps an orchestration v2 run status onto the turn states of
+// state.sqlite, which the server reads: an unfinished run is "running".
+var t3RunStates = map[string]string{
+	"preparing": "running", "queued": "running", "starting": "running", "running": "running", "waiting": "running",
+	"completed": "completed", "interrupted": "interrupted", "cancelled": "interrupted", "rolled_back": "interrupted", "failed": "error",
+}
+
+// readT3RunsV2 reads orchestration v2 runs as turns: a run is what one
+// message from the owner started.
+func readT3RunsV2(ctx context.Context, db *sql.DB) ([]t3Row, error) {
+	result, err := db.QueryContext(ctx, `SELECT thread_id, run_id, status, requested_at, json_extract(payload_json, '$.startedAt'), completed_at FROM orchestration_v2_projection_runs`)
+	if err != nil {
+		return nil, err
+	}
+	defer result.Close()
+	rows := []t3Row{}
+	for result.Next() {
+		var thread, run, status, requested, started, completed sql.NullString
+		if err := result.Scan(&thread, &run, &status, &requested, &started, &completed); err != nil {
+			return nil, err
+		}
+		state, known := t3RunStates[status.String]
+		if !known {
+			return nil, fmt.Errorf("run %s has unknown status %q", run.String, status.String)
+		}
+		requestedAt, err := parseT3Time(requested)
+		if err != nil || requestedAt == nil {
+			return nil, errors.Join(errors.New("run without requested_at"), err)
+		}
+		completedAt, err := parseT3Time(completed)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, t3Row{kind: "t3.turn", key: "turn:" + thread.String + ":" + run.String, occurred: *requestedAt, ended: completedAt, payload: map[string]any{
+			"thread_id": thread.String, "turn_id": run.String, "state": state, "run_status": status.String,
 			"requested_at": text(requested), "started_at": text(started), "completed_at": text(completed),
 		}})
 	}

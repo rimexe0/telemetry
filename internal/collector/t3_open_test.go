@@ -16,11 +16,22 @@ import (
 )
 
 // fakeT3Server answers server.getBackgroundPolicy with whatever answer()
-// returns, after checking the session token.
-func fakeT3Server(t *testing.T, answer func(id string) string) (string, string) {
+// returns, after checking the session token and, like T3, the orchestration
+// protocol version (2 unless another is given).
+func fakeT3Server(t *testing.T, answer func(id string) string, protocol ...string) (string, string) {
+	required := "2"
+	if len(protocol) > 0 {
+		required = protocol[0]
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/ws" || r.Header.Get("Authorization") != "Bearer secret" {
 			http.Error(w, "no", http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Query().Get("orchestrationProtocol") != required {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUpgradeRequired)
+			w.Write([]byte(`{"code":"orchestration_protocol_incompatible","message":"Update this client.","orchestrationProtocolVersion":` + required + `}`))
 			return
 		}
 		conn, err := websocket.Accept(w, r, nil)
@@ -147,6 +158,20 @@ func TestT3OpenReportsAChangedProtocol(t *testing.T) {
 	}
 	if _, done, err := parseT3Policy([]byte(`{"_tag":"Exit","requestId":"7","exit":{"_tag":"Success","value":{"leases":[]}}}`), "1"); done || err != nil {
 		t.Fatal("an answer to another request is skipped")
+	}
+}
+
+// T3 answers 426 with the protocol version it wants after an update; the
+// module follows it instead of failing.
+func TestT3OpenFollowsANewProtocolVersion(t *testing.T) {
+	q, _ := queue.Open(filepath.Join(t.TempDir(), "q.sqlite3"))
+	defer q.Close()
+	dir, token := fakeT3Server(t, func(id string) string {
+		return `{"_tag":"Exit","requestId":"` + id + `","exit":{"_tag":"Success","value":{"leases":[]}}}`
+	}, "3")
+	module := &T3Open{Dir: dir, TokenFile: token, spans: map[string]*t3OpenSpan{}}
+	if state, err := module.poll(context.Background(), Host{Queue: q, DeviceID: "mac-1"}, time.Now()); err != nil || state != "0 T3 clients" || module.protocol != "3" {
+		t.Fatalf("poll = %q, %v, protocol %s", state, err, module.protocol)
 	}
 }
 

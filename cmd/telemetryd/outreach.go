@@ -111,32 +111,34 @@ func runOutreach(ctx context.Context, repository store.Repository, compose, send
 	}
 }
 
-// notifyCollection tells the owner once about each open incident of a module
-// that reads T3 Code's internal formats.
+// notifyCollection tells the owner about a module that reads T3 Code's
+// internal formats once it has kept failing, once per problem: see
+// outreach.CollectionDue.
 func notifyCollection(ctx context.Context, repository store.Repository, send []string, logged []store.Outreach, location *time.Location) {
+	now := time.Now().UTC()
 	listCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	incidents, err := repository.ListCollectionIncidents(listCtx, time.Now().UTC(), 100)
+	incidents, err := repository.ListCollectionIncidents(listCtx, now, 100)
 	cancel()
 	if err != nil {
 		log.Printf("outreach: %v", err)
 		return
 	}
+	told := []outreach.Told{}
+	for _, entry := range logged {
+		if entry.Kind == outreach.KindCollection && entry.Delivered {
+			told = append(told, outreach.Told{Facts: entry.Facts, At: entry.CreatedAt})
+		}
+	}
 	for _, incident := range incidents {
 		what, watched := outreach.Watched[incident.Kind]
-		if !watched || incident.EndedAt != nil {
+		if !watched || incident.EndedAt != nil || !outreach.CollectionDue(incident.ID, incident.Device, incident.Kind, incident.StartedAt, now, told) {
 			continue
 		}
-		marker := fmt.Sprintf("incident %d", incident.ID)
-		told := false
-		for _, entry := range logged {
-			told = told || (entry.Kind == outreach.KindCollection && entry.Facts == marker && entry.Delivered)
-		}
-		if told {
-			continue
-		}
+		marker := outreach.CollectionMarker(incident.ID, incident.Device, incident.Kind)
 		problem, _ := incident.Detail["error"].(string)
 		deliver(ctx, repository, send, outreach.KindCollection,
 			outreach.CollectionMessage(what, incident.Device, incident.StartedAt.In(location).Format("Mon 15:04"), problem), marker)
+		told = append(told, outreach.Told{Facts: marker, At: now})
 	}
 }
 
