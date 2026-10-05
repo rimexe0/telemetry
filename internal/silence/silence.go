@@ -7,12 +7,16 @@ package silence
 import "time"
 
 const (
-	DeviceMac   = "mac"
-	DevicePhone = "phone"
+	DeviceMac    = "mac"
+	DevicePhone  = "phone"
+	DeviceServer = "server"
 
 	KindSilent           = "silent"
 	KindTitlesUnreadable = "titles_unreadable"
 	KindWindowStopped    = "window_sampling_stopped"
+	// KindDiskLow: the server's disk is nearly full; when it fills, the
+	// database stops and nothing more is recorded.
+	KindDiskLow = "disk_low"
 	// KindModulePrefix plus a module name: that module kept failing.
 	KindModulePrefix = "module_failing:"
 )
@@ -24,6 +28,9 @@ const (
 	DesktopSilentAfter = 10 * time.Minute
 	WindowStaleAfter   = 5 * time.Minute
 	ModuleFailingAfter = 10 * time.Minute
+	// DiskLowBelow is the free space on the server's disk below which
+	// collection is at risk.
+	DiskLowBelow = 3 << 30
 )
 
 // DesktopStatus is the latest telemetry.collector_status from one desktop
@@ -53,6 +60,8 @@ type Evidence struct {
 	// phone. Receipt time is used because a phone backfills old events.
 	PhoneLastReceived *time.Time
 	Desktops          []DesktopStatus
+	// ServerFreeBytes is the free space on the server's disk, when known.
+	ServerFreeBytes *uint64
 }
 
 type Finding struct {
@@ -74,6 +83,12 @@ func Evaluate(evidence Evidence, now time.Time) []Finding {
 	}
 	for _, status := range evidence.Desktops {
 		findings = append(findings, evaluateDesktop(status, now)...)
+	}
+	if free := evidence.ServerFreeBytes; free != nil && *free < DiskLowBelow {
+		findings = append(findings, Finding{Device: DeviceServer, Kind: KindDiskLow, Since: now, Detail: map[string]any{
+			"device_name": "Server", "free_bytes": *free,
+			"message": "The server's disk is nearly full. When it fills, the database stops and nothing more is recorded.",
+		}})
 	}
 	return findings
 }

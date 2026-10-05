@@ -2,6 +2,7 @@ package outreach
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -38,31 +39,51 @@ func TestMorningIsSentOnceSoonAfterWaking(t *testing.T) {
 
 func TestOffPlanNeedsALongStretchAndRespectsTheCap(t *testing.T) {
 	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
-	off := Stretch{Active: 40 * time.Minute, OpenTasks: 2}
+	// Jumping between things, none taking most of the time: drift.
+	off := Stretch{Active: 40 * time.Minute, Largest: 12 * time.Minute, OpenTasks: 2}
 	if !OffPlanDue(now, off, nil) {
-		t.Fatal("40 minutes on nothing planned: due")
+		t.Fatal("40 minutes scattered over unplanned things: due")
 	}
 	for name, stretch := range map[string]Stretch{
-		"some task time":   {Active: 40 * time.Minute, OnTasks: 5 * time.Minute, OpenTasks: 2},
-		"mostly away":      {Active: 10 * time.Minute, OpenTasks: 2},
-		"away now":         {Active: 40 * time.Minute, OpenTasks: 2, Away: true},
-		"excused":          {Active: 40 * time.Minute, OpenTasks: 2, Excused: true},
-		"waiting on agent": {Active: 40 * time.Minute, OpenTasks: 2, AgentRunning: true},
-		"no tasks today":   {Active: 40 * time.Minute},
-		"time set aside":   {Active: 40 * time.Minute, OpenTasks: 2, Leisure: true},
+		"some task time":   {Active: 40 * time.Minute, Largest: 12 * time.Minute, OnTasks: 5 * time.Minute, OpenTasks: 2},
+		"mostly away":      {Active: 10 * time.Minute, Largest: 3 * time.Minute, OpenTasks: 2},
+		"away now":         {Active: 40 * time.Minute, Largest: 12 * time.Minute, OpenTasks: 2, Away: true},
+		"excused":          {Active: 40 * time.Minute, Largest: 12 * time.Minute, OpenTasks: 2, Excused: true},
+		"waiting on agent": {Active: 40 * time.Minute, Largest: 12 * time.Minute, OpenTasks: 2, AgentRunning: true},
+		"no tasks today":   {Active: 40 * time.Minute, Largest: 12 * time.Minute},
+		"time set aside":   {Active: 40 * time.Minute, Largest: 12 * time.Minute, OpenTasks: 2, Leisure: true},
+		// A long session on one project that is not a task is deliberate.
+		"one thing": {Active: 40 * time.Minute, Largest: 35 * time.Minute, OpenTasks: 2},
 	} {
 		if OffPlanDue(now, stretch, nil) {
 			t.Fatalf("%s: not due", name)
 		}
 	}
-	if OffPlanDue(now, off, []Sent{{Kind: KindMorning, At: now.Add(-30 * time.Minute)}}) {
+	distracted := Stretch{Active: 40 * time.Minute, Largest: 25 * time.Minute, Distracted: 15 * time.Minute, OpenTasks: 2}
+	if !OffPlanDue(now, distracted, nil) {
+		t.Fatal("a quarter hour on distractions is drift even beside one long thing")
+	}
+	if OffPlanDue(now, off, []Sent{{Kind: KindMorning, At: now.Add(-30 * time.Minute), Delivered: true}}) {
 		t.Fatal("one unasked message an hour, whatever its kind")
 	}
-	if !OffPlanDue(now, off, []Sent{{Kind: KindCollection, At: now.Add(-time.Minute)}}) {
+	if !OffPlanDue(now, off, []Sent{{Kind: KindCollection, At: now.Add(-time.Minute), Delivered: true}}) {
 		t.Fatal("a notice about collection does not count against the cap")
 	}
-	if !OffPlanDue(now, off, []Sent{{Kind: KindOffPlan, At: now.Add(-61 * time.Minute)}}) {
-		t.Fatal("an hour later: due again")
+	if OffPlanDue(now, off, []Sent{{Kind: KindOffPlan, At: now.Add(-2 * time.Hour), Delivered: true}}) {
+		t.Fatal("check-ins are three hours apart")
+	}
+	if !OffPlanDue(now, off, []Sent{{Kind: KindOffPlan, At: now.Add(-2 * time.Hour)}}) {
+		t.Fatal("a decision to stay quiet only holds for an hour")
+	}
+	three := []Sent{}
+	for _, hours := range []int{4, 8, 12} {
+		three = append(three, Sent{Kind: KindOffPlan, At: now.Add(-time.Duration(hours) * time.Hour), Delivered: true})
+	}
+	if OffPlanDue(now, off, three) {
+		t.Fatal("at most three check-ins a day")
+	}
+	if !OffPlanDue(now.Add(13*time.Hour), off, three) {
+		t.Fatal("a day after the first, due again")
 	}
 }
 
@@ -111,5 +132,27 @@ func TestCollectionProblemIsToldOnce(t *testing.T) {
 	}
 	if CollectionDue(7, "mac", kind, now.Add(-time.Hour), now, []Told{{Facts: "incident 7", At: now}}) {
 		t.Fatal("messages logged before the device and kind were recorded still count")
+	}
+}
+
+func TestOnlyRealProblemsAreTold(t *testing.T) {
+	now := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	if CollectionDue(1, "fedora", "module_failing:activitywatch-api", now.Add(-5*time.Hour), now, nil) {
+		t.Fatal("a module that does not stop tracking or blocking is not told")
+	}
+	if CollectionDue(1, "mac", "module_failing:blocker", now.Add(-40*time.Minute), now, nil) ||
+		!CollectionDue(1, "mac", "module_failing:blocker", now.Add(-61*time.Minute), now, nil) {
+		t.Fatal("the blocker is given an hour: a short network loss fixes itself")
+	}
+	for kind, want := range map[string]string{
+		"silent":                 "Open the Telemetry app on the phone",
+		"titles_unreadable":      "Privacy & Security → Accessibility",
+		"module_failing:t3-open": "which project T3 Code has open on fedora",
+		"disk_low":               "has 1.5 GB free",
+	} {
+		message := Problems[kind].Message("fedora", "Mon 10:00", map[string]any{"error": "boom", "free_bytes": float64(3 << 29)})
+		if !strings.Contains(message, want) {
+			t.Fatalf("%s: %q", kind, message)
+		}
 	}
 }

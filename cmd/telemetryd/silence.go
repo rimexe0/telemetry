@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"syscall"
 	"time"
 
 	"github.com/rimexe0/telemetry/internal/silence"
@@ -19,6 +20,11 @@ func runSilenceChecker(ctx context.Context, repository store.Repository) {
 		if err != nil {
 			log.Printf("silence check: %v", err)
 			return
+		}
+		var disk syscall.Statfs_t
+		if syscall.Statfs("/", &disk) == nil {
+			free := uint64(disk.Bavail) * uint64(disk.Bsize)
+			evidence.ServerFreeBytes = &free
 		}
 		now := time.Now().UTC()
 		opened, err := repository.SyncCollectionIncidents(checkCtx, silence.Evaluate(evidence, now), now)

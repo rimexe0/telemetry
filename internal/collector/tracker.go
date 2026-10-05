@@ -19,9 +19,9 @@ const (
 	focusLeave = 2 * time.Minute
 	// While still away from it, the reminder comes back this often.
 	focusRepeat = 5 * time.Minute
-	// Outside a focus session the owner multitasks; they agreed to be told
-	// after ten minutes on something that is none of the day's tasks.
-	offPlanAfter = 10 * time.Minute
+	// A task whose agent stopped is said once at the stop, and once more
+	// when it has waited this long and the owner is elsewhere.
+	waitingAgain = 30 * time.Minute
 	maxChoices   = 6
 )
 
@@ -29,12 +29,13 @@ const (
 // they are on, and lets them say when that is wrong. Outside a focus session
 // it does not ask what they are doing: they do several things at once, and
 // what is on screen is named by the server from its own records. It says
-// when a task's agent has stopped and it is their turn, and when they have
-// been on something outside the day's tasks for a while with no agent to
-// wait for. In a focus session it says when they have left the task, and
-// asks whether something it does not know is part of it. Every notice states
-// a fact and the way back; none of them scolds. Nothing here depends on the
-// owner remembering to do anything.
+// when a task's agent has stopped and it is their turn, and once more if it
+// is still waiting a while later. Time outside the day's tasks is not
+// counted at them here: the owner found a growing "N min outside today's
+// tasks" to be a scolding, and the assistant's check-in judges real drift.
+// In a focus session it says when they have left the task, and asks whether
+// something it does not know is part of it. Every notice states a fact and
+// the way forward. Nothing here depends on the owner remembering anything.
 type Tracker struct {
 	Credentials *Credentials
 	HTTP        *http.Client
@@ -49,10 +50,8 @@ type Tracker struct {
 	session  time.Time
 	asked    map[string]bool
 	reminded time.Time
-	// Outside focus: the agent stops already announced, and the last
-	// off-plan notice.
-	turns   map[string]bool
-	offTold time.Time
+	// Outside focus: the agent stops already announced.
+	turns map[string]bool
 	// host is set by Run; notices are recorded through it.
 	host   *Host
 	health Health
@@ -152,9 +151,8 @@ type trackingNow struct {
 // notice is what to show the owner now, if anything.
 type notice struct {
 	// kind is "greet" (the day's tasks), "tell" (a recognised task), "turn"
-	// (a task's agent stopped), "off" (a while on something outside the
-	// day's tasks), "back" (left the focus task) or "ask" (is this part of
-	// the focus task?).
+	// (a task's agent stopped, or is still waiting), "back" (left the focus
+	// task) or "ask" (is this part of the focus task?).
 	kind    string
 	title   string
 	detail  string
@@ -224,33 +222,17 @@ func (t *Tracker) decide(now trackingNow, at time.Time) *notice {
 		return &notice{kind: "tell", title: "Tracking: " + tracking.Task, detail: tracking.Context, options: now.Tasks,
 			context: tracking.Context, learn: tracking.LearnContext, task: *tracking.TaskID}
 	}
-	// A while on something that is none of the day's tasks, with no agent to
-	// wait for. Filling a wait is fine and is not mentioned.
-	if tracking.State == "other" && !tracking.Excused && !tracking.AgentRunning && len(now.Tasks) > 0 && tracking.Since != nil &&
-		at.Sub(*tracking.Since) >= offPlanAfter && at.Sub(t.offTold) >= offPlanAfter {
-		t.offTold = at
-		// The stretch may span several things; the title gives its length and
-		// the detail names what is on screen now.
-		detail := "Now: " + tracking.Context + "."
-		if len(tracking.YourTurn) > 0 {
-			detail += " Waiting for you: " + tracking.YourTurn[0].Task + "."
+	// Still waiting a while later, and the owner is elsewhere: said once
+	// more, as what is waiting rather than how long they have been away.
+	for _, turn := range tracking.YourTurn {
+		key := fmt.Sprintf("again %d %s", turn.TaskID, turn.Since.UTC().Format(time.RFC3339))
+		if t.turns[key] || at.Sub(turn.Since) < waitingAgain || (tracking.TaskID != nil && *tracking.TaskID == turn.TaskID) {
+			continue
 		}
-		return &notice{kind: "off", title: span(at.Sub(*tracking.Since)) + " outside today's tasks", detail: detail,
-			options: now.Tasks, context: tracking.Context, learn: tracking.LearnContext}
+		t.turns[key] = true
+		return &notice{kind: "turn", title: turn.Task + " is waiting for you", detail: "Its agent stopped at " + turn.Since.Local().Format("15:04") + "."}
 	}
 	return nil
-}
-
-// span words a length of time for a notice: "12 min", "1 h 35 min".
-func span(elapsed time.Duration) string {
-	minutes := int(elapsed.Minutes())
-	if minutes < 60 {
-		return fmt.Sprintf("%d min", minutes)
-	}
-	if minutes%60 == 0 {
-		return fmt.Sprintf("%d h", minutes/60)
-	}
-	return fmt.Sprintf("%d h %d min", minutes/60, minutes%60)
 }
 
 // ago words a duration for a notice: "just now", "4 min ago", "2 h ago".
@@ -330,15 +312,6 @@ func (t *Tracker) show(next notice, onScreen string) {
 		}
 	case "turn":
 		t.present(next, []string{"OK"}, 20*time.Second)
-	case "off":
-		switch t.present(next, []string{"OK", "It's part of…", "One-off"}, 30*time.Second) {
-		case 1:
-			err = t.remember(next.options, next.context, next.learn)
-		case 2:
-			// A one-off needs no explanation and teaches nothing; it only
-			// stops further notices about this thing for this sitting.
-			err = t.post("/v1/device/claims", map[string]any{"task_id": nil, "context": next.context})
-		}
 	case "ask":
 		next.context, next.task = next.focus.Context, next.focus.TaskID
 		err = t.answer(*next.focus, t.present(next, []string{"Yes", "Just this time", "No"}, time.Minute))
@@ -373,23 +346,6 @@ func (t *Tracker) answer(focus focusNow, choice int) error {
 		return t.post("/v1/device/evidence", map[string]any{"task_id": focus.TaskID, "context": focus.LearnContext, "verdict": "unrelated"})
 	}
 	return nil
-}
-
-// remember lets the owner say which task the thing on screen belongs to; the
-// task remembers it, so the same thing is recognised from then on.
-func (t *Tracker) remember(options []taskRef, onScreen, learn string) error {
-	if len(options) > maxChoices {
-		options = options[:maxChoices]
-	}
-	titles := []string{}
-	for _, option := range options {
-		titles = append(titles, option.Title)
-	}
-	choice := t.prompt("What is this part of?", onScreen, append(titles, "Cancel"), time.Minute)
-	if choice < 0 || choice >= len(options) {
-		return nil
-	}
-	return t.post("/v1/device/evidence", map[string]any{"task_id": options[choice].ID, "context": learn, "verdict": "related"})
 }
 
 // correct handles "Wrong" on a told task: that task forgets this thing, and

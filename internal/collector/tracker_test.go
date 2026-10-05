@@ -2,6 +2,7 @@ package collector
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -72,22 +73,28 @@ func TestTrackerInMultitaskWork(t *testing.T) {
 	if got := tracker.decide(body, start.Add(time.Minute)); got != nil {
 		t.Fatalf("the same stop announced twice: %+v", got)
 	}
-	// Ten minutes on something outside the plan, nothing running: told, with what is waiting.
-	if got := tracker.decide(body, start.Add(9*time.Minute)); got != nil {
-		t.Fatalf("nine minutes is not mentioned: %+v", got)
+	// Time outside the plan is not counted at the owner; what is waiting is
+	// said once more after half an hour.
+	if got := tracker.decide(body, start.Add(25*time.Minute)); got != nil {
+		t.Fatalf("time outside the plan must not be counted at the owner: %+v", got)
 	}
-	off := tracker.decide(body, start.Add(10*time.Minute))
-	if off == nil || off.kind != "off" || off.title != "10 min outside today's tasks" ||
-		off.detail != "Now: T3 Code (Nightly) · Telemetry · Clarify next steps. Waiting for you: Dad's album." ||
-		off.learn != "T3 Code (Nightly) · Telemetry" {
-		t.Fatalf("off plan = %+v", off)
+	again := tracker.decide(body, start.Add(26*time.Minute))
+	if again == nil || again.kind != "turn" || again.title != "Dad's album is waiting for you" ||
+		again.detail != "Its agent stopped at "+stopped.Format("15:04")+"." {
+		t.Fatalf("still waiting = %+v", again)
 	}
-	if got := tracker.decide(body, start.Add(15*time.Minute)); got != nil {
-		t.Fatalf("repeated too soon: %+v", got)
+	if got := tracker.decide(body, start.Add(2*time.Hour)); got != nil {
+		t.Fatalf("said more than twice: %+v", got)
 	}
-	if got := tracker.decide(body, start.Add(20*time.Minute)); got == nil || got.kind != "off" {
-		t.Fatalf("still off plan ten minutes later: %+v", got)
+	onIt := &Tracker{greeted: start.Format("2006-01-02"), turns: map[string]bool{}}
+	task := int64(3)
+	body.Tracking.State, body.Tracking.TaskID = "task", &task
+	onIt.turns[fmt.Sprintf("%d %s", 3, stopped.UTC().Format(time.RFC3339))] = true
+	onIt.told = 3
+	if got := onIt.decide(body, start.Add(time.Hour)); got != nil {
+		t.Fatalf("no reminder while on that task: %+v", got)
 	}
+	body.Tracking.State, body.Tracking.TaskID = "other", nil
 	// While an agent of a planned task runs, being elsewhere is filling a wait.
 	waiting := &Tracker{greeted: start.Format("2006-01-02")}
 	body.Tracking.YourTurn, body.Tracking.AgentRunning = nil, true
@@ -213,17 +220,6 @@ func TestTrackerRecordsAnswers(t *testing.T) {
 	tracker.show(notice{kind: "back", focus: focus}, "")
 	if last().path != "/v1/device/focus" || last().body["action"] != "pause" {
 		t.Fatalf("pause = %+v", last())
-	}
-	// Off plan: "It's part of…" is remembered for that task at project level; "One-off" excuses it for the sitting.
-	answers = []int{1, 0}
-	tracker.show(notice{kind: "off", options: options, context: "ChatGPT · WhatsApp Chat - Group · Create July session PDF", learn: "ChatGPT · WhatsApp Chat - Group"}, "")
-	if last().path != "/v1/device/evidence" || last().body["task_id"] != float64(3) || last().body["context"] != "ChatGPT · WhatsApp Chat - Group" || last().body["verdict"] != "related" {
-		t.Fatalf("it's part of = %+v", last())
-	}
-	answers = []int{2}
-	tracker.show(notice{kind: "off", options: options, context: "Obsidian", learn: "Obsidian"}, "")
-	if last().path != "/v1/device/claims" || last().body["task_id"] != nil || last().body["context"] != "Obsidian" {
-		t.Fatalf("one-off = %+v", last())
 	}
 	before := len(calls)
 	answers = []int{0}

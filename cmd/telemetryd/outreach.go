@@ -11,6 +11,7 @@ import (
 	"github.com/rimexe0/telemetry/internal/activity"
 	"github.com/rimexe0/telemetry/internal/outreach"
 	"github.com/rimexe0/telemetry/internal/policy"
+	"github.com/rimexe0/telemetry/internal/silence"
 	"github.com/rimexe0/telemetry/internal/store"
 )
 
@@ -45,7 +46,7 @@ func runOutreach(ctx context.Context, repository store.Repository, compose, send
 		}
 		var delivered, all []outreach.Sent
 		for _, entry := range logged {
-			all = append(all, outreach.Sent{Kind: entry.Kind, At: entry.CreatedAt})
+			all = append(all, outreach.Sent{Kind: entry.Kind, At: entry.CreatedAt, Delivered: entry.Delivered})
 			if entry.Delivered {
 				delivered = append(delivered, outreach.Sent{Kind: entry.Kind, At: entry.CreatedAt})
 			}
@@ -90,6 +91,14 @@ func runOutreach(ctx context.Context, repository store.Repository, compose, send
 		if !outreach.OffPlanDue(now, stretch, all) {
 			return
 		}
+		// The last check-in (the log is newest first), so the next one does
+		// not say the same.
+		for _, entry := range logged {
+			if entry.Kind == outreach.KindOffPlan && entry.Delivered && entry.Message != "" {
+				facts += fmt.Sprintf("\nTheir last check-in, at %s, said: %q", entry.CreatedAt.In(location).Format("Mon 15:04"), entry.Message)
+				break
+			}
+		}
 		composeCtx, cancelCompose := context.WithTimeout(ctx, 3*time.Minute)
 		answer, err := outreach.Compose(composeCtx, compose, outreach.OffPlanPrompt(facts))
 		cancelCompose()
@@ -111,14 +120,16 @@ func runOutreach(ctx context.Context, repository store.Repository, compose, send
 	}
 }
 
-// notifyCollection tells the owner about a module that reads T3 Code's
-// internal formats once it has kept failing, once per problem: see
-// outreach.CollectionDue.
+// notifyCollection tells the owner about a collection problem that stops
+// tracking or blocking once it has lasted, once per problem: see
+// outreach.Problems and outreach.CollectionDue. A machine going quiet is not
+// told, since it may be asleep; the phone going quiet is told only while the
+// owner is using the Mac.
 func notifyCollection(ctx context.Context, repository store.Repository, send []string, logged []store.Outreach, location *time.Location) {
 	now := time.Now().UTC()
 	listCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	incidents, err := repository.ListCollectionIncidents(listCtx, now, 100)
-	cancel()
 	if err != nil {
 		log.Printf("outreach: %v", err)
 		return
@@ -130,16 +141,47 @@ func notifyCollection(ctx context.Context, repository store.Repository, send []s
 		}
 	}
 	for _, incident := range incidents {
-		what, watched := outreach.Watched[incident.Kind]
-		if !watched || incident.EndedAt != nil || !outreach.CollectionDue(incident.ID, incident.Device, incident.Kind, incident.StartedAt, now, told) {
+		if incident.EndedAt != nil || !outreach.CollectionDue(incident.ID, incident.Device, incident.Kind, incident.StartedAt, now, told) {
 			continue
 		}
+		if incident.Kind == silence.KindSilent {
+			if incident.Device != silence.DevicePhone {
+				continue
+			}
+			active, err := macActive(listCtx, repository, location, incident.StartedAt, now)
+			if err != nil {
+				log.Printf("outreach: %v", err)
+				continue
+			}
+			if active < outreach.PhoneSilentWhileActive {
+				continue
+			}
+		}
+		device := incident.Device
+		if strings.HasPrefix(device, "mac-") {
+			device = "the Mac"
+		}
 		marker := outreach.CollectionMarker(incident.ID, incident.Device, incident.Kind)
-		problem, _ := incident.Detail["error"].(string)
-		deliver(ctx, repository, send, outreach.KindCollection,
-			outreach.CollectionMessage(what, incident.Device, incident.StartedAt.In(location).Format("Mon 15:04"), problem), marker)
+		message := outreach.Problems[incident.Kind].Message(device, incident.StartedAt.In(location).Format("Mon 15:04"), incident.Detail)
+		deliver(ctx, repository, send, outreach.KindCollection, message, marker)
 		told = append(told, outreach.Told{Facts: marker, At: now})
 	}
+}
+
+// macActive is the owner's active time on the Mac in [from, to).
+func macActive(ctx context.Context, repository store.Repository, location *time.Location, from, to time.Time) (time.Duration, error) {
+	planDate, _, _ := localDay(to, location)
+	input, _, err := store.LoadDayInput(ctx, repository, planDate, from, to, false)
+	if err != nil {
+		return 0, err
+	}
+	var active float64
+	for _, chunk := range activity.BuildDay(input).Chunks {
+		if chunk.Device == activity.DeviceMac {
+			active += chunk.ActiveMinutes
+		}
+	}
+	return time.Duration(active * float64(time.Minute)), nil
 }
 
 // deliver sends a message and logs it; an empty message is logged as a
@@ -301,6 +343,7 @@ func offPlan(ctx context.Context, repository store.Repository, config policy.Con
 			}
 			if item.Label == policy.LabelDistraction {
 				name += " (distraction)"
+				stretch.Distracted += time.Duration(item.Minutes * float64(time.Minute))
 			}
 			on[chunk.Device+": "+name] += item.Minutes
 		}
@@ -319,6 +362,9 @@ func offPlan(ctx context.Context, repository store.Repository, config policy.Con
 	names := make([]string, 0, len(on))
 	for name := range on {
 		names = append(names, name)
+		if largest := time.Duration(on[name] * float64(time.Minute)); !strings.HasSuffix(name, "(distraction)") && largest > stretch.Largest {
+			stretch.Largest = largest
+		}
 	}
 	sort.Slice(names, func(i, j int) bool {
 		return on[names[i]] > on[names[j]] || (on[names[i]] == on[names[j]] && names[i] < names[j])
@@ -331,9 +377,16 @@ func offPlan(ctx context.Context, repository store.Repository, config policy.Con
 		}
 		lines = append(lines, "- "+name+": "+minutes(on[name]))
 	}
-	if block != "" {
+	plan, err := repository.LatestPlan(ctx, planDate)
+	if err != nil {
+		return outreach.Stretch{}, "", err
+	}
+	switch {
+	case plan == nil:
+		lines = append(lines, "Today has no plan yet.")
+	case block != "":
 		lines = append(lines, block)
-	} else {
+	default:
 		lines = append(lines, "Nothing is planned for this hour.")
 	}
 	for _, turn := range tracking.YourTurn {

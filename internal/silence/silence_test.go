@@ -84,3 +84,15 @@ func TestStartupStatusDoesNotJudgeModules(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 }
+
+func TestServerDiskNearlyFull(t *testing.T) {
+	now := time.Date(2026, 10, 6, 2, 0, 0, 0, time.UTC)
+	plenty, low := uint64(9<<30), uint64(1<<30)
+	if findings := Evaluate(Evidence{ServerFreeBytes: &plenty}, now); len(findings) != 0 {
+		t.Fatalf("9 GB free is fine: %+v", findings)
+	}
+	findings := Evaluate(Evidence{ServerFreeBytes: &low}, now)
+	if len(findings) != 1 || findings[0].Device != DeviceServer || findings[0].Kind != KindDiskLow {
+		t.Fatalf("1 GB free = %+v", findings)
+	}
+}
