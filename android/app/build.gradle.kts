@@ -24,6 +24,15 @@ android {
             ?.takeIf { it.isNotBlank() }
             ?: "https://server.example.ts.net:8443"
         buildConfigField("String", "TELEMETRY_SERVER_URL", "\"$telemetryServerUrl\"")
+        // Device requests go sealed through this relay (a Cloudflare Tunnel to
+        // the server's sealed door), so the phone does not need Tailscale. The
+        // key is the server's public key from its log line "Sealed device requests".
+        val telemetryRelayUrl = project.findProperty("telemetryRelayUrl")?.toString()?.trim()?.trimEnd('/')
+            ?: "https://relay.example.com"
+        val telemetryRelayKey = project.findProperty("telemetryRelayKey")?.toString()?.trim()
+            ?: "BDQAImuIn7FQicgxZZT4ekXWleG0QJlUflNjYQnBUTU7m39PHHlg0TP3d08OeB1xffb1WIrv05kvkL38Zwa8mZk="
+        buildConfigField("String", "TELEMETRY_RELAY_URL", "\"$telemetryRelayUrl\"")
+        buildConfigField("String", "TELEMETRY_RELAY_KEY", "\"$telemetryRelayKey\"")
     }
 }
 

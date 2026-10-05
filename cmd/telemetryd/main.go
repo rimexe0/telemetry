@@ -23,6 +23,7 @@ import (
 	"github.com/rimexe0/telemetry/internal/httpapi"
 	"github.com/rimexe0/telemetry/internal/mcpapi"
 	"github.com/rimexe0/telemetry/internal/panelui"
+	"github.com/rimexe0/telemetry/internal/sealed"
 	"github.com/rimexe0/telemetry/internal/store"
 )
 
@@ -38,6 +39,8 @@ func main() {
 		panelCookieSecure = flag.Bool("panel-cookie-secure", envBool("TELEMETRY_PANEL_COOKIE_SECURE", true), "mark panel session cookies secure")
 		migrate           = flag.Bool("migrate", false, "apply embedded migrations and exit")
 		outreachPreview   = flag.Bool("outreach-preview", false, "print what would be written to the owner now, send nothing, and exit")
+		relayListen       = flag.String("relay-listen", os.Getenv("TELEMETRY_RELAY_LISTEN"), "listen address for sealed device requests from a relay such as a Cloudflare Tunnel")
+		relayKeyFile      = flag.String("relay-key-file", os.Getenv("TELEMETRY_RELAY_KEY_FILE"), "server key for sealed device requests, created when missing")
 	)
 	flag.Parse()
 	ingestDeviceTokens := tokenMapEnv("TELEMETRY_INGEST_DEVICE_TOKENS")
@@ -157,6 +160,34 @@ func main() {
 		defer shutdownCancel()
 		_ = httpServer.Shutdown(shutdownContext)
 	}()
+	if *relayListen != "" {
+		// Devices reach this door without Tailscale. It only opens requests
+		// sealed to this key and only passes on device paths.
+		if *relayKeyFile == "" {
+			log.Fatal("TELEMETRY_RELAY_KEY_FILE or -relay-key-file is required with a relay listen address")
+		}
+		key, err := sealed.LoadOrCreateKey(*relayKeyFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		relayServer := &http.Server{
+			Addr:              *relayListen,
+			Handler:           &sealed.Relay{Key: key, Next: router, MaxBytes: 24 << 20, Window: 5 * time.Minute, PerMinute: 120},
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		go func() {
+			<-context.Done()
+			shutdownContext, shutdownCancel := contextWithTimeout()
+			defer shutdownCancel()
+			_ = relayServer.Shutdown(shutdownContext)
+		}()
+		go func() {
+			log.Printf("Sealed device requests on %s, public key %s", *relayListen, key.Public())
+			if err := relayServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+				log.Fatal(err)
+			}
+		}()
+	}
 	go runSilenceChecker(context, database)
 	// The assistant that judges unknown things in a focus session: a command
 	// that takes the prompt as its last argument, such as "hermes --ignore-rules -z".

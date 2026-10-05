@@ -47,6 +47,7 @@ class TelemetryDeliveryClient(
     private val deviceId: String,
     private val serverUrl: String,
     private val token: String,
+    private val sealed: SealedChannel? = SealedChannel.configured(),
 ) {
     /**
      * Keeps the existing one-batch API for the manual action and old worker.
@@ -251,6 +252,34 @@ class TelemetryDeliveryClient(
 
     private fun send(payload: DeliveryPayload, timeoutMillis: Long? = null) {
         val body = payload.body
+        val requestTimeoutMillis = timeoutMillis?.coerceIn(1L, 30_000L)
+        val connectTimeout = requestTimeoutMillis?.coerceAtMost(15_000L)?.toInt() ?: 15_000
+        val readTimeout = requestTimeoutMillis?.toInt() ?: 30_000
+        // Through the sealed relay first; the direct address (Tailscale) only
+        // when the relay cannot be reached. Ingest is retry-safe by batch id.
+        sealed?.let { channel ->
+            val answer = try {
+                channel.exchange(
+                    "POST",
+                    "/v1/ingest/batches",
+                    mapOf(
+                        "Accept" to "application/json",
+                        "Content-Type" to "application/json",
+                        "Authorization" to "Bearer $token",
+                        "X-Telemetry-Device-ID" to deviceId,
+                    ),
+                    body,
+                    connectTimeout,
+                    readTimeout,
+                )
+            } catch (_: java.io.IOException) {
+                null
+            }
+            if (answer != null) {
+                checkReceipt(payload, answer.status) { answer.body.inputStream() }
+                return
+            }
+        }
         val connection = try {
             URL(serverUrl.trimEnd('/') + "/v1/ingest/batches")
                 .openConnection() as HttpURLConnection
@@ -265,9 +294,8 @@ class TelemetryDeliveryClient(
         }
         try {
             connection.requestMethod = "POST"
-            val requestTimeoutMillis = timeoutMillis?.coerceIn(1L, 30_000L)
-            connection.connectTimeout = requestTimeoutMillis?.coerceAtMost(15_000L)?.toInt() ?: 15_000
-            connection.readTimeout = requestTimeoutMillis?.toInt() ?: 30_000
+            connection.connectTimeout = connectTimeout
+            connection.readTimeout = readTimeout
             connection.doOutput = true
             connection.useCaches = false
             connection.instanceFollowRedirects = false
@@ -280,34 +308,8 @@ class TelemetryDeliveryClient(
             val responseCode = connection.responseCode
             if (responseCode != HttpURLConnection.HTTP_ACCEPTED) {
                 closeQuietly(connection.errorStream)
-                throw DeliveryException(
-                    status = responseCode,
-                    message = "Telemetry ingest returned HTTP $responseCode",
-                    kind = DeliveryFailureKind.HTTP_REJECTED,
-                    bodyBytes = body.size.toLong(),
-                )
             }
-            val receipt = try {
-                connection.inputStream.use(::readReceipt)
-            } catch (error: Exception) {
-                throw DeliveryException(
-                    status = 202,
-                    message = "Telemetry ingest returned an unreadable receipt",
-                    kind = DeliveryFailureKind.INVALID_RECEIPT,
-                    bodyBytes = body.size.toLong(),
-                    cause = error,
-                )
-            }
-            if (receipt.optString("batch_id") != payload.batchId ||
-                receipt.optInt("observations_seen", -1) != payload.observationCount
-            ) {
-                throw DeliveryException(
-                    status = 202,
-                    message = "Telemetry ingest returned an invalid receipt",
-                    kind = DeliveryFailureKind.INVALID_RECEIPT,
-                    bodyBytes = body.size.toLong(),
-                )
-            }
+            checkReceipt(payload, responseCode) { connection.inputStream }
         } catch (error: DeliveryException) {
             throw error
         } catch (error: Exception) {
@@ -320,6 +322,40 @@ class TelemetryDeliveryClient(
             )
         } finally {
             connection.disconnect()
+        }
+    }
+
+    /** Accepts only a 202 whose receipt names this batch and its row count. */
+    private fun checkReceipt(payload: DeliveryPayload, responseCode: Int, receiptStream: () -> InputStream) {
+        val bodyBytes = payload.body.size.toLong()
+        if (responseCode != HttpURLConnection.HTTP_ACCEPTED) {
+            throw DeliveryException(
+                status = responseCode,
+                message = "Telemetry ingest returned HTTP $responseCode",
+                kind = DeliveryFailureKind.HTTP_REJECTED,
+                bodyBytes = bodyBytes,
+            )
+        }
+        val receipt = try {
+            receiptStream().use(::readReceipt)
+        } catch (error: Exception) {
+            throw DeliveryException(
+                status = 202,
+                message = "Telemetry ingest returned an unreadable receipt",
+                kind = DeliveryFailureKind.INVALID_RECEIPT,
+                bodyBytes = bodyBytes,
+                cause = error,
+            )
+        }
+        if (receipt.optString("batch_id") != payload.batchId ||
+            receipt.optInt("observations_seen", -1) != payload.observationCount
+        ) {
+            throw DeliveryException(
+                status = 202,
+                message = "Telemetry ingest returned an invalid receipt",
+                kind = DeliveryFailureKind.INVALID_RECEIPT,
+                bodyBytes = bodyBytes,
+            )
         }
     }
 

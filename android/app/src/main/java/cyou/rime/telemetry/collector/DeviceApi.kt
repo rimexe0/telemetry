@@ -15,6 +15,22 @@ object DeviceApi {
     private fun call(context: Context, method: String, path: String, body: String?): String? {
         val config = DeliveryConfig(context)
         val token = config.token() ?: return null
+        // Through the sealed relay first; the direct address (Tailscale) only
+        // when the relay cannot be reached.
+        SealedChannel.configured()?.let { channel ->
+            val headers = mutableMapOf(
+                "Authorization" to "Bearer $token",
+                "X-Telemetry-Device-ID" to DeviceIdentity.get(context),
+                "Accept" to "application/json",
+            )
+            if (body != null) headers["Content-Type"] = "application/json"
+            val answer = try {
+                channel.exchange(method, path, headers, body?.toByteArray(), 10_000, 10_000)
+            } catch (_: java.io.IOException) {
+                null
+            }
+            if (answer != null) return if (answer.status == 200) String(answer.body, Charsets.UTF_8) else null
+        }
         return runCatching {
             val connection = URL(config.serverUrl.trimEnd('/') + path).openConnection() as HttpURLConnection
             try {
