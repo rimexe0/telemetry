@@ -9,8 +9,9 @@ import (
 	"github.com/rimexe0/telemetry/internal/store"
 )
 
-const outreachNotes = "The system writes to the owner in your name without being asked, for two things only: a morning message when the records show they woke, " +
-	"and a check-in after about 45 minutes at their devices on none of the day's tasks with no agent to wait for, at most one message an hour. " +
+const outreachNotes = "The system writes to the owner in your name without being asked, for three things only: a morning message when the records show they woke; " +
+	"a check-in when, for about 45 minutes, they drifted (distractions, or jumping between unrelated things) and spent none of it on the day's tasks or with a coding agent, " +
+	"at most three a day and three hours apart; and a note when collection breaks in a way that stops tracking or blocking. " +
 	"You did not see these being sent. When the owner's message reads like an answer to something you did not say, it is probably an answer to one of these. " +
 	"An entry with no message means the system looked and stayed quiet. Times are the owner's local time."
 

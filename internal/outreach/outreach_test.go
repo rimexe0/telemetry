@@ -40,7 +40,7 @@ func TestMorningIsSentOnceSoonAfterWaking(t *testing.T) {
 func TestOffPlanNeedsALongStretchAndRespectsTheCap(t *testing.T) {
 	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
 	// Jumping between things, none taking most of the time: drift.
-	off := Stretch{Active: 40 * time.Minute, Largest: 12 * time.Minute, OpenTasks: 2}
+	off := Stretch{Active: 40 * time.Minute, Mac: 40 * time.Minute, Largest: 12 * time.Minute, OpenTasks: 2}
 	if !OffPlanDue(now, off, nil) {
 		t.Fatal("40 minutes scattered over unplanned things: due")
 	}
@@ -53,13 +53,17 @@ func TestOffPlanNeedsALongStretchAndRespectsTheCap(t *testing.T) {
 		"no tasks today":   {Active: 40 * time.Minute, Largest: 12 * time.Minute},
 		"time set aside":   {Active: 40 * time.Minute, Largest: 12 * time.Minute, OpenTasks: 2, Leisure: true},
 		// A long session on one project that is not a task is deliberate.
-		"one thing": {Active: 40 * time.Minute, Largest: 35 * time.Minute, OpenTasks: 2},
+		"one thing": {Active: 40 * time.Minute, Mac: 40 * time.Minute, Largest: 35 * time.Minute, OpenTasks: 2},
+		// Working with a coding agent across several apps is work too.
+		"with an agent": {Active: 43 * time.Minute, Mac: 43 * time.Minute, Largest: 10 * time.Minute, Coding: true, OpenTasks: 2},
+		// Maps, a taxi and a transit card on the phone: out, not drifting.
+		"out with the phone": {Active: 32 * time.Minute, Largest: 17 * time.Minute, OpenTasks: 2},
 	} {
 		if OffPlanDue(now, stretch, nil) {
 			t.Fatalf("%s: not due", name)
 		}
 	}
-	distracted := Stretch{Active: 40 * time.Minute, Largest: 25 * time.Minute, Distracted: 15 * time.Minute, OpenTasks: 2}
+	distracted := Stretch{Active: 40 * time.Minute, Largest: 25 * time.Minute, Distracted: 15 * time.Minute, Coding: true, OpenTasks: 2}
 	if !OffPlanDue(now, distracted, nil) {
 		t.Fatal("a quarter hour on distractions is drift even beside one long thing")
 	}

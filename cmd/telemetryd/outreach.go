@@ -324,6 +324,9 @@ func offPlan(ctx context.Context, repository store.Repository, config policy.Con
 	day, tracking := activity.BuildDay(input), activity.Track(input)
 	stretch := outreach.Stretch{Excused: tracking.Excused, AgentRunning: tracking.AgentRunning, OpenTasks: len(input.Tasks), Away: true,
 		Leisure: policy.DistractionTime(config, now)}
+	for _, message := range input.Messages {
+		stretch.Coding = stretch.Coding || (!message.At.Before(from) && message.At.Before(now))
+	}
 	on, active := map[string]float64{}, map[string]float64{}
 	for _, chunk := range day.Chunks {
 		// Two devices in use at once are one stretch of time, not two.
@@ -359,6 +362,7 @@ func offPlan(ctx context.Context, repository store.Repository, config policy.Con
 			}
 		}
 	}
+	stretch.Mac = time.Duration(active[activity.DeviceMac] * float64(time.Minute))
 	names := make([]string, 0, len(on))
 	for name := range on {
 		names = append(names, name)

@@ -87,12 +87,21 @@ type Stretch struct {
 	// Distracted is time on things labelled "distraction"; Largest is the
 	// time on the one thing, not a distraction, that took the most.
 	Distracted, Largest time.Duration
+	// Coding means they wrote to a coding agent in the stretch: work on a
+	// project, even one that is not a task, and spread over several apps.
+	Coding bool
+	// Mac is time at the Mac. Jumping between apps on the phone alone is
+	// often being out (maps, a taxi, a transit card), not drift.
+	Mac time.Duration
 }
 
 // Drifting reports whether the stretch looks like drift rather than
 // deliberate work on something that is not one of the day's tasks.
 func (s Stretch) Drifting() bool {
-	return s.Distracted >= OffPlanDistracted || s.Largest.Seconds() < OffPlanFocused*s.Active.Seconds()
+	if s.Distracted >= OffPlanDistracted {
+		return true
+	}
+	return !s.Coding && s.Mac >= OffPlanActive/2 && s.Largest.Seconds() < OffPlanFocused*s.Active.Seconds()
 }
 
 // OffPlanDue reports whether the assistant should look at a long stretch
