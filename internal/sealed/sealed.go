@@ -23,6 +23,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -241,4 +242,10 @@ func (s *Sealer) Seal(head Head, body []byte) ([]byte, func([]byte) (AnswerHead,
 		return head, body, nil
 	}
 	return message, open, nil
+}
+
+func randomID() string {
+	raw := make([]byte, 16)
+	rand.Read(raw)
+	return hex.EncodeToString(raw)
 }

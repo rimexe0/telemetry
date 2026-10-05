@@ -12,6 +12,10 @@
     <string>/Users/ri/Library/Application Support/Telemetry/desktop.queue.sqlite3</string>
     <string>-config</string>
     <string>/Users/ri/Library/Application Support/Telemetry/device.json</string>
+    <string>-relay</string>
+    <string>https://relay.example.com</string>
+    <string>-relay-key</string>
+    <string>BDQAImuIn7FQicgxZZT4ekXWleG0QJlUflNjYQnBUTU7m39PHHlg0TP3d08OeB1xffb1WIrv05kvkL38Zwa8mZk=</string>
   </array>
   <key>RunAtLoad</key>
   <true/>

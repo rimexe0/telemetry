@@ -172,7 +172,7 @@ func main() {
 		}
 		relayServer := &http.Server{
 			Addr:              *relayListen,
-			Handler:           &sealed.Relay{Key: key, Next: router, MaxBytes: 24 << 20, Window: 5 * time.Minute, PerMinute: 120},
+			Handler:           &sealed.Relay{Key: key, Next: router, MaxBytes: 24 << 20, Window: 5 * time.Minute, PerMinute: 600},
 			ReadHeaderTimeout: 10 * time.Second,
 		}
 		go func() {

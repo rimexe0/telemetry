@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -25,6 +26,7 @@ import (
 	"github.com/rimexe0/telemetry/internal/deviceauth"
 	"github.com/rimexe0/telemetry/internal/ingest"
 	"github.com/rimexe0/telemetry/internal/queue"
+	"github.com/rimexe0/telemetry/internal/sealed"
 )
 
 const collectorVersion = "telemetry-desktop/0.2.0"
@@ -158,11 +160,26 @@ func run(arguments []string) error {
 	tokenFile := flags.String("ingest-token-file", "", "file containing the Telemetry ingest token")
 	hostname := flags.String("hostname", "", "hostname used in bucket names (default: this computer's)")
 	deliverEvery := flags.Duration("deliver-every", 30*time.Second, "how often queued records are sent")
+	relay := flags.String("relay", "", "relay that carries sealed device requests to the server, such as https://relay.example.com; the server address is used when it cannot be reached")
+	relayKey := flags.String("relay-key", "", "the server's public key for -relay")
 	flags.Parse(arguments)
 
 	client, err := delivery(*configPath, deviceID, *serverURL, *tokenFile)
 	if err != nil {
 		return err
+	}
+	if *relay != "" && client != nil {
+		// Every module's requests to the server go sealed through the relay,
+		// so they do not depend on Tailscale; anything else goes directly.
+		server, err := url.Parse(client.BaseURL)
+		if err != nil {
+			return fmt.Errorf("server address: %w", err)
+		}
+		public, err := sealed.ParsePublic(*relayKey)
+		if err != nil {
+			return fmt.Errorf("-relay-key: %w", err)
+		}
+		http.DefaultTransport = &sealed.Transport{Server: server, Relay: *relay, Sealer: sealed.NewSealer(public), Direct: http.DefaultTransport}
 	}
 	if *queuePath == "" || *deviceID == "" {
 		return errors.New("-queue and -device (or -config) are required")
