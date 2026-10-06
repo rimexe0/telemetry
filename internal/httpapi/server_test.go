@@ -769,3 +769,7 @@ func (*fakeRepository) LocationFixes(context.Context, time.Time, time.Time) ([]p
 func (*fakeRepository) LatestEmergency(context.Context, time.Time) (*policy.Emergency, error) {
 	return nil, nil
 }
+
+func (*fakeRepository) CalendarEvents(context.Context, time.Time, time.Time) ([]store.CalendarEvent, error) {
+	return nil, nil
+}

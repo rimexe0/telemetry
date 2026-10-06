@@ -316,6 +316,22 @@ func morningFacts(ctx context.Context, repository store.Repository, config polic
 			lines = append(lines, "Follow-up: "+followUp.Title+" (due "+followUp.DueAt.In(location).Format("Mon 15:04")+").")
 		}
 	}
+	// Today's appointments, so the plan leaves room for them.
+	todayStart := time.Date(now.In(location).Year(), now.In(location).Month(), now.In(location).Day(), 0, 0, 0, 0, location)
+	events, err := repository.CalendarEvents(ctx, todayStart, todayStart.AddDate(0, 0, 1))
+	if err != nil {
+		return "", err
+	}
+	for _, event := range events {
+		if event.AllDay || !event.Busy {
+			continue
+		}
+		line := "Calendar today: " + event.Start.In(location).Format("15:04") + "–" + event.End.In(location).Format("15:04") + " " + event.Title
+		if event.Location != "" {
+			line += " (" + event.Location + ")"
+		}
+		lines = append(lines, line+".")
+	}
 	plan, err := repository.LatestPlan(ctx, planDate)
 	if err != nil {
 		return "", err

@@ -16,6 +16,7 @@ import (
 const planningNotes = "Tasks (the task pool) are what the owner wants to get done; a day plan is a list of time blocks, each optionally tied to a task. " +
 	"A task needs no time block: its time is counted whenever the owner's activity matches its rules (task_rules), so on a day with no fixed times just add the tasks and their rules. " +
 	"Use blocks only for things that have a real time. " +
+	"day_plan includes the day's appointments from the owner's calendars; leave room for the fixed ones instead of planning over them. " +
 	"How to help this owner: the system stands in for executive function that does not work reliably, so carry the remembering, timing and sequencing yourself. " +
 	"Keep a day to one to three things; on a bad day make the plan smaller instead of holding them to it. Give the next smallest concrete step, not the importance of the task. " +
 	"State facts and the way back; never scold, and never ask them to recall what the records already show. A broken plan continues from where it broke. " +
@@ -111,7 +112,10 @@ type DayPlanOutput struct {
 	VersionID int64         `json:"version_id,omitempty"`
 	Note      string        `json:"note,omitempty"`
 	Blocks    []BlockOutput `json:"blocks"`
-	Notes     string        `json:"notes"`
+	// Calendar is the day's appointments from the owner's calendars; fixed
+	// ones are commitments the plan must leave room for.
+	Calendar []CalendarEventOutput `json:"calendar"`
+	Notes    string                `json:"notes"`
 }
 
 type PlanReviewInput struct {
@@ -191,7 +195,7 @@ func planDate(ctx context.Context, repository store.Repository, value string, no
 }
 
 func dayPlanOutput(plan *store.Plan, date time.Time, location *time.Location) DayPlanOutput {
-	output := DayPlanOutput{Date: date.Format("2006-01-02"), Timezone: location.String(), Blocks: []BlockOutput{}, Notes: planningNotes}
+	output := DayPlanOutput{Date: date.Format("2006-01-02"), Timezone: location.String(), Blocks: []BlockOutput{}, Calendar: []CalendarEventOutput{}, Notes: planningNotes}
 	if plan == nil {
 		return output
 	}
@@ -278,7 +282,11 @@ func addPlanningTools(server *mcp.Server, repository store.Repository, now func(
 		if err != nil {
 			return nil, DayPlanOutput{}, err
 		}
-		return nil, dayPlanOutput(plan, date, location), nil
+		output := dayPlanOutput(plan, date, location)
+		if output.Calendar, err = calendarDays(ctx, repository, time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, location), 1, location); err != nil {
+			return nil, DayPlanOutput{}, err
+		}
+		return nil, output, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "plan_review",

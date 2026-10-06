@@ -78,6 +78,7 @@ type Repository interface {
 	LatestMapImport(context.Context) (*MapImport, error)
 	LocationFixes(ctx context.Context, from, to time.Time) ([]places.Fix, error)
 	LatestEmergency(ctx context.Context, from time.Time) (*policy.Emergency, error)
+	CalendarEvents(ctx context.Context, from, to time.Time) ([]CalendarEvent, error)
 	QueryObservations(context.Context, Query) ([]ObservationView, error)
 	ListSources(context.Context, int) ([]SourceSummary, error)
 	CollectionHealth(context.Context, CollectionHealthQuery) (CollectionHealth, error)

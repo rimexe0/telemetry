@@ -67,6 +67,7 @@ class SetupActivity : ComponentActivity() {
             if (usageAccess(context)) done += SetupStep.USAGE_ACCESS
             if (granted(context, Manifest.permission.ACCESS_FINE_LOCATION) || granted(context, Manifest.permission.ACCESS_COARSE_LOCATION)) done += SetupStep.LOCATION
             if (granted(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION)) done += SetupStep.BACKGROUND_LOCATION
+            if (granted(context, Manifest.permission.READ_CALENDAR)) done += SetupStep.CALENDAR
             if (context.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(context.packageName)) done += SetupStep.BATTERY
             if (PolicyEvents.blockingEnabled(context)) done += SetupStep.BLOCKING
             if (NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)) done += SetupStep.NOTIFICATION_ACCESS
@@ -212,6 +213,7 @@ class SetupActivity : ComponentActivity() {
             SetupStep.HEALTH -> requestHealth()
             SetupStep.LOCATION -> permissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
             SetupStep.BACKGROUND_LOCATION -> permissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION))
+            SetupStep.CALENDAR -> permissionLauncher.launch(arrayOf(Manifest.permission.READ_CALENDAR))
             SetupStep.BATTERY -> openSetting(
                 Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")),
                 Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),

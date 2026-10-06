@@ -78,6 +78,13 @@ object CollectionRuntime {
         } else {
             states.put("sms", SmsCollectionState.DISABLED)
         }
+        // Calendars: read-only, every 15 minutes, only what changed. Without
+        // the permission it tries again next cycle, so granting it takes effect at once.
+        if (due(now, prefs.getLong("last_calendar_at", 0L), CalendarCollector.EVERY_MILLIS)) {
+            val state = runCatching { CalendarCollector(context, queue, device).collect() }.getOrElse { "error:${it.javaClass.simpleName}" }
+            states.put("calendar", state)
+            if (state != "permission_required") prefs.edit().putLong("last_calendar_at", now).apply()
+        }
         // Each source fails independently. A phone without Health Connect still
         // collects device observations and delivers its existing queue.
         if (forceHealth || due(now, prefs.getLong("last_health_at", 0L), settings.healthMinutes * 60_000L)) {
