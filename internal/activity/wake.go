@@ -8,6 +8,15 @@ import (
 // A stretch this long with no use of any device is read as sleep.
 const sleepGap = 3 * time.Hour
 
+// Waking is use that goes on: wakeUse within wakeWithin of its start. A
+// glance at the phone in the night (the time, an alarm) is part of sleep;
+// on 2026-10-06 a few seconds at 07:00 sent the morning message two hours
+// before the owner got up.
+const (
+	wakeUse    = 2 * time.Minute
+	wakeWithin = 15 * time.Minute
+)
+
 // WakeLookback is how far back the records are read to find when the owner
 // woke: a long day plus the sleep before it.
 const WakeLookback = 20 * time.Hour
@@ -25,6 +34,10 @@ func WakeTime(result Result, from, to time.Time) *time.Time {
 	var quiet time.Time
 	for index, segment := range segments {
 		if index > 0 && segment.Start.Sub(quiet) >= sleepGap && !missing(result.Gaps, quiet, segment.Start) {
+			if !sustained(segments[index:], segment.Start) {
+				// A glance: the quiet stretch goes on.
+				continue
+			}
 			at := segment.Start
 			wake = &at
 		}
@@ -46,4 +59,18 @@ func missing(gaps []Gap, from, to time.Time) bool {
 		}
 	}
 	return total > 30*time.Minute
+}
+
+// sustained reports whether segments, in start order from start, hold at
+// least wakeUse of use within wakeWithin.
+func sustained(segments []Segment, start time.Time) bool {
+	limit := start.Add(wakeWithin)
+	var used time.Duration
+	for _, segment := range segments {
+		if !segment.Start.Before(limit) {
+			break
+		}
+		used += earlier(segment.End, limit).Sub(segment.Start)
+	}
+	return used >= wakeUse
 }

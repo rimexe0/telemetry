@@ -23,4 +23,14 @@ func TestWakeTimeIsTheFirstUseAfterALongQuietStretch(t *testing.T) {
 	if got := WakeTime(result, at(1, 18, 0), at(2, 14, 0)); got != nil {
 		t.Fatalf("missing data must not be read as sleep: %v", got)
 	}
+	// A glance at 07:00 in the night is part of sleep; waking is at 09:01,
+	// once the use goes on.
+	night := []Segment{phone(at(5, 22, 0), at(6, 1, 0)), phone(at(6, 7, 0), at(6, 7, 0).Add(5*time.Second)), phone(at(6, 9, 1), at(6, 9, 1).Add(20*time.Second))}
+	if got := WakeTime(Result{Segments: night}, at(5, 18, 0), at(6, 9, 2)); got != nil {
+		t.Fatalf("a glance is not waking, and 20 seconds is not yet: %v", got)
+	}
+	glance := Result{Segments: append(night, phone(at(6, 9, 5), at(6, 9, 8)))}
+	if got := WakeTime(glance, at(5, 18, 0), at(6, 9, 10)); got == nil || !got.Equal(at(6, 9, 1)) {
+		t.Fatalf("wake = %v", got)
+	}
 }
