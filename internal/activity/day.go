@@ -2,6 +2,7 @@ package activity
 
 import (
 	"encoding/json"
+	"github.com/rimexe0/telemetry/internal/places"
 	"sort"
 	"strings"
 	"time"
@@ -446,6 +447,57 @@ type Day struct {
 	Breaks           []Break `json:"breaks"`
 	RestMinutes      float64 `json:"rest_minutes"`
 	ScrollingMinutes float64 `json:"scrolling_minutes"`
+	// Outside is time away from home, from leaving to coming back, as the
+	// phone's GPS shows it; empty when home is not known.
+	Outside        []Away  `json:"outside"`
+	OutsideMinutes float64 `json:"outside_minutes"`
+}
+
+// Away is a stretch away from home.
+type Away struct {
+	Start time.Time `json:"start"`
+	End   time.Time `json:"end"`
+	// Ongoing means not back yet: End is the last position recorded.
+	Ongoing bool `json:"ongoing,omitempty"`
+}
+
+// outside finds the stretches away from home in [from, to): from the end of
+// one stay at home to the start of the next.
+func outside(fixes []places.Fix, home *[2]float64, from, to time.Time) []Away {
+	result := []Away{}
+	if home == nil || len(fixes) == 0 {
+		return result
+	}
+	var left *time.Time
+	for _, stay := range places.Stays(fixes, home) {
+		if !stay.Home {
+			continue
+		}
+		if left != nil && stay.Start.After(*left) {
+			result = append(result, Away{Start: *left, End: stay.Start})
+		}
+		// Each stay at home ends with leaving again.
+		end := stay.End
+		left = &end
+	}
+	// Left home and not back: out until the last position.
+	if left != nil {
+		if last := fixes[len(fixes)-1]; last.At.After(*left) && places.Meters(last.Lat, last.Lon, home[0], home[1]) > places.HomeRadius {
+			result = append(result, Away{Start: *left, End: last.At, Ongoing: true})
+		}
+	}
+	clipped := []Away{}
+	for _, away := range result {
+		// Under StayMin is a position wobbling past the edge of home, not going out.
+		if away.End.Sub(away.Start) < places.StayMin {
+			continue
+		}
+		away.Start, away.End = later(away.Start, from), earlier(away.End, to)
+		if away.End.After(away.Start) {
+			clipped = append(clipped, away)
+		}
+	}
+	return clipped
 }
 
 // Break is time between two stretches of work on the day's tasks, or since
@@ -564,6 +616,10 @@ type DayInput struct {
 	From, To time.Time
 	// WithSegments keeps every record behind each chunk.
 	WithSegments bool
+	// Fixes are the phone's positions from before From to To, and Home is
+	// where it spends the nights; together they give time outside.
+	Fixes []places.Fix
+	Home  *[2]float64
 }
 
 // A claim ends when the Mac has been left for this long.
@@ -988,7 +1044,12 @@ func BuildDay(input DayInput) Day {
 	c := newClassifier(input)
 	input.Result.Segments = c.splitAtClaims(input.Result.Segments)
 	from, to := input.From, input.To
-	day := Day{Blocks: []DayBlock{}, Tasks: []DayTask{}, Distraction: []DeviceMinutes{}, Chunks: []Chunk{}, NoData: input.Result.Gaps, Breaks: []Break{}}
+	day := Day{Blocks: []DayBlock{}, Tasks: []DayTask{}, Distraction: []DeviceMinutes{}, Chunks: []Chunk{}, NoData: input.Result.Gaps, Breaks: []Break{},
+		Outside: outside(input.Fixes, input.Home, input.From, input.To)}
+	for _, away := range day.Outside {
+		day.OutsideMinutes += away.End.Sub(away.Start).Minutes()
+	}
+	day.OutsideMinutes = round(day.OutsideMinutes)
 	if day.NoData == nil {
 		day.NoData = []Gap{}
 	}

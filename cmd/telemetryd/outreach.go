@@ -288,6 +288,9 @@ func morningFacts(ctx context.Context, repository store.Repository, config polic
 		active += chunk.ActiveMinutes
 	}
 	line := "Yesterday: " + minutes(active) + " at devices, " + minutes(yesterday.DistractionMinutes) + " on distractions."
+	if yesterday.OutsideMinutes >= 1 {
+		line += " Outside the home: " + minutes(yesterday.OutsideMinutes) + "."
+	}
 	for _, task := range yesterday.Tasks {
 		if task.Minutes >= 1 || task.AgentMinutes >= 1 {
 			line += fmt.Sprintf(" %s: %s of their own time, its agent ran %s.", task.Title, minutes(task.Minutes), minutes(task.AgentMinutes))

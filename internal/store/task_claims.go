@@ -7,6 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/rimexe0/telemetry/internal/activity"
+	"github.com/rimexe0/telemetry/internal/places"
+	"github.com/rimexe0/telemetry/internal/policy"
 )
 
 // TaskClaim is the owner's answer on a device to "what are you working on".
@@ -132,5 +134,37 @@ func LoadDayInput(ctx context.Context, repository Repository, planDate, from, to
 		return input, nil, err
 	}
 	input.Blocks = PlannedBlocks(plan)
+	// Positions for time outside: two weeks of nights find home, and the
+	// half day before from shows a stay already going at from.
+	history, err := repository.LocationFixes(ctx, to.Add(-14*24*time.Hour), to)
+	if err != nil {
+		return input, nil, err
+	}
+	location, err := OwnerLocation(ctx, repository)
+	if err != nil {
+		return input, nil, err
+	}
+	input.Home = places.Home(history, location)
+	for _, fix := range history {
+		if !fix.At.Before(from.Add(-12 * time.Hour)) {
+			input.Fixes = append(input.Fixes, fix)
+		}
+	}
 	return input, plan, nil
+}
+
+// OwnerLocation is the owner's time zone from the policy.
+func OwnerLocation(ctx context.Context, repository Repository) (*time.Location, error) {
+	config := policy.Config{}
+	stored, err := repository.LatestPolicy(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if stored != nil {
+		config = stored.Config
+	}
+	if err := config.Normalize(); err != nil {
+		return nil, err
+	}
+	return time.LoadLocation(config.Timezone)
 }

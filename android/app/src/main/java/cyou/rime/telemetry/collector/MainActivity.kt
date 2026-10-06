@@ -412,6 +412,7 @@ private fun Totals(day: DayView, modifier: Modifier) {
             Total("Breaks", DayModel.clock(day.restMinutes) + " rest",
                 if (day.scrollingMinutes >= 1) DayModel.clock(day.scrollingMinutes) + " scrolling" else null)
         }
+        if (day.outsideMinutes >= 1) Total("Outside", DayModel.clock(day.outsideMinutes), null)
         Total("Distractions", DayModel.clock(day.distractionMinutes),
             day.distractionByDevice.filter { it.second >= 1 }.sortedByDescending { it.second }
                 .joinToString(" · ") { "${DayModel.deviceName(it.first)} ${DayModel.clock(it.second)}" }.ifBlank { null })
