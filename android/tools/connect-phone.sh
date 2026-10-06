@@ -21,11 +21,11 @@ fi
 # The phone reports its Wi-Fi address every minute.
 address=$(ssh datalix "docker exec telemetry-postgres-1 psql -U telemetry -d telemetry -Atc \"select r.projection->>'wifi_ipv4' from observations o join observation_revisions r on r.id=o.effective_revision_id where o.kind='android.device_state' and r.projection ? 'wifi_ipv4' order by o.occurred_at desc limit 1\"" 2>/dev/null || true)
 if [[ -n "$address" ]]; then
-  timeout 8 adb connect "$address:$port" >/dev/null 2>&1 || true
+  adb connect "$address:$port" >/dev/null 2>&1 || true
 fi
 if [[ -z "$(connected)" ]]; then
   service=$(adb mdns services 2>/dev/null | awk '/_adb-tls-connect/{print $NF; exit}')
-  [[ -n "$service" ]] && timeout 8 adb connect "$service" >/dev/null 2>&1 || true
+  [[ -n "$service" ]] && adb connect "$service" >/dev/null 2>&1 || true
 fi
 device=$(connected)
 [[ -n "$device" ]] || { echo "Phone not found (last Wi-Fi address: ${address:-unknown})." >&2; exit 1; }
