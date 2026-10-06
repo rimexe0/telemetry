@@ -100,7 +100,7 @@ func defaultModules() string {
 	return "activitywatch-api,t3"
 }
 
-func buildModules(names, listen, t3Dir, t3Token string, credentials *collector.Credentials) ([]collector.Module, error) {
+func buildModules(names, listen, t3Dir, t3Token, notices string, credentials *collector.Credentials) ([]collector.Module, error) {
 	modules := []collector.Module{}
 	seen := map[string]bool{}
 	var blocker *collector.Blocker
@@ -126,7 +126,7 @@ func buildModules(names, listen, t3Dir, t3Token string, credentials *collector.C
 			blocker = &collector.Blocker{Credentials: credentials}
 			modules = append(modules, blocker)
 		case "tracker":
-			tracker = &collector.Tracker{Credentials: credentials}
+			tracker = &collector.Tracker{Credentials: credentials, Notices: notices}
 			modules = append(modules, tracker)
 		default:
 			return nil, fmt.Errorf("unknown module %q (known: window, activitywatch-api, t3, t3-open, blocker, tracker)", name)
@@ -160,6 +160,7 @@ func run(arguments []string) error {
 	tokenFile := flags.String("ingest-token-file", "", "file containing the Telemetry ingest token")
 	hostname := flags.String("hostname", "", "hostname used in bucket names (default: this computer's)")
 	deliverEvery := flags.Duration("deliver-every", 30*time.Second, "how often queued records are sent")
+	notices := flags.String("notices", collector.NoticesFocus, "tracker notices: focus (only in a focus session), all, or off")
 	relay := flags.String("relay", "", "relay that carries sealed device requests to the server, such as https://relay.example.com; the server address is used when it cannot be reached")
 	relayKey := flags.String("relay-key", "", "the server's public key for -relay")
 	flags.Parse(arguments)
@@ -202,7 +203,7 @@ func run(arguments []string) error {
 		}
 		*t3Token = filepath.Join(filepath.Dir(beside), "t3-session-token")
 	}
-	modules, err := buildModules(*moduleNames, *listen, *t3Dir, *t3Token, credentials)
+	modules, err := buildModules(*moduleNames, *listen, *t3Dir, *t3Token, *notices, credentials)
 	if err != nil {
 		return err
 	}

@@ -24,7 +24,7 @@ func trackingBody(state string, task int64, title, context string, since time.Ti
 }
 
 func TestTrackerShowsEachNoticeOnce(t *testing.T) {
-	tracker := &Tracker{}
+	tracker := &Tracker{Notices: NoticesAll}
 	morning := time.Date(2026, 10, 2, 14, 0, 0, 0, time.Local)
 	if got := tracker.decide(trackingBody("away", 0, "", "", time.Time{}), morning); got != nil {
 		t.Fatalf("nobody at the Mac: %+v", got)
@@ -60,7 +60,7 @@ func TestTrackerShowsEachNoticeOnce(t *testing.T) {
 
 func TestTrackerInMultitaskWork(t *testing.T) {
 	start := time.Date(2026, 10, 2, 14, 0, 0, 0, time.Local)
-	tracker := &Tracker{greeted: start.Format("2006-01-02")}
+	tracker := &Tracker{Notices: NoticesAll, greeted: start.Format("2006-01-02")}
 	stopped := start.Add(-4 * time.Minute)
 	body := trackingBody("other", 0, "", "T3 Code (Nightly) · Telemetry · Clarify next steps", start)
 	body.Tracking.LearnContext = "T3 Code (Nightly) · Telemetry"
@@ -86,7 +86,7 @@ func TestTrackerInMultitaskWork(t *testing.T) {
 	if got := tracker.decide(body, start.Add(2*time.Hour)); got != nil {
 		t.Fatalf("said more than twice: %+v", got)
 	}
-	onIt := &Tracker{greeted: start.Format("2006-01-02"), turns: map[string]bool{}}
+	onIt := &Tracker{Notices: NoticesAll, greeted: start.Format("2006-01-02"), turns: map[string]bool{}}
 	task := int64(3)
 	body.Tracking.State, body.Tracking.TaskID = "task", &task
 	onIt.turns[fmt.Sprintf("%d %s", 3, stopped.UTC().Format(time.RFC3339))] = true
@@ -96,7 +96,7 @@ func TestTrackerInMultitaskWork(t *testing.T) {
 	}
 	body.Tracking.State, body.Tracking.TaskID = "other", nil
 	// While an agent of a planned task runs, being elsewhere is filling a wait.
-	waiting := &Tracker{greeted: start.Format("2006-01-02")}
+	waiting := &Tracker{Notices: NoticesAll, greeted: start.Format("2006-01-02")}
 	body.Tracking.YourTurn, body.Tracking.AgentRunning = nil, true
 	if got := waiting.decide(body, start.Add(30*time.Minute)); got != nil {
 		t.Fatalf("filling a wait must not be mentioned: %+v", got)
@@ -230,5 +230,26 @@ func TestTrackerRecordsAnswers(t *testing.T) {
 	tracker.show(notice{kind: "ask", focus: focus}, "")
 	if len(calls) != before {
 		t.Fatalf("OK and an unanswered question must record nothing: %+v", calls[before:])
+	}
+}
+
+// By default the Mac says nothing outside a focus session the owner started.
+func TestTrackerIsQuietOutsideFocusByDefault(t *testing.T) {
+	start := time.Date(2026, 10, 6, 9, 0, 0, 0, time.Local)
+	body := trackingBody("task", 3, "Dad's album", "", start)
+	body.Tracking.YourTurn = []turnRef{{TaskID: 4, Task: "Science fair presentation", Since: start.Add(-time.Hour)}}
+	tracker := &Tracker{}
+	for minute := 0; minute < 120; minute += 5 {
+		if got := tracker.decide(body, start.Add(time.Duration(minute)*time.Minute)); got != nil {
+			t.Fatalf("outside focus: %+v", got)
+		}
+	}
+	off := &Tracker{Notices: NoticesOff}
+	body.Tracking.Focus = &focusNow{TaskID: 3, Task: "Dad's album", Since: start, On: "off", OffSince: &start}
+	if got := off.decide(body, start.Add(10*time.Minute)); got != nil {
+		t.Fatalf("off: %+v", got)
+	}
+	if got := tracker.decide(body, start.Add(10*time.Minute)); got == nil || got.kind != "back" {
+		t.Fatalf("a focus session the owner started keeps its reminder: %+v", got)
 	}
 }

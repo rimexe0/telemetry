@@ -39,6 +39,10 @@ const (
 type Tracker struct {
 	Credentials *Credentials
 	HTTP        *http.Client
+	// Notices is "focus" (only in a focus session the owner started; the
+	// default), "all", or "off". The owner is easily pulled away, and found
+	// notices outside focus to be one more distraction (2026-10-06).
+	Notices string
 	// Prompt shows a notice and returns the option chosen, or -1.
 	Prompt func(title, detail string, options []string, timeout time.Duration) int
 
@@ -56,6 +60,13 @@ type Tracker struct {
 	host   *Host
 	health Health
 }
+
+// The tracker's notice settings.
+const (
+	NoticesFocus = "focus"
+	NoticesAll   = "all"
+	NoticesOff   = "off"
+)
 
 func (*Tracker) Name() string { return "tracker" }
 
@@ -171,7 +182,7 @@ type notice struct {
 // reminder when the owner has left the focus task.
 func (t *Tracker) decide(now trackingNow, at time.Time) *notice {
 	tracking := now.Tracking
-	if tracking.State == "" || tracking.State == "away" {
+	if tracking.State == "" || tracking.State == "away" || t.Notices == NoticesOff || (t.Notices != NoticesAll && tracking.Focus == nil) {
 		return nil
 	}
 	if day := at.Format("2006-01-02"); t.greeted != day && len(now.Tasks) > 0 && tracking.Focus == nil {
