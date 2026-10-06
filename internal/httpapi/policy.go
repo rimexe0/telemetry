@@ -104,8 +104,8 @@ func (s *Server) policyTimeline(writer http.ResponseWriter, request *http.Reques
 }
 
 // policyInputs assembles engine facts from retained records. Gates, urgent
-// purposes, emergencies and breaks are supported by the engine but have no
-// stored source yet (#22, #23, #24, #25).
+// purposes and breaks are supported by the engine but have no stored source
+// yet (#22, #23, #24, #25); an emergency unlock comes from the phone.
 func (s *Server) policyInputs(ctx context.Context, from, to time.Time) (policy.Config, int64, policy.Facts, error) {
 	config := policy.Config{}
 	version := int64(0)
@@ -164,6 +164,10 @@ func (s *Server) policyInputs(ctx context.Context, from, to time.Time) (policy.C
 		if facts.WakeAt, err = store.LoadWakeTime(ctx, s.repository, from); err != nil {
 			return config, 0, policy.Facts{}, err
 		}
+	}
+	// An emergency unlock started on the phone opens every device.
+	if facts.Emergency, err = s.repository.LatestEmergency(ctx, from); err != nil {
+		return config, 0, policy.Facts{}, err
 	}
 	openings, err := s.repository.ActiveOpenings(ctx, from)
 	if err != nil {

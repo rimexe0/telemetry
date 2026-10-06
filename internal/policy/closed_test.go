@@ -168,4 +168,12 @@ func TestPlanGateFromWakeLocksEverythingUntilPlanned(t *testing.T) {
 	if got := Evaluate(config, 1, Facts{WakeAt: &tomorrow}, tomorrow.Add(time.Minute)); got.Mode != ModePlanGate || !got.BlockAll {
 		t.Fatalf("the next morning = %+v", got)
 	}
+	// An emergency unlock from the phone opens even the morning lock, for its minutes only.
+	emergency := &Emergency{StartedAt: tomorrow.Add(5 * time.Minute), Until: tomorrow.Add(15 * time.Minute)}
+	if got := Evaluate(config, 1, Facts{WakeAt: &tomorrow, Emergency: emergency}, tomorrow.Add(6*time.Minute)); got.Mode != ModeEmergency || got.BlockAll {
+		t.Fatalf("emergency = %+v", got)
+	}
+	if got := Evaluate(config, 1, Facts{WakeAt: &tomorrow, Emergency: emergency}, tomorrow.Add(16*time.Minute)); got.Mode != ModePlanGate {
+		t.Fatalf("after the emergency = %+v", got)
+	}
 }

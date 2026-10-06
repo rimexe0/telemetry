@@ -395,3 +395,7 @@ func (fakeRepository) LatestMapImport(context.Context) (*store.MapImport, error)
 func (fakeRepository) LocationFixes(context.Context, time.Time, time.Time) ([]places.Fix, error) {
 	return nil, nil
 }
+
+func (fakeRepository) LatestEmergency(context.Context, time.Time) (*policy.Emergency, error) {
+	return nil, nil
+}

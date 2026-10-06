@@ -30,7 +30,7 @@ object PolicyWatch {
         IncidentWatch.check(context, entry?.json)
         runCatching { FollowUpWatch.check(context, entry?.json) }
         runCatching { TurnWatch.check(context, entry?.json) }
-        val decision = entry?.let { runCatching { BlockPolicy.at(it.json, Instant.now()) }.getOrNull() }
+        val decision = entry?.let { BlockPolicy.current(context, it.json) }
         // Optional root suspension; lifts everything when nothing should be blocked.
         runCatching { AppSuspender.reconcile(context, decision) }
         runCatching { TelemetryNotificationListenerService.connected?.quietBlocked() }

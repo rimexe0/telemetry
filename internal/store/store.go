@@ -77,6 +77,7 @@ type Repository interface {
 	NearbyPlaces(ctx context.Context, lat, lon, radius float64, limit int) ([]MapPlace, error)
 	LatestMapImport(context.Context) (*MapImport, error)
 	LocationFixes(ctx context.Context, from, to time.Time) ([]places.Fix, error)
+	LatestEmergency(ctx context.Context, from time.Time) (*policy.Emergency, error)
 	QueryObservations(context.Context, Query) ([]ObservationView, error)
 	ListSources(context.Context, int) ([]SourceSummary, error)
 	CollectionHealth(context.Context, CollectionHealthQuery) (CollectionHealth, error)

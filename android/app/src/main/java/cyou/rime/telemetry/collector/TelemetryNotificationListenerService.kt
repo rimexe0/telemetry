@@ -33,7 +33,7 @@ class TelemetryNotificationListenerService : NotificationListenerService() {
     /** The blocked apps now, from the cached decision; empty when nothing is blocked. */
     private fun blocked(): Set<String> {
         val entry = NowCache.read(this) ?: return emptySet()
-        val decision = runCatching { BlockPolicy.at(entry.json, Instant.now()) }.getOrNull()
+        val decision = BlockPolicy.current(this, entry.json)
         return AppSuspender.wanted(decision, { true }, PolicyEvents.systemSafe(this), packageName)
     }
 

@@ -59,7 +59,7 @@ class TelemetryAccessibilityService : AccessibilityService() {
     private fun currentDecision(): BlockDecision? {
         val entry = NowCache.read(this) ?: return null
         val json = if (cached?.first == entry.fetchedAt) cached!!.second else entry.json.also { cached = entry.fetchedAt to it }
-        return runCatching { BlockPolicy.at(json, Instant.now()) }.getOrNull()
+        return BlockPolicy.current(this, json)
     }
 
     override fun onInterrupt() = removeOverlay()
@@ -108,6 +108,13 @@ class TelemetryAccessibilityService : AccessibilityService() {
             setOnClickListener {
                 performGlobalAction(GLOBAL_ACTION_HOME)
                 removeOverlay()
+            }
+        })
+        container.addView(Button(this).apply {
+            text = "Emergency: open everything for ${Emergency.LENGTH.toMinutes()} min"
+            setOnClickListener {
+                removeOverlay()
+                Thread { runCatching { Emergency.start(this@TelemetryAccessibilityService) } }.start()
             }
         })
         val params = WindowManager.LayoutParams(

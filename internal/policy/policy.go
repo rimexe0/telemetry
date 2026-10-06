@@ -361,7 +361,7 @@ func evaluate(config Config, version int64, facts Facts, at time.Time) Decision 
 
 	if emergency := facts.Emergency; emergency != nil && !at.Before(emergency.StartedAt) && at.Before(emergency.Until) {
 		decision.Mode = ModeEmergency
-		decision.Reason = "Emergency unlock until " + clock(emergency.Until) + ". What you do now will be reviewed afterwards."
+		decision.Reason = "Emergency unlock until " + clock(emergency.Until) + "."
 		decision.Basis = append(decision.Basis, "emergency")
 		decision.Blocked = emptyTargets()
 		return decision

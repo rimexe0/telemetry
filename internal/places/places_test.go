@@ -10,7 +10,9 @@ func TestStaysAndHomeFromYesterdaysShape(t *testing.T) {
 	at := func(day, hour, minute int) time.Time { return time.Date(2026, 10, day, hour, minute, 0, 0, istanbul) }
 	home := [2]float64{38.4000, 17.1000}
 	hospital := [2]float64{38.4500, 17.1900}
-	fix := func(when time.Time, where [2]float64) Fix { return Fix{At: when, Lat: where[0], Lon: where[1], Accuracy: 8} }
+	fix := func(when time.Time, where [2]float64) Fix {
+		return Fix{At: when, Lat: where[0], Lon: where[1], Accuracy: 8}
+	}
 	fixes := []Fix{
 		// Nights at home.
 		fix(at(4, 2, 0), home), fix(at(4, 4, 0), home), fix(at(5, 3, 35), home), fix(at(5, 5, 0), home),

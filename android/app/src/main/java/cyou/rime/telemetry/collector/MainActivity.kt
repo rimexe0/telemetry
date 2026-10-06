@@ -29,6 +29,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -69,6 +70,10 @@ data class HomeState(
     val footer: String? = null,
     /** Permissions and setup steps the phone is missing, named on the screen. */
     val missing: List<SetupStep> = emptyList(),
+    /** Something is blocked now, so the emergency unlock is offered. */
+    val blocking: Boolean = false,
+    /** Set while an emergency unlock is open. */
+    val emergencyUntil: Instant? = null,
     val followUps: List<FollowUp> = emptyList(),
     val focus: FocusView? = null,
 )
@@ -102,6 +107,7 @@ class MainActivity : ComponentActivity() {
                     onShowDay = ::loadDay,
                     onDay = { date, chunk -> startActivity(DayActivity.intent(this, date, chunk)) },
                     onSetup = ::openSetup,
+                    onEmergency = ::emergency,
                     onDone = ::done,
                     onFocus = ::focus,
                 )
@@ -124,6 +130,20 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openSetup(step: SetupStep? = null) = startActivity(SetupActivity.intent(this, step))
+
+    /** Whether something is blocked now, and any emergency unlock in force. */
+    private fun showBlocking() {
+        val json = NowCache.read(this)?.json
+        val until = Emergency.until(this)?.takeIf { it.isAfter(Instant.now()) }
+        state = state.copy(emergencyUntil = until, blocking = until == null && json != null && BlockPolicy.current(this, json)?.active == true)
+    }
+
+    private fun emergency() {
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) { Emergency.start(this@MainActivity) }
+            showBlocking()
+        }
+    }
 
     private fun showFollowUps() {
         val json = NowCache.read(this)?.json
@@ -154,6 +174,7 @@ class MainActivity : ComponentActivity() {
     private suspend fun refresh() {
         val token = DeliveryConfig(this).token()
         state = state.copy(missing = SetupStep.missing(SetupActivity.syncDone(this)))
+        showBlocking()
         if (token == null) {
             if (!showCached()) problem("This phone is not paired yet", "Finish setting it up to see your plan.")
             return
@@ -205,7 +226,7 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun HomeScreen(state: HomeState, days: Map<String, DayView>, onShowDay: (String) -> Unit, onSettings: () -> Unit, onPlanner: () -> Unit,
-    onDay: (String, DayChunk?) -> Unit, onSetup: (SetupStep) -> Unit, onDone: (FollowUp) -> Unit, onFocus: (String, Long) -> Unit) {
+    onDay: (String, DayChunk?) -> Unit, onSetup: (SetupStep) -> Unit, onEmergency: () -> Unit, onDone: (FollowUp) -> Unit, onFocus: (String, Long) -> Unit) {
     val context = LocalContext.current
     val names = remember { AppNames(context) }
     // Today is the last page; swiping right goes back a day at a time.
@@ -246,6 +267,7 @@ private fun HomeScreen(state: HomeState, days: Map<String, DayView>, onShowDay: 
                     }
                     state.reason?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     Missing(state.missing, onSetup)
+                    EmergencyRow(state.blocking, state.emergencyUntil, onEmergency)
                 }
                 days[date]?.let { day ->
                     Plan(day, onPlanner, if (isToday && state.focus == null) onFocus else null, isToday)
@@ -260,6 +282,19 @@ private fun HomeScreen(state: HomeState, days: Map<String, DayView>, onShowDay: 
 
 /** How many days the home screen can swipe back through. */
 private const val DAYS_BACK = 60
+
+/** While something is blocked, the way to open everything for a few minutes; during that, until when. */
+@Composable
+private fun EmergencyRow(blocking: Boolean, until: Instant?, onEmergency: () -> Unit) {
+    if (until != null) {
+        val at = until.atZone(ZoneId.systemDefault())
+        Text(String.format("Everything is open until %02d:%02d.", at.hour, at.minute), color = DistractionColor)
+    } else if (blocking) {
+        TextButton(onClick = onEmergency, contentPadding = PaddingValues(0.dp)) {
+            Text("Emergency: open everything for ${Emergency.LENGTH.toMinutes()} min", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
 
 /** Each thing the phone is missing, with the way to fix it; nothing when all is in place. */
 @Composable
