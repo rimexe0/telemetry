@@ -32,4 +32,12 @@ class SetupStepsTest {
         assertEquals(0, SetupStep.remainingRequired(all))
         assertEquals(4, SetupStep.remainingRequired(emptySet()))
     }
+
+    @Test
+    fun missingPermissionsStayNamedEvenWhenSkipped() {
+        val done = setOf(SetupStep.PAIR, SetupStep.NOTIFICATIONS, SetupStep.USAGE_ACCESS, SetupStep.START, SetupStep.BATTERY)
+        // Health and location are extras; blocking and notification access matter for blocking.
+        assertEquals(listOf(SetupStep.BLOCKING, SetupStep.NOTIFICATION_ACCESS), SetupStep.missing(done))
+        assertEquals(emptyList<SetupStep>(), SetupStep.missing(SetupStep.entries.toSet()))
+    }
 }

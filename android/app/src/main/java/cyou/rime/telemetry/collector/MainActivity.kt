@@ -67,8 +67,8 @@ data class HomeState(
     val resume: String? = null,
     val reason: String? = null,
     val footer: String? = null,
-    val needsSetup: Boolean = false,
-    val needsBlocking: Boolean = false,
+    /** Permissions and setup steps the phone is missing, named on the screen. */
+    val missing: List<SetupStep> = emptyList(),
     val followUps: List<FollowUp> = emptyList(),
     val focus: FocusView? = null,
 )
@@ -102,7 +102,6 @@ class MainActivity : ComponentActivity() {
                     onShowDay = ::loadDay,
                     onDay = { date, chunk -> startActivity(DayActivity.intent(this, date, chunk)) },
                     onSetup = ::openSetup,
-                    onBlocking = { startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
                     onDone = ::done,
                     onFocus = ::focus,
                 )
@@ -124,7 +123,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun openSetup() = startActivity(Intent(this, SetupActivity::class.java))
+    private fun openSetup(step: SetupStep? = null) = startActivity(SetupActivity.intent(this, step))
 
     private fun showFollowUps() {
         val json = NowCache.read(this)?.json
@@ -154,10 +153,7 @@ class MainActivity : ComponentActivity() {
 
     private suspend fun refresh() {
         val token = DeliveryConfig(this).token()
-        state = state.copy(
-            needsSetup = SetupActivity.needsSetup(this),
-            needsBlocking = token != null && !PolicyEvents.blockingEnabled(this),
-        )
+        state = state.copy(missing = SetupStep.missing(SetupActivity.syncDone(this)))
         if (token == null) {
             if (!showCached()) problem("This phone is not paired yet", "Finish setting it up to see your plan.")
             return
@@ -209,7 +205,7 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun HomeScreen(state: HomeState, days: Map<String, DayView>, onShowDay: (String) -> Unit, onSettings: () -> Unit, onPlanner: () -> Unit,
-    onDay: (String, DayChunk?) -> Unit, onSetup: () -> Unit, onBlocking: () -> Unit, onDone: (FollowUp) -> Unit, onFocus: (String, Long) -> Unit) {
+    onDay: (String, DayChunk?) -> Unit, onSetup: (SetupStep) -> Unit, onDone: (FollowUp) -> Unit, onFocus: (String, Long) -> Unit) {
     val context = LocalContext.current
     val names = remember { AppNames(context) }
     // Today is the last page; swiping right goes back a day at a time.
@@ -249,8 +245,7 @@ private fun HomeScreen(state: HomeState, days: Map<String, DayView>, onShowDay: 
                         }
                     }
                     state.reason?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                    if (state.needsSetup) Prompt("This phone is not fully set up.", "Finish setup", onSetup)
-                    if (state.needsBlocking) Prompt("Blocking is switched off on this phone.", "Turn on", onBlocking)
+                    Missing(state.missing, onSetup)
                 }
                 days[date]?.let { day ->
                     Plan(day, onPlanner, if (isToday && state.focus == null) onFocus else null, isToday)
@@ -266,12 +261,18 @@ private fun HomeScreen(state: HomeState, days: Map<String, DayView>, onShowDay: 
 /** How many days the home screen can swipe back through. */
 private const val DAYS_BACK = 60
 
+/** Each thing the phone is missing, with the way to fix it; nothing when all is in place. */
 @Composable
-private fun Prompt(text: String, action: String, onClick: () -> Unit) {
+private fun Missing(missing: List<SetupStep>, onFix: (SetupStep) -> Unit) {
+    if (missing.isEmpty()) return
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh), modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.padding(start = 14.dp, end = 8.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(text, modifier = Modifier.weight(1f))
-            FilledTonalButton(onClick = onClick) { Text(action) }
+        Column(Modifier.padding(start = 14.dp, end = 8.dp, top = 4.dp, bottom = 4.dp)) {
+            missing.forEach { step ->
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
+                    Text(step.missing.orEmpty(), color = DistractionColor, modifier = Modifier.weight(1f))
+                    FilledTonalButton(onClick = { onFix(step) }) { Text("Fix") }
+                }
+            }
         }
     }
 }

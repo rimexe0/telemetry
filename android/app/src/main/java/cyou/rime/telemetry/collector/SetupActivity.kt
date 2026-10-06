@@ -2,6 +2,7 @@ package cyou.rime.telemetry.collector
 
 import android.Manifest
 import android.app.AppOpsManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -21,6 +22,7 @@ import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.HealthConnectFeatures
@@ -38,6 +40,12 @@ class SetupActivity : ComponentActivity() {
     companion object {
         private const val PREFS = "telemetry-setup"
         private const val KEY_SKIPPED = "skipped"
+        /** Opens setup at this step (a [SetupStep] name), even one skipped before. */
+        const val EXTRA_STEP = "step"
+
+        fun intent(context: Context, step: SetupStep? = null) = Intent(context, SetupActivity::class.java).apply {
+            step?.let { putExtra(EXTRA_STEP, it.name) }
+        }
         const val KEY_STARTED = "collection_started"
         private const val HEALTH_CONNECT_PACKAGE = "com.google.android.apps.healthdata"
         private val BACKGROUND = Color.rgb(17, 18, 19)
@@ -61,6 +69,7 @@ class SetupActivity : ComponentActivity() {
             if (granted(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION)) done += SetupStep.BACKGROUND_LOCATION
             if (context.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(context.packageName)) done += SetupStep.BATTERY
             if (PolicyEvents.blockingEnabled(context)) done += SetupStep.BLOCKING
+            if (NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)) done += SetupStep.NOTIFICATION_ACCESS
             if (preferences(context).getBoolean(KEY_STARTED, false)) done += SetupStep.START
             return done
         }
@@ -150,6 +159,7 @@ class SetupActivity : ComponentActivity() {
         .mapNotNull { name -> SetupStep.entries.firstOrNull { it.name == name } }.toSet()
 
     private fun skipStep(step: SetupStep) {
+        intent.removeExtra(EXTRA_STEP)
         preferences(this).edit().putStringSet(KEY_SKIPPED, skipped().map { it.name }.toSet() + step.name).apply()
         status.text = ""
         refresh()
@@ -159,7 +169,10 @@ class SetupActivity : ComponentActivity() {
         lifecycleScope.launch {
             healthDone = healthStepDone()
             val done = syncDone(this@SetupActivity) + if (healthDone) setOf(SetupStep.HEALTH) else emptySet()
-            val step = SetupStep.next(done, skipped())
+            // Asked for from the Now screen: that step first while it is missing.
+            val asked = intent.getStringExtra(EXTRA_STEP)?.let { name -> SetupStep.entries.firstOrNull { it.name == name } }?.takeIf { it !in done }
+            if (asked == null) intent.removeExtra(EXTRA_STEP)
+            val step = asked ?: SetupStep.next(done, skipped())
             if (step != current) status.text = ""
             current = step
             render(step, done)
@@ -204,6 +217,17 @@ class SetupActivity : ComponentActivity() {
                 Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
             )
             SetupStep.BLOCKING -> openSetting(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS), Intent(Settings.ACTION_SETTINGS))
+            SetupStep.NOTIFICATION_ACCESS -> openSetting(
+                if (Build.VERSION.SDK_INT >= 30) {
+                    Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS).putExtra(
+                        Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME,
+                        ComponentName(this, TelemetryNotificationListenerService::class.java).flattenToString(),
+                    )
+                } else {
+                    Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                },
+                Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS),
+            )
             SetupStep.START -> startCollection()
         }
     }

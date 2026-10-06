@@ -9,16 +9,18 @@ enum class SetupStep(
     val title: String,
     val why: String,
     val action: String,
+    /** Said on the Now screen while missing, even when skipped in setup; null for extras. */
+    val missing: String? = null,
 ) {
     PAIR(true, "Connect this phone",
         "Links the phone to your Telemetry server. Turn Tailscale on first, tap Connect here, then approve it in the Telemetry panel on your Mac.",
-        "Connect"),
+        "Connect", "Not connected to the server"),
     NOTIFICATIONS(true, "Allow notifications",
         "Collection runs with a visible notification, and later the phone asks you short questions when something looks off.",
-        "Allow"),
+        "Allow", "Notifications are off"),
     USAGE_ACCESS(true, "Allow usage access",
         "Lets Telemetry see which app is open, so it can tell work from scrolling. Switch it on, then come back.",
-        "Open setting"),
+        "Open setting", "Usage access is off"),
     HEALTH(false, "Allow health data",
         "Sleep and steps from Health Connect let Telemetry notice when you wake up and when you've moved.",
         "Allow"),
@@ -30,13 +32,16 @@ enum class SetupStep(
         "Open setting"),
     BATTERY(false, "Let it run in the background",
         "Stops Android from pausing collection to save battery.",
-        "Allow"),
+        "Allow", "Battery saving can pause it"),
     BLOCKING(false, "Turn on blocking",
         "Lets Telemetry close distracting apps during work and breaks and show you why. Open Telemetry blocking, switch it on and allow, then come back.",
-        "Open setting"),
+        "Open setting", "Blocking is off"),
+    NOTIFICATION_ACCESS(false, "Hide notifications from blocked apps",
+        "Lets Telemetry remove notifications from apps that are blocked right now, so they can't pull you back in. It does not keep what they say. Switch Telemetry on, then come back.",
+        "Open setting", "Blocked apps can still notify"),
     START(true, "Start collecting",
         "Starts collection now. A small notification shows while it runs.",
-        "Start");
+        "Start", "Collection is not started");
 
     companion object {
         /**
@@ -49,5 +54,8 @@ enum class SetupStep(
         }
 
         fun remainingRequired(done: Set<SetupStep>): Int = entries.count { it.required && it !in done }
+
+        /** What the Now screen names as missing, in setup order. */
+        fun missing(done: Set<SetupStep>): List<SetupStep> = entries.filter { it.missing != null && it !in done }
     }
 }
