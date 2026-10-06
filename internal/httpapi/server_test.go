@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/rimexe0/telemetry/internal/model"
+	"github.com/rimexe0/telemetry/internal/places"
 	"github.com/rimexe0/telemetry/internal/policy"
 	"github.com/rimexe0/telemetry/internal/store"
 )
@@ -755,4 +756,12 @@ func TestBatchJSONFixtureRemainsValid(t *testing.T) {
 		t.Fatal("fixture was not decoded")
 	}
 	_ = time.Second
+}
+
+func (*fakeRepository) NearbyPlaces(context.Context, float64, float64, float64, int) ([]store.MapPlace, error) {
+	return nil, nil
+}
+func (*fakeRepository) LatestMapImport(context.Context) (*store.MapImport, error) { return nil, nil }
+func (*fakeRepository) LocationFixes(context.Context, time.Time, time.Time) ([]places.Fix, error) {
+	return nil, nil
 }

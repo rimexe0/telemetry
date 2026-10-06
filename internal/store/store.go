@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/rimexe0/telemetry/internal/model"
+	"github.com/rimexe0/telemetry/internal/places"
 	"github.com/rimexe0/telemetry/internal/policy"
 )
 
@@ -73,6 +74,9 @@ type CollectionHealth struct {
 // than receiving raw database access.
 type Repository interface {
 	Ingest(context.Context, model.Batch) (Receipt, error)
+	NearbyPlaces(ctx context.Context, lat, lon, radius float64, limit int) ([]MapPlace, error)
+	LatestMapImport(context.Context) (*MapImport, error)
+	LocationFixes(ctx context.Context, from, to time.Time) ([]places.Fix, error)
 	QueryObservations(context.Context, Query) ([]ObservationView, error)
 	ListSources(context.Context, int) ([]SourceSummary, error)
 	CollectionHealth(context.Context, CollectionHealthQuery) (CollectionHealth, error)

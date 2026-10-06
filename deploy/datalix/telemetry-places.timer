@@ -1,0 +1,11 @@
+[Unit]
+Description=Monthly refresh of named places from OpenStreetMap
+
+[Timer]
+OnCalendar=*-*-01 04:30:00
+RandomizedDelaySec=30m
+Persistent=true
+Unit=telemetry-places.service
+
+[Install]
+WantedBy=timers.target

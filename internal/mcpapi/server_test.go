@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/rimexe0/telemetry/internal/model"
+	"github.com/rimexe0/telemetry/internal/places"
 	"github.com/rimexe0/telemetry/internal/policy"
 	"github.com/rimexe0/telemetry/internal/store"
 )
@@ -384,5 +385,13 @@ func (fakeRepository) ActivityRecords(context.Context, time.Time, time.Time) ([]
 }
 
 func (fakeRepository) AndroidAppUsage(context.Context, time.Time, int) ([]store.AppUsageSuggestion, error) {
+	return nil, nil
+}
+
+func (fakeRepository) NearbyPlaces(context.Context, float64, float64, float64, int) ([]store.MapPlace, error) {
+	return nil, nil
+}
+func (fakeRepository) LatestMapImport(context.Context) (*store.MapImport, error) { return nil, nil }
+func (fakeRepository) LocationFixes(context.Context, time.Time, time.Time) ([]places.Fix, error) {
 	return nil, nil
 }

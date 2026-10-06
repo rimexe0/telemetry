@@ -1,0 +1,13 @@
+[Unit]
+Description=Refresh named places from OpenStreetMap for matching stays
+After=telemetry.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/telemetry
+EnvironmentFile=%h/telemetry/.env
+ExecStartPre=/usr/bin/mkdir -p %h/telemetry/tmp
+ExecStart=%h/telemetry/bin/telemetry-places -dir %h/telemetry/tmp
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
