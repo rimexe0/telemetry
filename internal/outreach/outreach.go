@@ -18,6 +18,9 @@ import (
 const (
 	KindMorning = "morning"
 	KindOffPlan = "off_plan"
+	// KindMissedStart asks once when a planned task block has begun and the
+	// owner is at their devices but not on it.
+	KindMissedStart = "missed_start"
 	// KindCollection tells the owner that something Telemetry reads changed
 	// its format and needs fixing. It is not counted against the hourly cap.
 	KindCollection = "collection"
@@ -139,6 +142,66 @@ func MorningPrompt(facts string) string {
 	return rules + "\n\nThey just woke up. Tell them what the records say about yesterday in two or three lines, what is waiting, " +
 		"and ask what today is for, offering the most likely one to three things from the facts. " +
 		"If the day is locked, say in one line that everything opens once the day is planned with you.\n\nFacts:\n" + facts
+}
+
+// A planned block counts as not started when, between MissedStartAfter and
+// MissedStartWithin after its start, the owner has been at their devices
+// for MissedStartActive and not on its task. Later than that it is no longer
+// the block's start; the drift check-in covers the rest.
+const (
+	MissedStartAfter  = 10 * time.Minute
+	MissedStartWithin = 30 * time.Minute
+	MissedStartActive = 5 * time.Minute
+)
+
+// Start is how the first minutes of a planned task block went.
+type Start struct {
+	BlockID int64
+	At      time.Time
+	// Tracked means the task has rules, so OnTask is time on it; an
+	// untracked task's block counts as not started only when the time went
+	// mostly to distractions.
+	Tracked                    bool
+	OnTask, Distracted, Active time.Duration
+}
+
+// MissedStartMarker begins the facts of a missed-start message.
+func MissedStartMarker(block int64, at time.Time) string {
+	return fmt.Sprintf("block %d %s", block, at.UTC().Format(time.RFC3339))
+}
+
+// MissedStartDue reports whether to ask about a block that has not started:
+// once per block, near its start.
+func MissedStartDue(now time.Time, start Start, sent []Sent, facts []string) bool {
+	since := now.Sub(start.At)
+	if since < MissedStartAfter || since >= MissedStartWithin || start.Active < MissedStartActive {
+		return false
+	}
+	if start.Tracked && start.OnTask >= 2*time.Minute {
+		return false
+	}
+	if !start.Tracked && (start.Distracted < MissedStartActive || 2*start.Distracted < start.Active) {
+		return false
+	}
+	marker := MissedStartMarker(start.BlockID, start.At)
+	for _, logged := range facts {
+		if strings.HasPrefix(logged, marker+"\n") {
+			return false
+		}
+	}
+	for _, earlier := range sent {
+		if earlier.Kind == KindMissedStart && now.Sub(earlier.At) < 5*time.Minute {
+			return false
+		}
+	}
+	return true
+}
+
+// MissedStartPrompt asks for the one message about a block not started.
+func MissedStartPrompt(facts string) string {
+	return rules + "\n\nA planned block has begun and they are at their devices but not on its task. Write one short message: name the block and the next " +
+		"smallest step of its task, and ask which it is: starting now, something changed (then you will help make a new plan), switched on purpose, " +
+		"or stuck. Do not count minutes. Two sentences at most.\n\nFacts:\n" + facts
 }
 
 // OffPlanPrompt asks whether to write after a stretch of drift outside the

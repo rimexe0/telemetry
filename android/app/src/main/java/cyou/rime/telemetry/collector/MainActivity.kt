@@ -372,6 +372,11 @@ private fun Totals(day: DayView, modifier: Modifier) {
         if (day.blocks.isNotEmpty() || day.tasks.isNotEmpty()) {
             Total("On plan", DayModel.clock(day.inPlanMinutes) + if (day.plannedMinutes >= 1) " of ${DayModel.clock(day.plannedMinutes)}" else "", null)
         }
+        // Breaks after task work: rest is away from screens; scrolling is not rest.
+        if (day.restMinutes >= 1 || day.scrollingMinutes >= 1) {
+            Total("Breaks", DayModel.clock(day.restMinutes) + " rest",
+                if (day.scrollingMinutes >= 1) DayModel.clock(day.scrollingMinutes) + " scrolling" else null)
+        }
         Total("Distractions", DayModel.clock(day.distractionMinutes),
             day.distractionByDevice.filter { it.second >= 1 }.sortedByDescending { it.second }
                 .joinToString(" · ") { "${DayModel.deviceName(it.first)} ${DayModel.clock(it.second)}" }.ifBlank { null })

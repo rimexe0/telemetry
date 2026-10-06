@@ -13,7 +13,7 @@ class DayModelTest {
         "blocks":[{"id":1,"task_id":7,"title":"Telemetry","start":"2026-10-01T09:00:00Z","end":"2026-10-01T10:00:00Z","state":"planned","closes_distractions":true,"status":"past","tracked":true,"in_plan_minutes":25.5,"distraction_minutes":34.5},
                   {"id":2,"title":"Later","start":"2026-10-01T12:00:00Z","end":"2026-10-01T13:00:00Z","state":"planned","closes_distractions":false,"status":"upcoming","in_plan_minutes":0,"distraction_minutes":0}],
         "tasks":[{"id":3,"title":"Dad's album","tracked":true,"minutes":25.5,"agent_minutes":25,"waiting_minutes":30,"your_turn_since":"2026-10-01T10:00:00Z"},{"id":4,"title":"Science fair presentation","tracked":false,"minutes":0}],
-        "planned_minutes":120,"in_plan_minutes":25.5,"distraction_minutes":34.5,
+        "planned_minutes":120,"in_plan_minutes":25.5,"distraction_minutes":34.5,"rest_minutes":20,"scrolling_minutes":8,
         "distraction_by_device":[{"device":"mac","minutes":15},{"device":"phone","minutes":19.5}],
         "chunks":[{"device":"phone","start":"2026-10-01T06:20:00Z","end":"2026-10-01T06:40:00Z","kind":"distraction","active_minutes":20,"distraction_minutes":19.5,
                    "items":[{"name":"com.twitter.android","label":"distraction","minutes":19.5,"visits":2},{"name":"com.whatsapp","label":"unlabeled","minutes":0.5,"visits":1}],
@@ -28,6 +28,8 @@ class DayModelTest {
         assertEquals("upcoming", view.blocks[1].status)
         assertFalse(view.blocks[0].focusOnly)
         assertEquals(34.5, view.distractionMinutes, 0.0)
+        assertEquals(20.0, view.restMinutes, 0.0)
+        assertEquals(8.0, view.scrollingMinutes, 0.0)
         assertEquals(listOf("mac" to 15.0, "phone" to 19.5), view.distractionByDevice)
         assertEquals(DayModel.DISTRACTION, view.chunks[0].kind)
         assertTrue(view.blocks[0].tracked)

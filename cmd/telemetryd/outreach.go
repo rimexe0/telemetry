@@ -83,6 +83,28 @@ func runOutreach(ctx context.Context, repository store.Repository, compose, send
 		if len(compose) == 0 {
 			return
 		}
+		start, startFacts, err := missedStart(loadCtx, repository, location, now)
+		if err != nil {
+			log.Printf("outreach: %v", err)
+			return
+		}
+		loggedFacts := []string{}
+		for _, entry := range logged {
+			if entry.Kind == outreach.KindMissedStart {
+				loggedFacts = append(loggedFacts, entry.Facts)
+			}
+		}
+		if start != nil && outreach.MissedStartDue(now, *start, all, loggedFacts) {
+			composeCtx, cancelCompose := context.WithTimeout(ctx, 3*time.Minute)
+			answer, err := outreach.Compose(composeCtx, compose, outreach.MissedStartPrompt(startFacts))
+			cancelCompose()
+			if err != nil {
+				log.Printf("outreach: %v", err)
+				answer = "NOTHING"
+			}
+			deliver(ctx, repository, send, outreach.KindMissedStart, outreach.Message(answer), startFacts)
+			return
+		}
 		stretch, facts, err := offPlan(loadCtx, repository, config, location, now)
 		if err != nil {
 			log.Printf("outreach: %v", err)
@@ -311,6 +333,57 @@ func morningFacts(ctx context.Context, repository store.Repository, config polic
 		lines = append(lines, taskLines(recent.Tasks)...)
 	}
 	return strings.Join(lines, "\n"), nil
+}
+
+// missedStart finds a planned task block that began between
+// MissedStartAfter and MissedStartWithin ago and measures its first minutes.
+func missedStart(ctx context.Context, repository store.Repository, location *time.Location, now time.Time) (*outreach.Start, string, error) {
+	planDate, _, _ := localDay(now, location)
+	input, _, err := store.LoadDayInput(ctx, repository, planDate, now.Add(-outreach.MissedStartWithin), now, false)
+	if err != nil {
+		return nil, "", err
+	}
+	var block *activity.PlannedBlock
+	for i, planned := range input.Blocks {
+		if since := now.Sub(planned.Start); planned.TaskID != nil && since >= outreach.MissedStartAfter && since < outreach.MissedStartWithin && now.Before(planned.End) {
+			block = &input.Blocks[i]
+		}
+	}
+	if block == nil {
+		return nil, "", nil
+	}
+	input, _, err = store.LoadDayInput(ctx, repository, planDate, block.Start, now, false)
+	if err != nil {
+		return nil, "", err
+	}
+	day := activity.BuildDay(input)
+	start := &outreach.Start{BlockID: block.ID, At: block.Start}
+	active := map[string]float64{}
+	for _, chunk := range day.Chunks {
+		active[chunk.Device] += chunk.ActiveMinutes
+	}
+	for _, minutes := range active {
+		start.Active = max(start.Active, time.Duration(minutes*float64(time.Minute)))
+	}
+	for _, item := range day.Blocks {
+		if item.ID == block.ID {
+			start.Tracked = item.Tracked
+			start.OnTask = time.Duration(item.InPlanMinutes * float64(time.Minute))
+			start.Distracted = time.Duration(item.DistractionMinutes * float64(time.Minute))
+		}
+	}
+	lines := []string{outreach.MissedStartMarker(block.ID, block.Start),
+		fmt.Sprintf("Now %s. The planned block %q began at %s and runs until %s.", now.In(location).Format("15:04"), block.Title,
+			block.Start.In(location).Format("15:04"), block.End.In(location).Format("15:04"))}
+	for _, task := range input.Tasks {
+		if task.ID == *block.TaskID && task.NextAction != "" {
+			lines = append(lines, "Its task's next step: "+task.NextAction+".")
+		}
+	}
+	if start.Distracted > 0 {
+		lines = append(lines, "Since it began: "+minutes(start.Distracted.Minutes())+" on distractions.")
+	}
+	return start, strings.Join(lines, "\n"), nil
 }
 
 // offPlan measures the last stretch of the owner's day and words it.

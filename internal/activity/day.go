@@ -442,6 +442,70 @@ type Day struct {
 	Distraction        []DeviceMinutes `json:"distraction_by_device"`
 	Chunks             []Chunk         `json:"chunks"`
 	NoData             []Gap           `json:"no_data"`
+	// Breaks between stretches of task work, and their totals by kind.
+	Breaks           []Break `json:"breaks"`
+	RestMinutes      float64 `json:"rest_minutes"`
+	ScrollingMinutes float64 `json:"scrolling_minutes"`
+}
+
+// Break is time between two stretches of work on the day's tasks, or since
+// the last one when it is recent. Rest is time away from screens; a break
+// spent on distractions is scrolling, not rest (the owner's words: breaks
+// turn into doomscrolling, which makes everything worse).
+type Break struct {
+	Start time.Time `json:"start"`
+	End   time.Time `json:"end"`
+	// Kind is "rest" (mostly away from the Mac and phone), "scrolling" (on
+	// distractions), "screen" (on screens, not distractions) or "unknown"
+	// (the phone was not reporting, so being away is not shown).
+	Kind               string  `json:"kind"`
+	AwayMinutes        float64 `json:"away_minutes"`
+	DistractionMinutes float64 `json:"distraction_minutes"`
+	// Ongoing means the break has not ended yet.
+	Ongoing bool `json:"ongoing,omitempty"`
+}
+
+const (
+	// A pause shorter than breakMin is part of the work; a gap longer than
+	// breakMax is no longer a break between two stretches of work.
+	breakMin = 3 * time.Minute
+	breakMax = time.Hour
+	// Distractions this long make a break scrolling.
+	breakScrolling = 2 * time.Minute
+)
+
+// breaks finds the breaks in [from, to) from the task work, the time on any
+// screen, the time on distractions and the phone's missing data.
+func breaks(work, screen, distracted []span, phoneMissing []span, from, to time.Time) []Break {
+	result := []Break{}
+	add := func(start, end time.Time, ongoing bool) {
+		length := end.Sub(start)
+		if length < breakMin || length > breakMax {
+			return
+		}
+		window := span{start: start, end: end}
+		item := Break{Start: start, End: end, Ongoing: ongoing,
+			AwayMinutes:        round(length.Minutes() - minutesIn(window, screen)),
+			DistractionMinutes: round(minutesIn(window, distracted))}
+		switch {
+		case time.Duration(item.DistractionMinutes*float64(time.Minute)) >= breakScrolling:
+			item.Kind = "scrolling"
+		case minutesIn(window, phoneMissing) > length.Minutes()/3:
+			item.Kind = "unknown"
+		case item.AwayMinutes >= length.Minutes()*2/3:
+			item.Kind = "rest"
+		default:
+			item.Kind = "screen"
+		}
+		result = append(result, item)
+	}
+	for i := 1; i < len(work); i++ {
+		add(work[i-1].end, work[i].start, false)
+	}
+	if n := len(work); n > 0 && work[n-1].end.Before(to) {
+		add(work[n-1].end, to, true)
+	}
+	return result
 }
 
 func segmentName(segment Segment) string {
@@ -924,7 +988,7 @@ func BuildDay(input DayInput) Day {
 	c := newClassifier(input)
 	input.Result.Segments = c.splitAtClaims(input.Result.Segments)
 	from, to := input.From, input.To
-	day := Day{Blocks: []DayBlock{}, Tasks: []DayTask{}, Distraction: []DeviceMinutes{}, Chunks: []Chunk{}, NoData: input.Result.Gaps}
+	day := Day{Blocks: []DayBlock{}, Tasks: []DayTask{}, Distraction: []DeviceMinutes{}, Chunks: []Chunk{}, NoData: input.Result.Gaps, Breaks: []Break{}}
 	if day.NoData == nil {
 		day.NoData = []Gap{}
 	}
@@ -1029,6 +1093,28 @@ func BuildDay(input DayInput) Day {
 		day.Blocks = append(day.Blocks, item)
 	}
 	day.InPlanMinutes = minutesIn(whole, sequential(counted))
+	var work, screen, phoneMissing []span
+	for _, spans := range perTask {
+		work = append(work, spans...)
+	}
+	for _, segment := range input.Result.Segments {
+		screen = append(screen, span{start: segment.Start, end: segment.End})
+	}
+	for _, gap := range input.Result.Gaps {
+		if gap.Device == DevicePhone {
+			phoneMissing = append(phoneMissing, span{start: gap.Start, end: gap.End})
+		}
+	}
+	day.Breaks = breaks(sequential(work), sequential(screen), distracted, sequential(phoneMissing), from, to)
+	for _, item := range day.Breaks {
+		switch item.Kind {
+		case "rest":
+			day.RestMinutes += item.AwayMinutes
+		case "scrolling":
+			day.ScrollingMinutes += item.DistractionMinutes
+		}
+	}
+	day.RestMinutes, day.ScrollingMinutes = round(day.RestMinutes), round(day.ScrollingMinutes)
 	day.PlannedMinutes, day.InPlanMinutes, day.DistractionMinutes = round(day.PlannedMinutes), round(day.InPlanMinutes), round(day.DistractionMinutes)
 	return day
 }

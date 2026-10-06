@@ -68,6 +68,9 @@ data class DayView(
     val distractionByDevice: List<Pair<String, Double>>,
     val chunks: List<DayChunk>,
     val gaps: List<DayGap>,
+    /** Breaks between task work: time away from screens, and time spent scrolling. */
+    val restMinutes: Double = 0.0,
+    val scrollingMinutes: Double = 0.0,
 )
 
 object DayModel {
@@ -95,6 +98,8 @@ object DayModel {
             plannedMinutes = day.optDouble("planned_minutes", 0.0),
             inPlanMinutes = day.optDouble("in_plan_minutes", 0.0),
             distractionMinutes = day.optDouble("distraction_minutes", 0.0),
+            restMinutes = day.optDouble("rest_minutes", 0.0),
+            scrollingMinutes = day.optDouble("scrolling_minutes", 0.0),
             distractionByDevice = day.optJSONArray("distraction_by_device").each { it.getString("device") to it.optDouble("minutes", 0.0) },
             chunks = day.optJSONArray("chunks").each { chunk ->
                 DayChunk(

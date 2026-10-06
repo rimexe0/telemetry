@@ -160,3 +160,35 @@ func TestOnlyRealProblemsAreTold(t *testing.T) {
 		}
 	}
 }
+
+func TestMissedStartIsAskedOncePerBlock(t *testing.T) {
+	start := time.Date(2026, 10, 6, 10, 0, 0, 0, time.UTC)
+	off := Start{BlockID: 7, At: start, Tracked: true, Active: 10 * time.Minute}
+	if MissedStartDue(start.Add(9*time.Minute), off, nil, nil) {
+		t.Fatal("too early")
+	}
+	if !MissedStartDue(start.Add(12*time.Minute), off, nil, nil) {
+		t.Fatal("at devices, not on the block's task: ask")
+	}
+	if MissedStartDue(start.Add(31*time.Minute), off, nil, nil) {
+		t.Fatal("half an hour in it is no longer the start")
+	}
+	on := off
+	on.OnTask = 5 * time.Minute
+	away := off
+	away.Active = 2 * time.Minute
+	untracked := Start{BlockID: 7, At: start, Active: 10 * time.Minute, Distracted: 2 * time.Minute}
+	for name, s := range map[string]Start{"started": on, "away from devices": away, "untracked and not distracted": untracked} {
+		if MissedStartDue(start.Add(12*time.Minute), s, nil, nil) {
+			t.Fatalf("%s: not asked", name)
+		}
+	}
+	untracked.Distracted = 8 * time.Minute
+	if !MissedStartDue(start.Add(12*time.Minute), untracked, nil, nil) {
+		t.Fatal("an untracked task's block spent on distractions: ask")
+	}
+	told := []string{MissedStartMarker(7, start) + "\nNow 10:12."}
+	if MissedStartDue(start.Add(20*time.Minute), off, nil, told) {
+		t.Fatal("exactly once per block")
+	}
+}
