@@ -89,6 +89,17 @@ class DeviceTelemetryCollector(
         DeviceCollectionResult(eventsRead, inserted, usageState)
     }
 
+    @Suppress("DEPRECATION")
+    private fun wifiAddress(connectivity: ConnectivityManager): String? = runCatching {
+        connectivity.allNetworks.firstNotNullOfOrNull { network ->
+            if (connectivity.getNetworkCapabilities(network)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) != true) return@firstNotNullOfOrNull null
+            connectivity.getLinkProperties(network)?.linkAddresses
+                ?.map { it.address }
+                ?.firstOrNull { it is java.net.Inet4Address && it.isSiteLocalAddress }
+                ?.hostAddress
+        }
+    }.getOrNull()
+
     private fun deviceStateObservation(now: Long): LocalObservation {
         val bucket = now / STATE_BUCKET_MILLIS * STATE_BUCKET_MILLIS
         val battery = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
@@ -108,6 +119,9 @@ class DeviceTelemetryCollector(
             .put("keyguard_locked", keyguard.isKeyguardLocked)
             .put("network_available", capabilities != null)
             .put("transports", transports)
+            // The phone's address on the Wi-Fi it is on, even while mobile data
+            // carries traffic, so the Mac can find it for wireless debugging.
+            .putNullable("wifi_ipv4", wifiAddress(connectivity))
             .putNullable("battery_level", battery?.let {
                 val scale = it.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
                 it.getIntExtra(BatteryManager.EXTRA_LEVEL, -1).takeIf { level -> level >= 0 }
