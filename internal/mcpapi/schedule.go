@@ -17,7 +17,7 @@ const scheduleNotes = "When closed_by_default is on, everything labelled \"distr
 	"An opening lifts the block on named sites or apps for a stated purpose for a limited time; use open_now when the owner needs something that is closed, " +
 	"and say back what you opened and until when. Times are the owner's local time. " +
 	"lock_until_planned closes everything except what is labelled \"essential\" on every device from the moment the owner wakes (taken from the records, never asked) " +
-	"until the day has a plan; set_day_plan for that day opens it, and a day with no fixed times is planned with an empty list of blocks once its tasks are agreed. " +
+	"until the day has a plan; switched on during a day, it starts at the next waking; set_day_plan for that day opens it, and a day with no fixed times is planned with an empty list of blocks once its tasks are agreed. " +
 	"It cannot be turned on until the owner's way to reach you is labelled essential."
 
 type WindowIO struct {
