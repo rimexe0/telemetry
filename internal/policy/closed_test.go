@@ -157,4 +157,15 @@ func TestPlanGateFromWakeLocksEverythingUntilPlanned(t *testing.T) {
 	if len(segments) != 2 || segments[0].Decision.Mode != ModeLeisure || segments[1].Decision.Mode != ModePlanGate || !segments[1].From.Equal(wake) {
 		t.Fatalf("timeline = %+v", segments)
 	}
+	// Switched on at 10:30 on a day already begun without a plan: nothing
+	// locks until the next waking.
+	since := at(10, 30)
+	config.PlanGate.Since = &since
+	if got := Evaluate(config, 1, Facts{WakeAt: &wake}, at(10, 31)); got.Mode != ModeLeisure || got.BlockAll {
+		t.Fatalf("switched on after waking = %+v", got)
+	}
+	tomorrow := wake.AddDate(0, 0, 1)
+	if got := Evaluate(config, 1, Facts{WakeAt: &tomorrow}, tomorrow.Add(time.Minute)); got.Mode != ModePlanGate || !got.BlockAll {
+		t.Fatalf("the next morning = %+v", got)
+	}
 }

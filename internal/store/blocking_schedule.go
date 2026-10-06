@@ -52,6 +52,13 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 	locked := config.PlanGate.FromWake
 	previous := ScheduleChange{ClosedByDefault: &closed, DistractionTimes: &times, OpenAddresses: &addresses, LockUntilPlanned: &locked}
 	if change.LockUntilPlanned != nil {
+		if *change.LockUntilPlanned && !config.PlanGate.FromWake {
+			since := time.Now().UTC()
+			config.PlanGate.Since = &since
+		}
+		if !*change.LockUntilPlanned {
+			config.PlanGate.Since = nil
+		}
 		config.PlanGate.FromWake, config.PlanGate.LockAll = *change.LockUntilPlanned, *change.LockUntilPlanned
 	}
 	if change.ClosedByDefault != nil {

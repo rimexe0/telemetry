@@ -52,6 +52,10 @@ type PlanGateConfig struct {
 	// LockAll closes everything but the essentials until the day is planned,
 	// not only the distractions.
 	LockAll bool `json:"lock_all,omitempty"`
+	// Since is when the gate from wake was switched on. Only a wake after it
+	// starts the gate, so switching it on in the middle of a day without a
+	// plan locks nothing until the next morning.
+	Since *time.Time `json:"since,omitempty"`
 }
 
 // Window is a daily stretch of local time, "HH:MM" to "HH:MM". An end at or
@@ -539,6 +543,9 @@ func planGateStarted(config Config, facts Facts, location *time.Location, at tim
 		return true
 	}
 	if facts.WakeAt == nil || at.Before(*facts.WakeAt) {
+		return false
+	}
+	if since := config.PlanGate.Since; since != nil && facts.WakeAt.Before(*since) {
 		return false
 	}
 	return facts.WakeAt.In(location).Format("2006-01-02") == at.In(location).Format("2006-01-02")
