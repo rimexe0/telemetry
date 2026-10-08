@@ -70,6 +70,16 @@ func LoadWakeTime(ctx context.Context, repository Repository, at time.Time) (*ti
 }
 
 func LoadDayInput(ctx context.Context, repository Repository, planDate, from, to time.Time, withSegments bool) (activity.DayInput, *Plan, error) {
+	return loadDayInput(ctx, repository, planDate, from, to, withSegments, true)
+}
+
+// LoadTrackingInput is LoadDayInput without the phone's positions, for
+// what is on screen now, which does not need them.
+func LoadTrackingInput(ctx context.Context, repository Repository, planDate, from, to time.Time) (activity.DayInput, *Plan, error) {
+	return loadDayInput(ctx, repository, planDate, from, to, false, false)
+}
+
+func loadDayInput(ctx context.Context, repository Repository, planDate, from, to time.Time, withSegments, withFixes bool) (activity.DayInput, *Plan, error) {
 	input := activity.DayInput{From: from, To: to, WithSegments: withSegments}
 	records, _, err := repository.ActivityRecords(ctx, from, to)
 	if err != nil {
@@ -134,6 +144,9 @@ func LoadDayInput(ctx context.Context, repository Repository, planDate, from, to
 		return input, nil, err
 	}
 	input.Blocks = PlannedBlocks(plan)
+	if !withFixes {
+		return input, plan, nil
+	}
 	// Positions for time outside: two weeks of nights find home, and the
 	// half day before from shows a stay already going at from.
 	history, err := repository.LocationFixes(ctx, to.Add(-14*24*time.Hour), to)

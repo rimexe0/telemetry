@@ -12,6 +12,45 @@ object DeviceApi {
     /** A call that changes something, with an optional JSON body; true when the server accepted it. Blocking IO. */
     fun post(context: Context, path: String, body: String? = null): Boolean = call(context, "POST", path, body) != null
 
+    /**
+     * Waits up to 50 seconds for the answer to /v1/device/now to differ from
+     * [fingerprint]. Returns the new body, an empty string when nothing
+     * changed, or null when the server could not be reached. Blocking IO.
+     */
+    fun waitNow(context: Context, fingerprint: String): String? {
+        val config = DeliveryConfig(context)
+        val token = config.token() ?: return null
+        val path = "/v1/device/now?timeout=50&wait=" + java.net.URLEncoder.encode(fingerprint, "UTF-8")
+        val headers = mapOf("Authorization" to "Bearer $token", "X-Telemetry-Device-ID" to DeviceIdentity.get(context), "Accept" to "application/json")
+        SealedChannel.configured()?.let { channel ->
+            val answer = try {
+                channel.exchange("GET", path, headers, null, 10_000, 75_000)
+            } catch (_: java.io.IOException) {
+                null
+            }
+            if (answer != null) return when (answer.status) {
+                200 -> String(answer.body, Charsets.UTF_8)
+                304 -> ""
+                else -> null
+            }
+        }
+        return runCatching {
+            val connection = URL(config.serverUrl.trimEnd('/') + path).openConnection() as HttpURLConnection
+            try {
+                connection.connectTimeout = 10_000
+                connection.readTimeout = 75_000
+                headers.forEach { (name, value) -> connection.setRequestProperty(name, value) }
+                when (connection.responseCode) {
+                    200 -> connection.inputStream.bufferedReader().use { it.readText() }
+                    304 -> ""
+                    else -> null
+                }
+            } finally {
+                connection.disconnect()
+            }
+        }.getOrNull()
+    }
+
     private fun call(context: Context, method: String, path: String, body: String?): String? {
         val config = DeliveryConfig(context)
         val token = config.token() ?: return null

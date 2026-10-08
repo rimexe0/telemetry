@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/rimexe0/telemetry/internal/changes"
 	"io"
 	"net/http"
 	"strconv"
@@ -36,6 +37,9 @@ type Config struct {
 	PairingEnabled      bool
 	// DeviceSessions, when set, lets paired devices open owner panel views.
 	DeviceSessions *DeviceSessions
+	// Changes, when set, wakes devices waiting on /v1/device/now as soon as
+	// something that affects them changes.
+	Changes *changes.Feed
 }
 
 type Server struct {

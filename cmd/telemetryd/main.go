@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/rimexe0/telemetry/internal/changes"
 	"github.com/rimexe0/telemetry/internal/clerkidentity"
 	"github.com/rimexe0/telemetry/internal/enrollment"
 	"github.com/rimexe0/telemetry/internal/httpapi"
@@ -105,12 +106,15 @@ func main() {
 		log.Fatal(err)
 	}
 	deviceSessions := httpapi.NewDeviceSessions(deviceSessionKey, 12*time.Hour)
+	// Changes wake devices waiting for their next decision.
+	feed := changes.New()
 	server, err := httpapi.New(database, httpapi.Config{
 		IngestToken:         *ingestToken,
 		OwnerAuthorized:     ownerAuthorized,
 		DeviceAuthorized:    devices.AuthorizeDevice,
 		PairingEnabled:      clerkKey != "" && ownerID != "",
 		DeviceSessions:      deviceSessions,
+		Changes:             feed,
 		ClerkPublishableKey: clerkKey,
 		IngestDeviceTokens:  ingestDeviceTokens,
 		ReadToken:           *readToken,
@@ -149,9 +153,10 @@ func main() {
 		router.Handle("GET /panel/", http.StripPrefix("/panel/", panel))
 	}
 	router.Handle("/", server)
+	handler := feed.Middleware(router)
 	httpServer := &http.Server{
 		Addr:              *listen,
-		Handler:           router,
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {
@@ -172,7 +177,7 @@ func main() {
 		}
 		relayServer := &http.Server{
 			Addr:              *relayListen,
-			Handler:           &sealed.Relay{Key: key, Next: router, MaxBytes: 24 << 20, Window: 5 * time.Minute, PerMinute: 600},
+			Handler:           &sealed.Relay{Key: key, Next: handler, MaxBytes: 24 << 20, Window: 5 * time.Minute, PerMinute: 600},
 			ReadHeaderTimeout: 10 * time.Second,
 		}
 		go func() {

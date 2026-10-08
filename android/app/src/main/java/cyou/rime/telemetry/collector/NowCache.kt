@@ -21,10 +21,19 @@ object NowCache {
     /** Fetches and stores a fresh response; returns null when offline or unpaired. Blocking IO. */
     fun refresh(context: Context): String? {
         val body = DeviceApi.get(context, "/v1/device/now") ?: return null
+        store(context, body)
+        return body
+    }
+
+    /** Keeps an answer that arrived some other way, such as a waited-for change. */
+    fun store(context: Context, body: String) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putString(KEY_JSON, body)
             .putString(KEY_FETCHED_AT, Instant.now().toString())
-            .apply()
-        return body
+            .commit()
     }
+
+    /** The server's fingerprint of the cached answer, or null. */
+    fun fingerprint(context: Context): String? =
+        read(context)?.json?.let { runCatching { org.json.JSONObject(it).optString("fingerprint") }.getOrNull() }?.takeIf { it.isNotBlank() }
 }

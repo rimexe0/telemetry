@@ -39,8 +39,11 @@ type Blocker struct {
 	mu        sync.Mutex
 	timeline  []policy.Segment
 	fetchedAt time.Time
-	blocking  string
-	lastBlock string
+	// fingerprint is the server's for the answer in use; a waiting request
+	// returns when it changes.
+	fingerprint string
+	blocking    string
+	lastBlock   string
 	// host is set by Run; site checks record blocks through it.
 	host      *Host
 	lastSites map[string]bool
@@ -94,6 +97,9 @@ func (b *Blocker) Run(ctx context.Context, host Host) error {
 	sample := time.NewTicker(time.Second)
 	defer sample.Stop()
 	b.refresh(ctx, host)
+	// A change made by the assistant or the owner arrives through a waiting
+	// request at once; the minute refresh keeps what is on screen current.
+	go b.watch(ctx, host)
 	for {
 		select {
 		case <-ctx.Done():
@@ -116,11 +122,16 @@ func (b *Blocker) refresh(ctx context.Context, host Host) {
 		b.health.Failed(time.Now(), errors.New("this computer is not paired; run telemetry-desktop login to receive blocking decisions"))
 		return
 	}
-	body, err := b.fetch(ctx)
+	body, _, err := b.fetch(ctx, "")
 	if err != nil {
 		b.health.Failed(time.Now(), err)
 		return
 	}
+	b.apply(ctx, host, body)
+}
+
+// apply takes a fresh answer into use.
+func (b *Blocker) apply(ctx context.Context, host Host, body []byte) {
 	if err := b.load(body, time.Now()); err != nil {
 		b.health.Failed(time.Now(), err)
 		return
@@ -132,38 +143,89 @@ func (b *Blocker) refresh(ctx context.Context, host Host) {
 	}
 }
 
-func (b *Blocker) fetch(ctx context.Context) ([]byte, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(b.Credentials.BaseURL, "/")+"/v1/device/now", nil)
+// watch keeps one request waiting for the answer to change and applies a
+// change as soon as it comes. Errors back off; the minute refresh carries on.
+func (b *Blocker) watch(ctx context.Context, host Host) {
+	pause := 5 * time.Second
+	for ctx.Err() == nil {
+		b.mu.Lock()
+		known := b.fingerprint
+		b.mu.Unlock()
+		if known == "" {
+			if !sleep(ctx, pause) {
+				return
+			}
+			continue
+		}
+		body, status, err := b.fetch(ctx, known)
+		switch {
+		case err != nil:
+			if !sleep(ctx, pause) {
+				return
+			}
+			pause = min(2*pause, time.Minute)
+		case status == http.StatusOK:
+			pause = 5 * time.Second
+			b.apply(ctx, host, body)
+		default:
+			pause = 5 * time.Second
+		}
+	}
+}
+
+func sleep(ctx context.Context, d time.Duration) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(d):
+		return true
+	}
+}
+
+// fetch asks for the current answer; with known set it waits up to 50
+// seconds for it to differ and returns 304 with no body when it did not.
+func (b *Blocker) fetch(ctx context.Context, known string) ([]byte, int, error) {
+	address := strings.TrimRight(b.Credentials.BaseURL, "/") + "/v1/device/now"
+	client := b.HTTP
+	if known != "" {
+		address += "?timeout=50&wait=" + url.QueryEscape(known)
+		client = &http.Client{Transport: b.HTTP.Transport, Timeout: 75 * time.Second}
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	request.Header.Set("Authorization", "Bearer "+b.Credentials.Secret)
 	request.Header.Set("X-Telemetry-Device-ID", b.Credentials.DeviceID)
-	response, err := b.HTTP.Do(request)
+	response, err := client.Do(request)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	if response.StatusCode == http.StatusNotModified && known != "" {
+		return nil, response.StatusCode, nil
 	}
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("decisions: HTTP %d", response.StatusCode)
+		return nil, response.StatusCode, fmt.Errorf("decisions: HTTP %d", response.StatusCode)
 	}
-	return body, nil
+	return body, response.StatusCode, nil
 }
 
 func (b *Blocker) load(body []byte, fetchedAt time.Time) error {
 	var now struct {
-		Timeline []policy.Segment `json:"timeline"`
+		Timeline    []policy.Segment `json:"timeline"`
+		Fingerprint string           `json:"fingerprint"`
 	}
 	if err := json.Unmarshal(body, &now); err != nil {
 		return fmt.Errorf("decisions: %w", err)
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.timeline = now.Timeline
+	b.timeline, b.fingerprint = now.Timeline, now.Fingerprint
 	if !fetchedAt.IsZero() {
 		b.fetchedAt = fetchedAt
 	}

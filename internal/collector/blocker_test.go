@@ -1,11 +1,16 @@
 package collector
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/rimexe0/telemetry/internal/desktop"
 	"github.com/rimexe0/telemetry/internal/policy"
+	"github.com/rimexe0/telemetry/internal/queue"
 )
 
 func TestBlocksLabelledAppsButNeverEssentialsOrSystem(t *testing.T) {
@@ -64,5 +69,54 @@ func TestSitesFollowDomainsAndSubdomains(t *testing.T) {
 	if blocker.SiteDecision("www.youtube.com", "https://www.youtube.com/watch?v=rFZHOHl-L8A").Blocked ||
 		!blocker.SiteDecision("www.youtube.com", "https://www.youtube.com/watch?v=other").Blocked || !blocker.SiteDecision("www.youtube.com", "").Blocked {
 		t.Fatal("only the open address stays open")
+	}
+}
+
+// A change on the server reaches the Mac through the waiting request, long
+// before the next minute refresh.
+func TestBlockerAppliesAChangeAsSoonAsItComes(t *testing.T) {
+	answer := func(fingerprint, mode string) string {
+		return `{"fingerprint":"` + fingerprint + `","timeline":[{"from":"2026-01-01T00:00:00Z","to":"2099-01-01T00:00:00Z","decision":{"mode":"` + mode + `"}}]}`
+	}
+	changed := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("wait") {
+		case "":
+			w.Write([]byte(answer("a", "leisure")))
+		case "a":
+			select {
+			case <-changed:
+				w.Write([]byte(answer("b", "closed")))
+			case <-time.After(2 * time.Second):
+				w.WriteHeader(http.StatusNotModified)
+			}
+		default:
+			<-r.Context().Done()
+		}
+	}))
+	defer server.Close()
+	q, _ := queue.Open(filepath.Join(t.TempDir(), "q.sqlite3"))
+	defer q.Close()
+	host := Host{Queue: q, DeviceID: "mac"}
+	blocker := &Blocker{Credentials: &Credentials{BaseURL: server.URL, DeviceID: "mac", Secret: "s"}, HTTP: &http.Client{Timeout: 15 * time.Second}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	blocker.refresh(ctx, host)
+	go blocker.watch(ctx, host)
+	mode := func() string {
+		blocker.mu.Lock()
+		defer blocker.mu.Unlock()
+		return DecisionAt(blocker.timeline, time.Now()).Mode
+	}
+	if mode() != "leisure" {
+		t.Fatalf("first = %s", mode())
+	}
+	started := time.Now()
+	close(changed)
+	for mode() != "closed" {
+		if time.Since(started) > time.Second {
+			t.Fatal("the change did not arrive within a second")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

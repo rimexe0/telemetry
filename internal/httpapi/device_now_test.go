@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rimexe0/telemetry/internal/changes"
 	"github.com/rimexe0/telemetry/internal/store"
 )
 
@@ -92,5 +93,58 @@ func TestDeviceNowTimelineStartsBeforeNow(t *testing.T) {
 	}
 	if !payload.Timeline[0].From.Before(payload.GeneratedAt.Add(-5 * time.Minute)) {
 		t.Fatalf("timeline starts at %s, generated %s", payload.Timeline[0].From, payload.GeneratedAt)
+	}
+}
+
+// A device that already has the current answer waits; a change wakes it at
+// once, and with no change it hears "not modified".
+func TestDeviceNowWaitsForAChange(t *testing.T) {
+	repository := &fakeRepository{}
+	feed := changes.New()
+	server, err := New(repository, Config{
+		IngestToken: "ingest-secret",
+		ReadToken:   "read-secret",
+		DeviceAuthorized: func(_ context.Context, deviceID, token string) (bool, bool, error) {
+			return deviceID == "android-1", deviceID == "android-1" && token == "device-secret", nil
+		},
+		Changes: feed,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := deviceGet(server, "android-1", "device-secret")
+	var body map[string]any
+	json.Unmarshal(first.Body.Bytes(), &body)
+	known, _ := body["fingerprint"].(string)
+	if first.Code != http.StatusOK || known == "" {
+		t.Fatalf("first = %d %v", first.Code, body["fingerprint"])
+	}
+	again := deviceGet(server, "android-1", "device-secret")
+	json.Unmarshal(again.Body.Bytes(), &body)
+	if body["fingerprint"] != known {
+		t.Fatal("the fingerprint must not move with the clock")
+	}
+	wait := func(timeout string) (*httptest.ResponseRecorder, time.Duration) {
+		request := httptest.NewRequest(http.MethodGet, "/v1/device/now?wait="+known+"&timeout="+timeout, nil)
+		request.Header.Set("X-Telemetry-Device-ID", "android-1")
+		request.Header.Set("Authorization", "Bearer device-secret")
+		response := httptest.NewRecorder()
+		started := time.Now()
+		server.ServeHTTP(response, request)
+		return response, time.Since(started)
+	}
+	if response, took := wait("1"); response.Code != http.StatusNotModified || took < 900*time.Millisecond {
+		t.Fatalf("no change = %d after %s", response.Code, took)
+	}
+	// A plan appears while the device waits.
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		activity := int64(5)
+		repository.plan = &store.Plan{VersionID: 2, Blocks: []store.PlanBlock{{ID: 1, ActivityID: &activity, Title: "Work",
+			StartTime: time.Now().Add(-time.Minute), DurationMinutes: 60, State: "planned"}}}
+		feed.Changed()
+	}()
+	if response, took := wait("30"); response.Code != http.StatusOK || took > 5*time.Second {
+		t.Fatalf("after a change = %d after %s", response.Code, took)
 	}
 }

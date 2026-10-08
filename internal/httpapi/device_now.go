@@ -1,6 +1,10 @@
 package httpapi
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -42,27 +46,65 @@ func (s *Server) pairedDeviceAuthorized(request *http.Request) bool {
 
 // deviceNow is the read-only state a paired owner device needs to show the
 // current task and follow the policy timeline offline.
+// deviceWaitMax is the longest a device's request waits for a change; it
+// stays well under the relay's idle limit.
+const deviceWaitMax = 50 * time.Second
+
+// deviceNow answers with what a device should do now. With ?wait= the
+// fingerprint the device already has, it waits until that changes, for at
+// most ?timeout= seconds (up to 50), and answers 304 when nothing did: a
+// change made by the assistant or the owner reaches the device at once.
 func (s *Server) deviceNow(writer http.ResponseWriter, request *http.Request) {
 	if !s.pairedDeviceAuthorized(request) && !s.ownerAuthorized(request) {
 		writeError(writer, http.StatusUnauthorized, "unauthorized", "a paired device credential is required")
 		return
 	}
-	ctx := request.Context()
+	known := request.URL.Query().Get("wait")
+	wait := time.Duration(0)
+	if seconds, err := strconv.Atoi(request.URL.Query().Get("timeout")); err == nil && seconds > 0 && known != "" && s.config.Changes != nil {
+		wait = min(time.Duration(seconds)*time.Second, deviceWaitMax)
+	}
+	deadline := time.NewTimer(wait)
+	defer deadline.Stop()
+	for {
+		// Taken before computing, so a change during it is not missed.
+		var next <-chan struct{}
+		if s.config.Changes != nil {
+			next = s.config.Changes.Next()
+		}
+		body, err := s.deviceNowBody(request.Context())
+		if err != nil {
+			writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+			return
+		}
+		if wait == 0 || body["fingerprint"] != known {
+			writeJSON(writer, http.StatusOK, body)
+			return
+		}
+		select {
+		case <-next:
+		case <-deadline.C:
+			writer.WriteHeader(http.StatusNotModified)
+			return
+		case <-request.Context().Done():
+			return
+		}
+	}
+}
+
+func (s *Server) deviceNowBody(ctx context.Context) (map[string]any, error) {
 	now := time.Now().UTC()
 	config, version, facts, err := s.policyInputs(ctx, now, now.Add(deviceTimeline))
 	if err != nil {
-		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
-		return
+		return nil, err
 	}
 	activities, err := s.repository.ListActivities(ctx, store.ActivityFilter{Limit: 200})
 	if err != nil {
-		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
-		return
+		return nil, err
 	}
 	primary, err := s.repository.CurrentPrimaryExecutionSession(ctx)
 	if err != nil {
-		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
-		return
+		return nil, err
 	}
 	var task *deviceTask
 	if primary != nil && primary.EndedAt == nil {
@@ -93,10 +135,9 @@ func (s *Server) deviceNow(writer http.ResponseWriter, request *http.Request) {
 		}
 	}
 	open := []store.CollectionIncident{}
-	incidents, err := s.repository.ListCollectionIncidents(request.Context(), now, 50)
+	incidents, err := s.repository.ListCollectionIncidents(ctx, now, 50)
 	if err != nil {
-		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
-		return
+		return nil, err
 	}
 	for _, incident := range incidents {
 		if incident.EndedAt == nil {
@@ -106,8 +147,7 @@ func (s *Server) deviceNow(writer http.ResponseWriter, request *http.Request) {
 	// Open follow-ups, so the device can show the due ones until they are done.
 	followUps, err := s.repository.ListFollowUps(ctx, now)
 	if err != nil {
-		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
-		return
+		return nil, err
 	}
 	openFollowUps := []store.FollowUp{}
 	for _, item := range followUps {
@@ -116,10 +156,9 @@ func (s *Server) deviceNow(writer http.ResponseWriter, request *http.Request) {
 		}
 	}
 	// What the owner is on at the Mac right now, and the open tasks to choose from.
-	recent, _, err := store.LoadDayInput(ctx, s.repository, alignmentPlanDate(now), now.Add(-trackingWindow), now, false)
+	recent, _, err := store.LoadTrackingInput(ctx, s.repository, alignmentPlanDate(now), now.Add(-trackingWindow), now)
 	if err != nil {
-		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
-		return
+		return nil, err
 	}
 	tracking := activity.Track(recent)
 	tasks := []activity.TaskRef{}
@@ -130,7 +169,12 @@ func (s *Server) deviceNow(writer http.ResponseWriter, request *http.Request) {
 	if task == nil && tracking.State == activity.KindTask {
 		task = &deviceTask{Title: tracking.Task, State: "active"}
 	}
-	writeJSON(writer, http.StatusOK, map[string]any{
+	decision := policy.Evaluate(config, version, facts, now)
+	// Start in the past so a device whose clock runs slightly behind still
+	// finds a segment covering its own "now".
+	timeline := policy.Timeline(config, version, facts, now.Add(-10*time.Minute), now.Add(deviceTimeline))
+	return map[string]any{
+		"fingerprint":  nowFingerprint(decision, timeline, task, facts.PlanExists, openFollowUps),
 		"generated_at": now,
 		"tracking":     tracking,
 		"tasks":        tasks,
@@ -140,12 +184,35 @@ func (s *Server) deviceNow(writer http.ResponseWriter, request *http.Request) {
 		"collection_incidents": open,
 		"plan_exists":          facts.PlanExists,
 		"task":                 task,
-		"decision":             policy.Evaluate(config, version, facts, now),
-		// Start in the past so a device whose clock runs slightly behind still
-		// finds a segment covering its own "now".
-		"timeline":   policy.Timeline(config, version, facts, now.Add(-10*time.Minute), now.Add(deviceTimeline)),
-		"panel_path": "/panel/",
-	})
+		"decision":             decision,
+		"timeline":             timeline,
+		"panel_path":           "/panel/",
+	}, nil
+}
+
+// nowFingerprint changes only when what a device does changes: the decision
+// and its timeline (without the times that move with every request), the
+// current task, whether a plan exists, and the open follow-ups. What is on
+// screen right now is left out, or every device would wake all the time.
+func nowFingerprint(decision policy.Decision, timeline []policy.Segment, task *deviceTask, planExists bool, followUps []store.FollowUp) string {
+	strip := func(decision policy.Decision) policy.Decision {
+		decision.At = time.Time{}
+		return decision
+	}
+	segments := []any{}
+	for i, segment := range timeline {
+		item := map[string]any{"decision": strip(segment.Decision)}
+		if i > 0 {
+			item["from"] = segment.From
+		}
+		if i < len(timeline)-1 {
+			item["to"] = segment.To
+		}
+		segments = append(segments, item)
+	}
+	encoded, _ := json.Marshal(map[string]any{"decision": strip(decision), "timeline": segments, "task": task, "plan": planExists, "follow_ups": followUps})
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:12])
 }
 
 // deviceFollowUpDone lets a paired device mark one follow-up done. It is the

@@ -24,8 +24,9 @@ object PolicyWatch {
     // leave a dismissed question alone.
     @Volatile private var askedThisProcess = false
 
-    fun check(context: Context) {
-        NowCache.refresh(context)
+    /** With fetch false, applies the cached answer as it is, such as one that just arrived. */
+    fun check(context: Context, fetch: Boolean = true) {
+        if (fetch) NowCache.refresh(context)
         val entry = NowCache.read(context)
         IncidentWatch.check(context, entry?.json)
         runCatching { FollowUpWatch.check(context, entry?.json) }
