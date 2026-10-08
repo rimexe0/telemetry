@@ -6,6 +6,7 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/rimexe0/telemetry/internal/activity"
@@ -30,7 +31,17 @@ func runOutreach(ctx context.Context, repository store.Repository, compose, send
 		return
 	}
 	attempts := map[string]int{}
+	var diskFullTold time.Time
 	check := func() {
+		// A full disk is told from the disk itself, at most once a day, and
+		// remembered here because the database cannot record it then.
+		var disk syscall.Statfs_t
+		if syscall.Statfs("/", &disk) == nil {
+			if free := uint64(disk.Bavail) * uint64(disk.Bsize); free < silence.DiskFullBelow && time.Since(diskFullTold) >= outreach.CollectionRepeat {
+				diskFullTold = time.Now()
+				deliver(ctx, repository, send, outreach.KindCollection, outreach.DiskFullMessage(free), "disk full")
+			}
+		}
 		now := time.Now().UTC()
 		loadCtx, cancel := context.WithTimeout(ctx, time.Minute)
 		defer cancel()

@@ -95,4 +95,8 @@ func TestServerDiskNearlyFull(t *testing.T) {
 	if len(findings) != 1 || findings[0].Device != DeviceServer || findings[0].Kind != KindDiskLow {
 		t.Fatalf("1 GB free = %+v", findings)
 	}
+	full := uint64(100 << 20)
+	if findings := Evaluate(Evidence{ServerFreeBytes: &full}, now); len(findings) != 2 || findings[0].Kind != KindDiskFull {
+		t.Fatalf("100 MB free = %+v", findings)
+	}
 }

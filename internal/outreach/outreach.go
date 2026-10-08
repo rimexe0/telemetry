@@ -266,6 +266,13 @@ var Problems = map[string]Problem{
 	}},
 }
 
+// DiskFullMessage tells the owner the server's disk is full. It is checked
+// on the disk itself, not through the database, which cannot write then.
+func DiskFullMessage(free uint64) string {
+	return fmt.Sprintf("The server's disk is full (%.0f MB left): the database cannot store anything new. ", float64(free)/(1<<20)) +
+		"The phone and the Mac keep their records and send them once there is room. Ask me to look at what can be removed."
+}
+
 // PhoneSilentWhileActive is how much Mac use during the phone's silence
 // shows it is not simply switched off for the night.
 const PhoneSilentWhileActive = 20 * time.Minute
