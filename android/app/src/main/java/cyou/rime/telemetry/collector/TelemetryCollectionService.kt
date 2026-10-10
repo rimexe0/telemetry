@@ -9,6 +9,10 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.IBinder
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
@@ -27,6 +31,7 @@ class TelemetryCollectionService : Service() {
     private var collectionJob: Job? = null
     private var watchJob: Job? = null
     private var screenOn: BroadcastReceiver? = null
+    private var wifiWatch: ConnectivityManager.NetworkCallback? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -48,6 +53,7 @@ class TelemetryCollectionService : Service() {
             scope.launch { runCatching { ExitHistory.recordNew(this@TelemetryCollectionService) } }
             startWatching()
             registerScreenOn()
+            registerWifi()
             collectionJob = scope.launch {
                 while (isActive) {
                     val cycle = CollectionRuntime.runCycle(this@TelemetryCollectionService, backgroundHealth = true)
@@ -114,9 +120,27 @@ class TelemetryCollectionService : Service() {
         screenOn = receiver
     }
 
+    /**
+     * Joining a Wi-Fi may mean arriving home, often before GPS notices, so
+     * place reminders are checked at once.
+     */
+    private fun registerWifi() {
+        if (wifiWatch != null) return
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) = PlaceReminders.checkSoon(this@TelemetryCollectionService)
+        }
+        runCatching {
+            getSystemService(ConnectivityManager::class.java).registerNetworkCallback(
+                NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build(), callback)
+            wifiWatch = callback
+        }
+    }
+
     override fun onDestroy() {
         screenOn?.let { runCatching { unregisterReceiver(it) } }
         screenOn = null
+        wifiWatch?.let { runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(it) } }
+        wifiWatch = null
         scope.cancel()
         CollectionRuntime.setRunning(false)
         super.onDestroy()

@@ -11,8 +11,23 @@ import org.json.JSONObject
 import java.time.Duration
 import java.time.Instant
 
-/** Something the owner must come back to at a time; the server holds it. */
-data class FollowUp(val id: Long, val title: String, val dueAt: Instant, val nagMinutes: Int?)
+/**
+ * Something the owner must come back to at a time, or on arriving at or
+ * leaving a place; the server holds it. A place follow-up comes due when the
+ * place is reached (triggeredAt), and no earlier than dueAt.
+ */
+data class FollowUp(val id: Long, val title: String, val dueAt: Instant, val nagMinutes: Int?,
+                    val place: ReminderPlace? = null, val triggeredAt: Instant? = null) {
+    /** When it came due or comes due; null while it waits for its place. */
+    val dueSince: Instant? get() = when {
+        place == null -> dueAt
+        triggeredAt == null -> null
+        triggeredAt.isAfter(dueAt) -> triggeredAt
+        else -> dueAt
+    }
+
+    fun dueBy(now: Instant): Boolean = dueSince?.let { !now.isBefore(it) } == true
+}
 
 /**
  * Keeps due follow-ups in front of the owner until they are marked done, so
@@ -36,28 +51,35 @@ object FollowUpWatch {
             val item = array.getJSONObject(index)
             runCatching {
                 FollowUp(item.getLong("id"), item.getString("title"), Instant.parse(item.getString("due_at")),
-                    if (item.isNull("nag_minutes")) null else item.optInt("nag_minutes").takeIf { it > 0 })
+                    if (item.isNull("nag_minutes")) null else item.optInt("nag_minutes").takeIf { it > 0 },
+                    ReminderPlace.parse(item.optJSONObject("place")),
+                    item.optString("triggered_at").takeIf { it.isNotBlank() && it != "null" }?.let { runCatching { Instant.parse(it) }.getOrNull() })
             }.getOrNull()
         }
     }
 
     /** Whether a due follow-up should make a sound now: the first time, and again every nag interval. */
     fun alertsNow(followUp: FollowUp, now: Instant, lastAlert: Instant?): Boolean = when {
-        now.isBefore(followUp.dueAt) -> false
+        !followUp.dueBy(now) -> false
         lastAlert == null -> true
         followUp.nagMinutes == null -> false
         else -> Duration.between(lastAlert, now) >= Duration.ofMinutes(followUp.nagMinutes.toLong())
     }
 
-    /** Open follow-ups the owner has not marked done on this phone, soonest first. */
+    /** Open follow-ups the owner has not marked done on this phone, soonest first; ones waiting for a place last. */
     fun open(context: Context, json: String?): List<FollowUp> {
         val done = doneLocally(context)
-        return json?.let { runCatching { parse(it) }.getOrNull() }.orEmpty().filter { it.id !in done }.sortedBy { it.dueAt }
+        return json?.let { runCatching { parse(it) }.getOrNull() }.orEmpty().filter { it.id !in done }
+            .map { withLocalTrigger(context, it) }.sortedBy { it.dueSince ?: Instant.MAX }
     }
+
+    /** A place this phone saw reached counts before the server hears of it. */
+    private fun withLocalTrigger(context: Context, followUp: FollowUp): FollowUp =
+        if (followUp.place != null && followUp.triggeredAt == null) followUp.copy(triggeredAt = PlaceReminders.firedAt(context, followUp.id)) else followUp
 
     fun check(context: Context, json: String?) {
         flush(context)
-        val listed = json?.let { runCatching { parse(it) }.getOrNull() } ?: return
+        val listed = json?.let { runCatching { parse(it) }.getOrNull() }?.map { withLocalTrigger(context, it) } ?: return
         val preferences = prefs(context)
         val done = doneLocally(context)
         val now = Instant.now()
@@ -65,7 +87,7 @@ object FollowUpWatch {
         val showing = manager.activeNotifications.map { it.id }.toSet()
         val editor = preferences.edit()
         for (followUp in listed) {
-            if (followUp.id in done || now.isBefore(followUp.dueAt)) continue
+            if (followUp.id in done || !followUp.dueBy(now)) continue
             val last = preferences.getString(KEY_ALERTED + followUp.id, null)?.let { runCatching { Instant.parse(it) }.getOrNull() }
             val loud = alertsNow(followUp, now, last)
             // A swiped-away notice comes back quietly; it only leaves when done.
@@ -116,14 +138,22 @@ object FollowUpWatch {
         manager.notify(notificationId(followUp.id), Notification.Builder(context, if (loud) CHANNEL else QUIET_CHANNEL)
             .setSmallIcon(android.R.drawable.ic_popup_reminder)
             .setContentTitle(followUp.title)
-            .setContentText("Due since ${NowModel.ageText(followUp.dueAt, Instant.now()).removeSuffix(" ago")}")
-            .setWhen(followUp.dueAt.toEpochMilli())
+            .setContentText(dueText(followUp, Instant.now()))
+            .setWhen((followUp.dueSince ?: followUp.dueAt).toEpochMilli())
             .setShowWhen(true)
             .setOngoing(true)
             .setContentIntent(open)
             .addAction(Notification.Action.Builder(null, "Done", done).build())
             .build())
     }
+}
+
+/** "Due since 5 min", or for a place "Arrived home 5 min ago". */
+internal fun dueText(followUp: FollowUp, now: Instant): String {
+    val since = followUp.dueSince ?: followUp.dueAt
+    val place = followUp.place ?: return "Due since ${NowModel.ageText(since, now).removeSuffix(" ago")}"
+    val name = if (place.home) "home" else place.name
+    return "${if (place.arrive) "Arrived at" else "Left"} $name ${NowModel.ageText(since, now)}"
 }
 
 /** The "Done" button on a follow-up notification. */

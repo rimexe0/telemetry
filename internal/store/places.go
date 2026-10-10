@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -159,4 +160,58 @@ func (p *Postgres) LocationFixes(ctx context.Context, from, to time.Time) ([]pla
 		fixes = append(fixes, places.Fix{At: at.UTC(), Lat: *payload.Lat, Lon: *payload.Lon, Accuracy: payload.Accuracy})
 	}
 	return fixes, rows.Err()
+}
+
+// PlaceQuery finds map places by name (or brand) or by kind around a point.
+// Kind matches the map's kind such as "amenity=pharmacy" or just its value,
+// "pharmacy".
+type PlaceQuery struct {
+	Name   string
+	Kind   string
+	Lat    float64
+	Lon    float64
+	Within float64
+	Limit  int
+}
+
+// SearchMapPlaces lists the places matching the query within Within meters
+// of the point, nearest first.
+func (p *Postgres) SearchMapPlaces(ctx context.Context, query PlaceQuery) ([]MapPlace, error) {
+	dLat := query.Within / metersPerDegree
+	dLon := query.Within / (metersPerDegree * math.Max(math.Cos(query.Lat*math.Pi/180), 0.01))
+	name := "%" + strings.ToLower(strings.TrimSpace(query.Name)) + "%"
+	kind := strings.ToLower(strings.TrimSpace(query.Kind))
+	rows, err := p.pool.Query(ctx, `SELECT osm_ref, name, kind, details, lat, lon, min_lat, max_lat, min_lon, max_lon FROM map_places
+		WHERE lat BETWEEN $1 AND $2 AND lon BETWEEN $3 AND $4
+		  AND ($5 = '%%' OR lower(name) LIKE $5 OR lower(details->>'brand') LIKE $5)
+		  AND ($6 = '' OR kind = $6 OR kind LIKE '%=' || $6)`,
+		query.Lat-dLat, query.Lat+dLat, query.Lon-dLon, query.Lon+dLon, name, kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	found := []MapPlace{}
+	for rows.Next() {
+		var place MapPlace
+		var details []byte
+		var minLat, maxLat, minLon, maxLon *float64
+		if err := rows.Scan(&place.OSMRef, &place.Name, &place.Kind, &details, &place.Lat, &place.Lon, &minLat, &maxLat, &minLon, &maxLon); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal(details, &place.Details)
+		if minLat != nil && maxLat != nil && minLon != nil && maxLon != nil {
+			place.Box = &[4]float64{*minLat, *minLon, *maxLat, *maxLon}
+		}
+		if place.Meters = math.Round(places.Meters(query.Lat, query.Lon, place.Lat, place.Lon)); place.Meters <= query.Within {
+			found = append(found, place)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.SliceStable(found, func(i, j int) bool { return found[i].Meters < found[j].Meters })
+	if len(found) > query.Limit {
+		found = found[:query.Limit]
+	}
+	return found, nil
 }

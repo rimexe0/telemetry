@@ -321,10 +321,12 @@ private fun FollowUps(followUps: List<FollowUp>, onDone: (FollowUp) -> Unit) {
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(start = 14.dp, end = 8.dp, top = 4.dp, bottom = 4.dp)) {
             followUps.forEach { followUp ->
-                val due = !now.isBefore(followUp.dueAt)
-                val at = followUp.dueAt.atZone(zone)
+                val due = followUp.dueBy(now)
+                val at = (followUp.dueSince ?: followUp.dueAt).atZone(zone)
+                // A reminder waiting for its place shows the place, not a time.
+                val waiting = followUp.place?.takeIf { followUp.dueSince == null }
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
-                    Text(String.format("%02d:%02d", at.hour, at.minute), color = if (due) DistractionColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                    Text(waiting?.label ?: String.format("%02d:%02d", at.hour, at.minute), color = if (due) DistractionColor else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(end = 12.dp))
                     Text(followUp.title, fontWeight = if (due) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.weight(1f))
                     FilledTonalButton(onClick = { onDone(followUp) }) { Text("Done") }

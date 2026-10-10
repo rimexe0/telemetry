@@ -29,6 +29,7 @@ object PolicyWatch {
         if (fetch) NowCache.refresh(context)
         val entry = NowCache.read(context)
         IncidentWatch.check(context, entry?.json)
+        runCatching { PlaceReminders.evaluate(context, notify = false) }
         runCatching { FollowUpWatch.check(context, entry?.json) }
         runCatching { TurnWatch.check(context, entry?.json) }
         val decision = entry?.let { BlockPolicy.current(context, it.json) }

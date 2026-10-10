@@ -124,6 +124,8 @@ type Repository interface {
 	ApplyTaskRuleChanges(context.Context, []TaskRuleChange, string) (AgentChange, []ActivityContextRule, error)
 	ListFollowUps(context.Context, time.Time) ([]FollowUp, error)
 	CloseFollowUp(context.Context, int64, string) (FollowUp, error)
+	TriggerFollowUp(context.Context, int64, time.Time) (FollowUp, error)
+	SearchMapPlaces(ctx context.Context, query PlaceQuery) ([]MapPlace, error)
 	ApplyBlocklistChange(context.Context, []policy.BlocklistChange, string) (AgentChange, error)
 	ApplyLabelChanges(context.Context, []activity.LabelChange, string) (AgentChange, error)
 	ListAgentChanges(context.Context, int) ([]AgentChange, error)

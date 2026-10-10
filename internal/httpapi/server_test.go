@@ -258,6 +258,7 @@ func testServer(t *testing.T, repository *fakeRepository) *Server {
 }
 
 type fakeRepository struct {
+	followUps    []store.FollowUp
 	ingested     model.Batch
 	query        store.Query
 	observations []store.ObservationView
@@ -618,7 +619,7 @@ func (f *fakeRepository) ApplyFollowUpChanges(context.Context, []store.FollowUpC
 }
 
 func (f *fakeRepository) ListFollowUps(context.Context, time.Time) ([]store.FollowUp, error) {
-	return nil, nil
+	return f.followUps, nil
 }
 
 func (f *fakeRepository) CloseFollowUp(context.Context, int64, string) (store.FollowUp, error) {
@@ -771,5 +772,13 @@ func (*fakeRepository) LatestEmergency(context.Context, time.Time) (*policy.Emer
 }
 
 func (*fakeRepository) CalendarEvents(context.Context, time.Time, time.Time) ([]store.CalendarEvent, error) {
+	return nil, nil
+}
+
+func (*fakeRepository) TriggerFollowUp(context.Context, int64, time.Time) (store.FollowUp, error) {
+	return store.FollowUp{}, nil
+}
+
+func (*fakeRepository) SearchMapPlaces(context.Context, store.PlaceQuery) ([]store.MapPlace, error) {
 	return nil, nil
 }

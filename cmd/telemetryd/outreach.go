@@ -323,7 +323,12 @@ func morningFacts(ctx context.Context, repository store.Repository, config polic
 		return "", err
 	}
 	for _, followUp := range followUps {
-		if followUp.State == "open" && !followUp.DueAt.After(now.Add(12*time.Hour)) {
+		switch {
+		case followUp.State != "open":
+		case followUp.Place != nil && followUp.TriggeredAt == nil:
+			// The phone reminds them there; nothing to do before.
+			lines = append(lines, "Follow-up waiting for a place, the phone will remind them on "+followUp.Place.When+" ("+followUp.Place.Name+"): "+followUp.Title+".")
+		case !followUp.DueAt.After(now.Add(12 * time.Hour)):
 			lines = append(lines, "Follow-up: "+followUp.Title+" (due "+followUp.DueAt.In(location).Format("Mon 15:04")+").")
 		}
 	}

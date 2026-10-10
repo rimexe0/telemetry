@@ -33,18 +33,57 @@ type FollowUp struct {
 	ClosedBy  string    `json:"closed_by,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// Place, when set, makes the follow-up come due on arriving at or
+	// leaving a place, no earlier than DueAt. The phone checks it against
+	// its own positions and reports TriggeredAt.
+	Place       *FollowUpPlace `json:"place,omitempty"`
+	TriggeredAt *time.Time     `json:"triggered_at,omitempty"`
+}
+
+const (
+	PlaceArrive = "arrive"
+	PlaceLeave  = "leave"
+)
+
+// FollowUpPlace is where a follow-up comes due: any of Points, so "at a
+// pharmacy" can be every pharmacy near home.
+type FollowUpPlace struct {
+	// When is "arrive" or "leave".
+	When string `json:"when"`
+	// Name is what to call it, such as "home" or "Migros".
+	Name string `json:"name"`
+	// Home also counts joining the home Wi-Fi as arriving.
+	Home   bool         `json:"home,omitempty"`
+	Points []PlacePoint `json:"points"`
+}
+
+// PlacePoint is a circle: inside when within Radius meters.
+type PlacePoint struct {
+	Lat    float64 `json:"lat"`
+	Lon    float64 `json:"lon"`
+	Radius float64 `json:"radius"`
+}
+
+// MaxPlacePoints bounds how many places one follow-up watches.
+const MaxPlacePoints = 500
+
+// Due says whether the follow-up should be in front of the owner now.
+func (f FollowUp) Due(now time.Time) bool {
+	return f.State == FollowUpOpen && !now.Before(f.DueAt) && (f.Place == nil || f.TriggeredAt != nil)
 }
 
 // FollowUpChange adds a follow-up or updates fields of one. Fields left out
 // stay as they are.
 type FollowUpChange struct {
-	Action     string     `json:"action"`
-	ID         *int64     `json:"id,omitempty"`
-	Title      *string    `json:"title,omitempty"`
-	DueAt      *time.Time `json:"due_at,omitempty"`
-	NagMinutes *int       `json:"nag_minutes,omitempty"`
-	ClearNag   bool       `json:"clear_nag,omitempty"`
-	State      *string    `json:"state,omitempty"`
+	Action     string         `json:"action"`
+	ID         *int64         `json:"id,omitempty"`
+	Title      *string        `json:"title,omitempty"`
+	DueAt      *time.Time     `json:"due_at,omitempty"`
+	NagMinutes *int           `json:"nag_minutes,omitempty"`
+	ClearNag   bool           `json:"clear_nag,omitempty"`
+	State      *string        `json:"state,omitempty"`
+	Place      *FollowUpPlace `json:"place,omitempty"`
+	ClearPlace bool           `json:"clear_place,omitempty"`
 }
 
 // followUpBefore is a follow-up as it was before a change; FollowUp is nil
@@ -54,13 +93,19 @@ type followUpBefore struct {
 	FollowUp *FollowUp `json:"follow_up"`
 }
 
-const followUpColumns = `id, title, due_at, nag_minutes, state, closed_at, closed_by, created_at, updated_at`
+const followUpColumns = `id, title, due_at, nag_minutes, state, closed_at, closed_by, created_at, updated_at, place, triggered_at`
 
 func scanFollowUp(row pgx.Row) (FollowUp, error) {
 	var item FollowUp
-	err := row.Scan(&item.ID, &item.Title, &item.DueAt, &item.NagMinutes, &item.State, &item.ClosedAt, &item.ClosedBy, &item.CreatedAt, &item.UpdatedAt)
+	var place []byte
+	err := row.Scan(&item.ID, &item.Title, &item.DueAt, &item.NagMinutes, &item.State, &item.ClosedAt, &item.ClosedBy, &item.CreatedAt, &item.UpdatedAt,
+		&place, &item.TriggeredAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return item, ErrNotFound
+	}
+	if err == nil && len(place) > 0 {
+		item.Place = &FollowUpPlace{}
+		err = json.Unmarshal(place, item.Place)
 	}
 	return item, err
 }
@@ -77,6 +122,22 @@ func validateFollowUp(item *FollowUp) error {
 	case item.State != FollowUpOpen && item.State != FollowUpDone && item.State != FollowUpDropped:
 		return errors.New(`state must be "open", "done" or "dropped"`)
 	}
+	if place := item.Place; place != nil {
+		place.Name = strings.TrimSpace(place.Name)
+		switch {
+		case place.When != PlaceArrive && place.When != PlaceLeave:
+			return errors.New(`place when must be "arrive" or "leave"`)
+		case place.Name == "" || len([]rune(place.Name)) > 100:
+			return errors.New("place name must be 1 to 100 characters")
+		case len(place.Points) == 0 || len(place.Points) > MaxPlacePoints:
+			return fmt.Errorf("a place needs 1 to %d points", MaxPlacePoints)
+		}
+		for _, point := range place.Points {
+			if point.Lat < -90 || point.Lat > 90 || point.Lon < -180 || point.Lon > 180 || point.Radius < 20 || point.Radius > 2000 {
+				return errors.New("each place point needs a valid position and a radius of 20 to 2000 meters")
+			}
+		}
+	}
 	return nil
 }
 
@@ -91,12 +152,22 @@ func writeFollowUpTx(ctx context.Context, tx pgx.Tx, item FollowUp, create bool,
 		now := time.Now().UTC()
 		item.ClosedAt, item.ClosedBy = &now, by
 	}
-	if create {
-		return scanFollowUp(tx.QueryRow(ctx, `INSERT INTO follow_ups (title, due_at, nag_minutes, state, closed_at, closed_by)
-			VALUES ($1, $2, $3, $4, $5, $6) RETURNING `+followUpColumns, item.Title, item.DueAt.UTC(), item.NagMinutes, item.State, item.ClosedAt, item.ClosedBy))
+	var place []byte
+	if item.Place != nil {
+		encoded, err := json.Marshal(item.Place)
+		if err != nil {
+			return FollowUp{}, err
+		}
+		place = encoded
 	}
-	return scanFollowUp(tx.QueryRow(ctx, `UPDATE follow_ups SET title=$2, due_at=$3, nag_minutes=$4, state=$5, closed_at=$6, closed_by=$7, updated_at=now()
-		WHERE id=$1 RETURNING `+followUpColumns, item.ID, item.Title, item.DueAt.UTC(), item.NagMinutes, item.State, item.ClosedAt, item.ClosedBy))
+	if create {
+		return scanFollowUp(tx.QueryRow(ctx, `INSERT INTO follow_ups (title, due_at, nag_minutes, state, closed_at, closed_by, place, triggered_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING `+followUpColumns, item.Title, item.DueAt.UTC(), item.NagMinutes, item.State, item.ClosedAt, item.ClosedBy,
+			place, item.TriggeredAt))
+	}
+	return scanFollowUp(tx.QueryRow(ctx, `UPDATE follow_ups SET title=$2, due_at=$3, nag_minutes=$4, state=$5, closed_at=$6, closed_by=$7, place=$8, triggered_at=$9, updated_at=now()
+		WHERE id=$1 RETURNING `+followUpColumns, item.ID, item.Title, item.DueAt.UTC(), item.NagMinutes, item.State, item.ClosedAt, item.ClosedBy,
+		place, item.TriggeredAt))
 }
 
 // ApplyFollowUpChanges adds or updates follow-ups at once and logs the change.
@@ -149,6 +220,10 @@ func (p *Postgres) ApplyFollowUpChanges(ctx context.Context, changes []FollowUpC
 		if change.ClearNag {
 			item.NagMinutes = nil
 		}
+		if change.Place != nil || change.ClearPlace {
+			// A new place starts waiting again.
+			item.Place, item.TriggeredAt = change.Place, nil
+		}
 		if change.State != nil && *change.State != item.State {
 			item.State, item.ClosedAt = *change.State, nil
 		}
@@ -193,6 +268,17 @@ func (p *Postgres) ListFollowUps(ctx context.Context, closedSince time.Time) ([]
 func (p *Postgres) CloseFollowUp(ctx context.Context, id int64, by string) (FollowUp, error) {
 	item, err := scanFollowUp(p.pool.QueryRow(ctx, `UPDATE follow_ups SET state = 'done', closed_at = now(), closed_by = $2, updated_at = now()
 		WHERE id = $1 AND state = 'open' RETURNING `+followUpColumns, id, by))
+	if errors.Is(err, ErrNotFound) {
+		return scanFollowUp(p.pool.QueryRow(ctx, `SELECT `+followUpColumns+` FROM follow_ups WHERE id = $1`, id))
+	}
+	return item, err
+}
+
+// TriggerFollowUp records that a place follow-up's place was reached, as one
+// of the owner's devices saw it. Only the first report counts.
+func (p *Postgres) TriggerFollowUp(ctx context.Context, id int64, at time.Time) (FollowUp, error) {
+	item, err := scanFollowUp(p.pool.QueryRow(ctx, `UPDATE follow_ups SET triggered_at = $2, updated_at = now()
+		WHERE id = $1 AND place IS NOT NULL AND triggered_at IS NULL RETURNING `+followUpColumns, id, at.UTC()))
 	if errors.Is(err, ErrNotFound) {
 		return scanFollowUp(p.pool.QueryRow(ctx, `SELECT `+followUpColumns+` FROM follow_ups WHERE id = $1`, id))
 	}

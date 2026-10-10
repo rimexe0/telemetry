@@ -20,7 +20,7 @@ object DeviceApi {
     fun waitNow(context: Context, fingerprint: String): String? {
         val config = DeliveryConfig(context)
         val token = config.token() ?: return null
-        val path = "/v1/device/now?timeout=50&wait=" + java.net.URLEncoder.encode(fingerprint, "UTF-8")
+        val path = "/v1/device/now?places=1&timeout=50&wait=" + java.net.URLEncoder.encode(fingerprint, "UTF-8")
         val headers = mapOf("Authorization" to "Bearer $token", "X-Telemetry-Device-ID" to DeviceIdentity.get(context), "Accept" to "application/json")
         SealedChannel.configured()?.let { channel ->
             val answer = try {

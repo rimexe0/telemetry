@@ -20,7 +20,7 @@ object NowCache {
 
     /** Fetches and stores a fresh response; returns null when offline or unpaired. Blocking IO. */
     fun refresh(context: Context): String? {
-        val body = DeviceApi.get(context, "/v1/device/now") ?: return null
+        val body = DeviceApi.get(context, "/v1/device/now?places=1") ?: return null
         store(context, body)
         return body
     }

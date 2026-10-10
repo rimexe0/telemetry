@@ -194,6 +194,8 @@ func main() {
 		}()
 	}
 	go runSilenceChecker(context, database)
+	// Place follow-ups the phone has not reported reached yet.
+	go runPlaceReminders(context, database, feed)
 	// The assistant that judges unknown things in a focus session: a command
 	// that takes the prompt as its last argument, such as "hermes --ignore-rules -z".
 	go runJudge(context, database, strings.Fields(os.Getenv("TELEMETRY_JUDGE_COMMAND")))

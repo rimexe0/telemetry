@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -60,6 +61,9 @@ func (s *Server) deviceNow(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	known := request.URL.Query().Get("wait")
+	// A device that checks places itself says so; older ones only get place
+	// follow-ups once the server has seen the place reached.
+	places := request.URL.Query().Get("places") == "1"
 	wait := time.Duration(0)
 	if seconds, err := strconv.Atoi(request.URL.Query().Get("timeout")); err == nil && seconds > 0 && known != "" && s.config.Changes != nil {
 		wait = min(time.Duration(seconds)*time.Second, deviceWaitMax)
@@ -72,7 +76,7 @@ func (s *Server) deviceNow(writer http.ResponseWriter, request *http.Request) {
 		if s.config.Changes != nil {
 			next = s.config.Changes.Next()
 		}
-		body, err := s.deviceNowBody(request.Context())
+		body, err := s.deviceNowBody(request.Context(), places)
 		if err != nil {
 			writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
 			return
@@ -92,7 +96,7 @@ func (s *Server) deviceNow(writer http.ResponseWriter, request *http.Request) {
 	}
 }
 
-func (s *Server) deviceNowBody(ctx context.Context) (map[string]any, error) {
+func (s *Server) deviceNowBody(ctx context.Context, places bool) (map[string]any, error) {
 	now := time.Now().UTC()
 	config, version, facts, err := s.policyInputs(ctx, now, now.Add(deviceTimeline))
 	if err != nil {
@@ -151,7 +155,10 @@ func (s *Server) deviceNowBody(ctx context.Context) (map[string]any, error) {
 	}
 	openFollowUps := []store.FollowUp{}
 	for _, item := range followUps {
-		if item.State == store.FollowUpOpen {
+		if item.State == store.FollowUpOpen && (places || item.Place == nil || item.TriggeredAt != nil) {
+			if !places && item.TriggeredAt != nil && item.TriggeredAt.After(item.DueAt) {
+				item.DueAt = *item.TriggeredAt
+			}
 			openFollowUps = append(openFollowUps, item)
 		}
 	}
@@ -233,6 +240,38 @@ func (s *Server) deviceFollowUpDone(writer http.ResponseWriter, request *http.Re
 		by = "device:" + device
 	}
 	item, err := s.repository.CloseFollowUp(request.Context(), id, by)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(writer, http.StatusNotFound, "not_found", "follow-up does not exist")
+		return
+	}
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"follow_up": item})
+}
+
+// deviceFollowUpTriggered lets a paired device say a place follow-up's place
+// was reached, so the server, the assistant and other devices know it is due.
+// The body may give {"at": RFC3339}, the time the phone saw it; default now.
+func (s *Server) deviceFollowUpTriggered(writer http.ResponseWriter, request *http.Request) {
+	if !s.pairedDeviceAuthorized(request) && !s.ownerAuthorized(request) {
+		writeError(writer, http.StatusUnauthorized, "unauthorized", "a paired device credential is required")
+		return
+	}
+	id, err := strconv.ParseInt(request.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeError(writer, http.StatusBadRequest, "invalid_path", "follow-up id must be a positive integer")
+		return
+	}
+	at := time.Now().UTC()
+	var body struct {
+		At *time.Time `json:"at"`
+	}
+	if json.NewDecoder(io.LimitReader(request.Body, 4096)).Decode(&body) == nil && body.At != nil && body.At.Before(at) && at.Sub(*body.At) < 7*24*time.Hour {
+		at = body.At.UTC()
+	}
+	item, err := s.repository.TriggerFollowUp(request.Context(), id, at)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(writer, http.StatusNotFound, "not_found", "follow-up does not exist")
 		return

@@ -104,6 +104,7 @@ class TelemetryLocationService : Service() {
             .putNullable("altitude_meters", if (location.hasAltitude()) location.altitude else null)
             .putNullable("speed_meters_per_second", if (location.hasSpeed()) location.speed else null)
             .putNullable("bearing_degrees", if (location.hasBearing()) location.bearing else null)
+        PlaceReminders.onPosition(this, location.latitude, location.longitude, location.accuracy.toDouble())
         getSharedPreferences("telemetry-location-status", MODE_PRIVATE).edit()
             .putString("state", "fix_received")
             .putLong("last_fix_at", location.time).apply()

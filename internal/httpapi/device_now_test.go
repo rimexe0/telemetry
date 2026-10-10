@@ -148,3 +148,42 @@ func TestDeviceNowWaitsForAChange(t *testing.T) {
 		t.Fatalf("after a change = %d after %s", response.Code, took)
 	}
 }
+
+func TestDeviceNowKeepsWaitingPlaceRemindersFromOlderApps(t *testing.T) {
+	now := time.Now().UTC()
+	reached := now.Add(-time.Minute)
+	place := &store.FollowUpPlace{When: store.PlaceArrive, Name: "home", Home: true, Points: []store.PlacePoint{{Lat: 38.4, Lon: 17.1, Radius: 120}}}
+	server := deviceServer(t, &fakeRepository{followUps: []store.FollowUp{
+		{ID: 1, Title: "Timed", DueAt: now, State: store.FollowUpOpen},
+		{ID: 2, Title: "Waiting for home", DueAt: now.Add(-time.Hour), State: store.FollowUpOpen, Place: place},
+		{ID: 3, Title: "Reached home", DueAt: now.Add(-time.Hour), State: store.FollowUpOpen, Place: place, TriggeredAt: &reached},
+	}})
+	listed := func(path string) map[int64]store.FollowUp {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.Header.Set("X-Telemetry-Device-ID", "android-1")
+		request.Header.Set("Authorization", "Bearer device-secret")
+		response := httptest.NewRecorder()
+		server.ServeHTTP(response, request)
+		var body struct {
+			FollowUps []store.FollowUp `json:"follow_ups"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || response.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", path, response.Code, response.Body)
+		}
+		items := map[int64]store.FollowUp{}
+		for _, item := range body.FollowUps {
+			items[item.ID] = item
+		}
+		return items
+	}
+	old := listed("/v1/device/now")
+	if _, ok := old[2]; ok || len(old) != 2 {
+		t.Fatalf("an older app must not see a waiting place reminder: %+v", old)
+	}
+	if !old[3].DueAt.Equal(reached) {
+		t.Fatalf("an older app sees a reached place reminder as due from the arrival, got %v", old[3].DueAt)
+	}
+	if current := listed("/v1/device/now?places=1"); len(current) != 3 || current[2].Place == nil {
+		t.Fatalf("the current app gets every open follow-up with its place: %+v", current)
+	}
+}
