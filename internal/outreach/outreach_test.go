@@ -192,3 +192,26 @@ func TestMissedStartIsAskedOncePerBlock(t *testing.T) {
 		t.Fatal("exactly once per block")
 	}
 }
+
+func TestStoppedWhileOnIsToldAgainUntilItRuns(t *testing.T) {
+	started := time.Date(2026, 10, 15, 9, 0, 0, 0, time.UTC)
+	if CollectionDue(7, "mac-1", "stopped_while_on", started, started.Add(30*time.Second), nil) {
+		t.Fatal("told before its minute of grace")
+	}
+	now := started.Add(2 * time.Minute)
+	if !CollectionDue(7, "mac-1", "stopped_while_on", started, now, nil) {
+		t.Fatal("not told at once")
+	}
+	told := []Told{{Facts: CollectionMarker(7, "mac-1", "stopped_while_on"), At: now}}
+	if CollectionDue(7, "mac-1", "stopped_while_on", started, now.Add(10*time.Minute), told) {
+		t.Fatal("told again within 15 minutes")
+	}
+	if !CollectionDue(7, "mac-1", "stopped_while_on", started, now.Add(16*time.Minute), told) {
+		t.Fatal("not told again after 15 minutes")
+	}
+	// Other problems are still told once.
+	once := []Told{{Facts: CollectionMarker(8, "mac-1", "titles_unreadable"), At: now}}
+	if CollectionDue(8, "mac-1", "titles_unreadable", started.Add(-time.Hour), now.Add(48*time.Hour), once) {
+		t.Fatal("a once-only problem told twice")
+	}
+}

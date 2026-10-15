@@ -34,4 +34,13 @@ if ! cmp -s deploy/macos/$label.plist "$plist"; then
 else
   launchctl kickstart -k "gui/$(id -u)/$label"
 fi
+# The guard starts the collector again within a minute if it is unloaded.
+guard="com.rime.telemetry.guard"
+guard_plist="$HOME/Library/LaunchAgents/$guard.plist"
+if ! cmp -s deploy/macos/$guard.plist "$guard_plist"; then
+  cp deploy/macos/$guard.plist "$guard_plist"
+  launchctl bootout "gui/$(id -u)/$guard" 2>/dev/null || true
+  while launchctl print "gui/$(id -u)/$guard" >/dev/null 2>&1; do sleep 0.5; done
+  launchctl bootstrap "gui/$(id -u)" "$guard_plist"
+fi
 echo "installed $(codesign -dr - "$app" 2>&1 | tail -1)"

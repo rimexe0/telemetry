@@ -23,13 +23,22 @@ data class CollectionIncident(
 /**
  * Tells the owner when another device's collection has a problem (#28), once
  * per incident, and clears the notice when the server closes it. The phone's
- * own silence cannot be reported from the phone.
+ * own silence cannot be reported from the phone. A collector stopped while
+ * its computer is on is the way around blocking, so that one alerts loudly,
+ * stays, and alerts again every 15 minutes until it runs.
  */
 object IncidentWatch {
     private const val PREFS = "telemetry-incident-watch"
     private const val KEY_SHOWN = "shown_v2"
     private const val CHANNEL = "telemetry-incidents"
     private const val BASE_ID = 4300
+    private const val STOPPED_CHANNEL = "telemetry-stopped"
+    private const val KEY_ALERTED = "alerted:"
+    const val STOPPED = "stopped_while_on"
+    const val STOPPED_REPEAT_MILLIS = 15 * 60_000L
+
+    /** Whether a stopped collector should alert again now. */
+    fun alertsAgain(lastAlert: Long?, now: Long): Boolean = lastAlert == null || now - lastAlert >= STOPPED_REPEAT_MILLIS
 
     fun parse(json: String): List<CollectionIncident> {
         val array = JSONObject(json).optJSONArray("collection_incidents") ?: return emptyList()
@@ -57,11 +66,22 @@ object IncidentWatch {
         val shown = preferences.getStringSet(KEY_SHOWN, emptySet()).orEmpty().mapNotNull { it.toLongOrNull() }.toSet()
         val open = incidents.map { it.id }.toSet()
         val manager = context.getSystemService(NotificationManager::class.java)
+        val editor = preferences.edit()
+        val now = System.currentTimeMillis()
         for (incident in incidents) {
-            if (incident.id !in shown) notify(context, manager, incident)
+            if (incident.kind == STOPPED) {
+                val last = preferences.getLong(KEY_ALERTED + incident.id, 0L).takeIf { it > 0 }
+                if (alertsAgain(last, now)) {
+                    notify(context, manager, incident)
+                    editor.putLong(KEY_ALERTED + incident.id, now)
+                }
+            } else if (incident.id !in shown) notify(context, manager, incident)
         }
-        for (id in shown - open) manager.cancel(notificationId(id))
-        preferences.edit().putStringSet(KEY_SHOWN, open.map { it.toString() }.toSet()).apply()
+        for (id in shown - open) {
+            manager.cancel(notificationId(id))
+            editor.remove(KEY_ALERTED + id)
+        }
+        editor.putStringSet(KEY_SHOWN, open.map { it.toString() }.toSet()).apply()
     }
 
     fun title(incident: CollectionIncident): String {
@@ -69,6 +89,7 @@ object IncidentWatch {
         val time = DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault()).format(incident.since)
         val kind = incident.kind
         return when {
+            kind == STOPPED -> "Telemetry is off on $device since $time"
             kind == "silent" -> "$device: no data since $time"
             kind == "titles_unreadable" -> "$device can't read window titles"
             kind == "window_sampling_stopped" -> "$device stopped recording windows at $time"
@@ -81,9 +102,12 @@ object IncidentWatch {
 
     private fun notify(context: Context, manager: NotificationManager, incident: CollectionIncident) {
         manager.createNotificationChannel(NotificationChannel(CHANNEL, "Collection problems", NotificationManager.IMPORTANCE_DEFAULT))
+        manager.createNotificationChannel(NotificationChannel(STOPPED_CHANNEL, "Telemetry stopped on a computer", NotificationManager.IMPORTANCE_HIGH))
         val open = PendingIntent.getActivity(context, 3, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
-        manager.notify(notificationId(incident.id), Notification.Builder(context, CHANNEL)
+        val stopped = incident.kind == STOPPED
+        manager.notify(notificationId(incident.id), Notification.Builder(context, if (stopped) STOPPED_CHANNEL else CHANNEL)
             .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setOngoing(stopped)
             .setContentTitle(title(incident))
             .setContentText(incident.message)
             .setStyle(Notification.BigTextStyle().bigText(incident.message))

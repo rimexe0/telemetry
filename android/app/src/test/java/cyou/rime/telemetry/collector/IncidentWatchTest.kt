@@ -28,4 +28,15 @@ class IncidentWatchTest {
     fun missingFieldMeansNoIncidents() {
         assertEquals(emptyList<CollectionIncident>(), IncidentWatch.parse("""{"decision":{}}"""))
     }
+
+    @Test
+    fun aStoppedComputerAlertsAgainEveryFifteenMinutes() {
+        val json = """{"collection_incidents":[
+            {"id":11,"device":"mac-00000001","kind":"stopped_while_on","started_at":"2026-10-15T06:00:00Z","detail":{"device_name":"plagiarism.local"}}]}"""
+        assertEquals(true, IncidentWatch.title(IncidentWatch.parse(json).single()).startsWith("Telemetry is off on plagiarism since"))
+        val first = 1_000_000L
+        assertEquals(true, IncidentWatch.alertsAgain(null, first))
+        assertEquals(false, IncidentWatch.alertsAgain(first, first + 14 * 60_000L))
+        assertEquals(true, IncidentWatch.alertsAgain(first, first + 15 * 60_000L))
+    }
 }

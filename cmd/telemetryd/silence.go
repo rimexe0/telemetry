@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"log"
+	"os"
+	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,6 +30,7 @@ func runSilenceChecker(ctx context.Context, repository store.Repository) {
 			evidence.ServerFreeBytes = &free
 		}
 		now := time.Now().UTC()
+		askMachines(checkCtx, evidence.Desktops, now)
 		opened, err := repository.SyncCollectionIncidents(checkCtx, silence.Evaluate(evidence, now), now)
 		if err != nil {
 			log.Printf("silence check: %v", err)
@@ -46,4 +50,41 @@ func runSilenceChecker(ctx context.Context, repository store.Repository) {
 		case <-ticker.C:
 		}
 	}
+}
+
+// tailscaleNames maps desktop device IDs to their Tailscale names, from
+// TELEMETRY_TAILSCALE_DEVICES such as "mac-00000001=plagiarism-1".
+func tailscaleNames() map[string]string {
+	names := map[string]string{}
+	for _, pair := range strings.Fields(strings.ReplaceAll(os.Getenv("TELEMETRY_TAILSCALE_DEVICES"), ",", " ")) {
+		if device, name, ok := strings.Cut(pair, "="); ok && device != "" && name != "" {
+			names[device] = name
+		}
+	}
+	return names
+}
+
+// askMachines pings each machine whose collector has gone quiet, unless it
+// said it was going to sleep, so a collector stopped on a computer that is
+// still on can be told from one that is asleep or switched off.
+func askMachines(ctx context.Context, desktops []silence.DesktopStatus, now time.Time) {
+	names := tailscaleNames()
+	for i := range desktops {
+		status := &desktops[i]
+		name, known := names[status.DeviceID]
+		if !known || status.State == "sleeping" || now.Sub(status.At) < silence.StoppedWhileOnAfter {
+			continue
+		}
+		on := machineAnswers(ctx, name)
+		status.On = &on
+	}
+}
+
+// machineAnswers pings over Tailscale. A sleeping or switched-off machine
+// does not answer; a relayed answer counts.
+func machineAnswers(ctx context.Context, name string) bool {
+	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	output, _ := exec.CommandContext(pingCtx, "tailscale", "ping", "-c", "2", "--until-direct=false", "--timeout", "4s", name).CombinedOutput()
+	return strings.Contains(string(output), "pong from")
 }

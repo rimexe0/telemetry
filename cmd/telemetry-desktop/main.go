@@ -49,13 +49,17 @@ func main() {
 		permissions()
 	case "diagnose":
 		fmt.Println(desktop.Diagnose())
+	case "guard":
+		if err := guard(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
 	default:
 		usage()
 	}
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: telemetry-desktop <run|login|permissions|diagnose> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: telemetry-desktop <run|login|permissions|diagnose|guard> [flags]")
 	os.Exit(2)
 }
 

@@ -100,3 +100,36 @@ func TestServerDiskNearlyFull(t *testing.T) {
 		t.Fatalf("100 MB free = %+v", findings)
 	}
 }
+
+func TestStoppedWhileOnOnlyWhenTheMachineAnswers(t *testing.T) {
+	now := time.Date(2026, 10, 15, 9, 0, 0, 0, time.UTC)
+	on, off := true, false
+	stopped := DesktopStatus{DeviceID: "mac-1", Name: "Mac", At: now.Add(-4 * time.Minute), State: "stopping"}
+	kinds := func(status DesktopStatus) []string {
+		out := []string{}
+		for _, finding := range Evaluate(Evidence{Desktops: []DesktopStatus{status}}, now) {
+			out = append(out, finding.Kind)
+		}
+		return out
+	}
+	stopped.On = &on
+	if got := kinds(stopped); len(got) != 1 || got[0] != KindStoppedWhileOn {
+		t.Fatalf("stopped while on = %v", got)
+	}
+	stopped.On = &off
+	if got := kinds(stopped); len(got) != 0 {
+		t.Fatalf("stopped and off (shut down) = %v", got)
+	}
+	asleep := DesktopStatus{DeviceID: "mac-1", Name: "Mac", At: now.Add(-time.Hour), State: "sleeping", On: &on}
+	if got := kinds(asleep); len(got) != 0 {
+		t.Fatalf("announced sleep with a dark-wake answer = %v", got)
+	}
+	crashed := DesktopStatus{DeviceID: "mac-1", Name: "Mac", At: now.Add(-4 * time.Minute), State: "running", On: &on}
+	if got := kinds(crashed); len(got) != 1 || got[0] != KindStoppedWhileOn {
+		t.Fatalf("quiet without a word while on = %v", got)
+	}
+	recent := DesktopStatus{DeviceID: "mac-1", Name: "Mac", At: now.Add(-time.Minute), State: "stopping", On: &on}
+	if got := kinds(recent); len(got) != 0 {
+		t.Fatalf("a stop under three minutes old = %v", got)
+	}
+}

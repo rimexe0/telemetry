@@ -21,6 +21,11 @@ const (
 	// uploads. Told separately, so it reaches the owner after the earlier
 	// warning.
 	KindDiskFull = "disk_full"
+	// KindStoppedWhileOn: the collector is not running although its machine
+	// is on (it answers over Tailscale): it was stopped or unloaded, which
+	// leaves the machine untracked and unblocked. Sleep and shutdown do not
+	// count: a sleeping or switched-off machine does not answer.
+	KindStoppedWhileOn = "stopped_while_on"
 	// KindModulePrefix plus a module name: that module kept failing.
 	KindModulePrefix = "module_failing:"
 )
@@ -30,8 +35,11 @@ const (
 const (
 	PhoneSilentAfter   = 15 * time.Minute
 	DesktopSilentAfter = 10 * time.Minute
-	WindowStaleAfter   = 5 * time.Minute
-	ModuleFailingAfter = 10 * time.Minute
+	// StoppedWhileOnAfter is how long a collector may be quiet while its
+	// machine answers before that counts as stopped.
+	StoppedWhileOnAfter = 3 * time.Minute
+	WindowStaleAfter    = 5 * time.Minute
+	ModuleFailingAfter  = 10 * time.Minute
 	// DiskLowBelow is the free space on the server's disk below which
 	// collection is at risk.
 	DiskLowBelow  = 3 << 30
@@ -48,6 +56,9 @@ type DesktopStatus struct {
 	// Window is nil when the machine does not run the window module.
 	Window  *WindowStatus
 	Modules map[string]ModuleStatus
+	// On is whether the machine answered over Tailscale just now; nil when
+	// it was not asked (it has no Tailscale name, or its collector reports).
+	On *bool
 }
 
 type WindowStatus struct {
@@ -111,6 +122,12 @@ func evaluateDesktop(status DesktopStatus, now time.Time) []Finding {
 		findings = append(findings, Finding{Device: status.DeviceID, Kind: kind, Since: since, Detail: detail})
 	}
 	switch {
+	case status.On != nil && *status.On && status.State != "sleeping" && now.Sub(status.At) >= StoppedWhileOnAfter:
+		// A stop announced or not: the machine is on, so nothing excuses it.
+		add(KindStoppedWhileOn, status.At, map[string]any{
+			"last_state": status.State,
+			"message":    "Telemetry on " + status.Name + " is not running, but the computer is on: nothing there is tracked or blocked.",
+		})
 	case status.State == "sleeping" || status.State == "stopping":
 		// Announced: the silence that follows is expected.
 	case now.Sub(status.At) >= DesktopSilentAfter:

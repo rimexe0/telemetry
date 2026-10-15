@@ -223,6 +223,9 @@ func OffPlanPrompt(facts string) string {
 type Problem struct {
 	Grace   time.Duration
 	Message func(device, since string, detail map[string]any) string
+	// Repeat, when set, tells the same incident again this often while it
+	// lasts, for a problem that must not be left alone.
+	Repeat time.Duration
 }
 
 func detailText(detail map[string]any, key string) string {
@@ -243,24 +246,31 @@ func t3Broke(what string) func(string, string, map[string]any) string {
 // Problems by incident kind. The phone going quiet is told only while the
 // owner is using the Mac (see PhoneSilentWhileActive): then it is not off.
 var Problems = map[string]Problem{
-	"module_failing:t3":      {CollectionGrace, t3Broke("T3 Code's database")},
-	"module_failing:t3-open": {CollectionGrace, t3Broke("which project T3 Code has open")},
-	"module_failing:blocker": {time.Hour, func(device, since string, detail map[string]any) string {
+	"module_failing:t3":      {Grace: CollectionGrace, Message: t3Broke("T3 Code's database")},
+	"module_failing:t3-open": {Grace: CollectionGrace, Message: t3Broke("which project T3 Code has open")},
+	"module_failing:blocker": {Grace: time.Hour, Message: func(device, since string, detail map[string]any) string {
 		return "The Mac has not been able to get blocking decisions from the server since " + since + ", so blocking there may not follow today's rules.\nError: " +
 			detailText(detail, "error")
 	}},
-	"titles_unreadable": {CollectionGrace, func(device, since string, _ map[string]any) string {
+	"titles_unreadable": {Grace: CollectionGrace, Message: func(device, since string, _ map[string]any) string {
 		return "Telemetry on the Mac cannot read window titles since " + since + ": its Accessibility permission is off. " +
 			"Turn on Telemetry Desktop in System Settings → Privacy & Security → Accessibility."
 	}},
-	"window_sampling_stopped": {CollectionGrace, func(device, since string, _ map[string]any) string {
+	"window_sampling_stopped": {Grace: CollectionGrace, Message: func(device, since string, _ map[string]any) string {
 		return "Telemetry on the Mac is running but has not recorded which window is in front since " + since + ". Restarting the Mac app should fix it."
 	}},
-	"silent": {CollectionGrace, func(device, since string, _ map[string]any) string {
+	"silent": {Grace: CollectionGrace, Message: func(device, since string, _ map[string]any) string {
 		return "Your phone has sent nothing to Telemetry since " + since + " while you were using the Mac, so tracking and blocking on the phone are probably not running. " +
 			"Open the Telemetry app on the phone once to restart it."
 	}},
-	"disk_low": {CollectionGrace, func(_, _ string, detail map[string]any) string {
+	// Stopping it is the easy way out of blocking, so it is told at once and
+	// again until it runs (owner decision 2026-10-15).
+	"stopped_while_on": {Grace: time.Minute, Repeat: StoppedRepeat, Message: func(device, since string, _ map[string]any) string {
+		return "Telemetry on " + device + " has been stopped since " + since + " while " + device + " is on: nothing there is tracked or blocked. " +
+			"It starts itself again within a minute; if it does not, it was switched off in System Settings → General → Login Items → Telemetry Desktop, so switch it back on there. " +
+			"I will keep telling you every 15 minutes until it runs."
+	}},
+	"disk_low": {Grace: CollectionGrace, Message: func(_, _ string, detail map[string]any) string {
 		free, _ := detail["free_bytes"].(float64)
 		return fmt.Sprintf("The server's disk has %.1f GB free. When it fills, the database stops and nothing more is recorded. Ask me to look at what can be removed.", free/(1<<30))
 	}},
@@ -285,6 +295,7 @@ const PhoneSilentWhileActive = 20 * time.Minute
 const (
 	CollectionGrace  = 30 * time.Minute
 	CollectionRepeat = 24 * time.Hour
+	StoppedRepeat    = 15 * time.Minute
 )
 
 // Told is a collection message already delivered.
@@ -307,6 +318,13 @@ func CollectionDue(id int64, device, kind string, started, now time.Time, told [
 	for _, entry := range told {
 		fields := strings.Fields(entry.Facts)
 		if len(fields) < 2 || fields[0] != "incident" {
+			continue
+		}
+		if problem.Repeat > 0 {
+			// Told again while it lasts, so only the last telling counts.
+			if len(fields) == 4 && fields[2] == device && fields[3] == kind && now.Sub(entry.At) < problem.Repeat {
+				return false
+			}
 			continue
 		}
 		if fields[1] == strconv.FormatInt(id, 10) {
