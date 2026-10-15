@@ -51,6 +51,9 @@ dependencies {
     if (samsungHealthSdk.exists()) {
         implementation(files(samsungHealthSdk))
         implementation("org.jetbrains.kotlin:kotlin-parcelize-runtime:2.2.10")
+        // The SDK's own dependencies, as openHealth's reader packages them.
+        implementation("com.google.code.gson:gson:2.14.0")
+        implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     }
     testImplementation("junit:junit:4.13.2")
     // JVM tests need real JSON behavior; Android's mockable jar only has stubs.
