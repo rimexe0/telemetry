@@ -15,12 +15,13 @@ class SetupStepsTest {
     fun skippedOptionalStepsAreNotAskedAgain() {
         val done = setOf(SetupStep.PAIR, SetupStep.NOTIFICATIONS, SetupStep.USAGE_ACCESS)
         assertEquals(SetupStep.HEALTH, SetupStep.next(done, emptySet()))
-        assertEquals(SetupStep.LOCATION, SetupStep.next(done, setOf(SetupStep.HEALTH)))
+        assertEquals(SetupStep.SAMSUNG_HEALTH, SetupStep.next(done, setOf(SetupStep.HEALTH)))
+        assertEquals(SetupStep.LOCATION, SetupStep.next(done, setOf(SetupStep.HEALTH, SetupStep.SAMSUNG_HEALTH)))
     }
 
     @Test
     fun backgroundLocationWaitsForLocation() {
-        val done = setOf(SetupStep.PAIR, SetupStep.NOTIFICATIONS, SetupStep.USAGE_ACCESS, SetupStep.HEALTH)
+        val done = setOf(SetupStep.PAIR, SetupStep.NOTIFICATIONS, SetupStep.USAGE_ACCESS, SetupStep.HEALTH, SetupStep.SAMSUNG_HEALTH)
         assertEquals(SetupStep.CALENDAR, SetupStep.next(done, setOf(SetupStep.LOCATION)))
         assertEquals(SetupStep.BACKGROUND_LOCATION, SetupStep.next(done + SetupStep.LOCATION, emptySet()))
     }
@@ -35,7 +36,7 @@ class SetupStepsTest {
 
     @Test
     fun missingPermissionsStayNamedEvenWhenSkipped() {
-        val done = setOf(SetupStep.PAIR, SetupStep.NOTIFICATIONS, SetupStep.USAGE_ACCESS, SetupStep.START, SetupStep.BATTERY, SetupStep.CALENDAR)
+        val done = setOf(SetupStep.PAIR, SetupStep.NOTIFICATIONS, SetupStep.USAGE_ACCESS, SetupStep.START, SetupStep.BATTERY, SetupStep.CALENDAR, SetupStep.SAMSUNG_HEALTH)
         // Health and location are extras; blocking and notification access matter for blocking.
         assertEquals(listOf(SetupStep.BLOCKING, SetupStep.NOTIFICATION_ACCESS), SetupStep.missing(done))
         assertEquals(emptyList<SetupStep>(), SetupStep.missing(SetupStep.entries.toSet()))

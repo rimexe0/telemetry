@@ -3,6 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val samsungHealthSdk: File = rootProject.file("private/samsung-health-data-api-1.1.0.aar")
+
 android {
     namespace = "cyou.rime.telemetry.collector"
     compileSdk = 36
@@ -14,7 +16,8 @@ android {
 
     defaultConfig {
         applicationId = "cyou.rime.telemetry.collector"
-        minSdk = 28
+        // Samsung's Health Data SDK needs Android 10.
+        minSdk = if (samsungHealthSdk.exists()) 29 else 28
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
@@ -34,9 +37,21 @@ android {
         buildConfigField("String", "TELEMETRY_RELAY_URL", "\"$telemetryRelayUrl\"")
         buildConfigField("String", "TELEMETRY_RELAY_KEY", "\"$telemetryRelayKey\"")
     }
+
+    // Samsung Health is read directly through Samsung's Health Data SDK when
+    // its file is in android/private/ (proprietary, so never committed);
+    // without it the app builds with a reader that reports "not built in".
+    val samsungSources = if (samsungHealthSdk.exists()) "src/samsung/java" else "src/samsungStub/java"
+    sourceSets["main"].java.srcDir(samsungSources)
+    sourceSets["main"].kotlin.srcDir(samsungSources)
 }
 
+
 dependencies {
+    if (samsungHealthSdk.exists()) {
+        implementation(files(samsungHealthSdk))
+        implementation("org.jetbrains.kotlin:kotlin-parcelize-runtime:2.2.10")
+    }
     testImplementation("junit:junit:4.13.2")
     // JVM tests need real JSON behavior; Android's mockable jar only has stubs.
     testImplementation("org.json:json:20260814")

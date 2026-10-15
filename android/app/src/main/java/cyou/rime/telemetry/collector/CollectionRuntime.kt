@@ -85,6 +85,13 @@ object CollectionRuntime {
             states.put("calendar", state)
             if (state != "permission_required") prefs.edit().putLong("last_calendar_at", now).apply()
         }
+        // Samsung Health read directly: on this phone it does not write to
+        // Health Connect, so the watch's data only arrives this way.
+        if (SamsungHealthSource.SUPPORTED && due(now, prefs.getLong("last_samsung_health_at", 0L), SamsungHealthRecords.EVERY_MILLIS)) {
+            val state = runCatching { SamsungHealthSource.collect(context, queue, device) }.getOrElse { "error:${it.javaClass.simpleName}" }
+            states.put("samsung_health", state)
+            if (state != "permission_required") prefs.edit().putLong("last_samsung_health_at", now).apply()
+        }
         // Each source fails independently. A phone without Health Connect still
         // collects device observations and delivers its existing queue.
         if (forceHealth || due(now, prefs.getLong("last_health_at", 0L), settings.healthMinutes * 60_000L)) {

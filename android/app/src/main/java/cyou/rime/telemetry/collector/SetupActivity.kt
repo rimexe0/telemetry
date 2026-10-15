@@ -68,6 +68,8 @@ class SetupActivity : ComponentActivity() {
             if (granted(context, Manifest.permission.ACCESS_FINE_LOCATION) || granted(context, Manifest.permission.ACCESS_COARSE_LOCATION)) done += SetupStep.LOCATION
             if (granted(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION)) done += SetupStep.BACKGROUND_LOCATION
             if (granted(context, Manifest.permission.READ_CALENDAR)) done += SetupStep.CALENDAR
+            // Only asked where Samsung Health is installed and the reader is built in.
+            if (!SamsungHealthSource.SUPPORTED || !SamsungHealthSource.installed(context) || SamsungHealthSource.grantedLastTime(context)) done += SetupStep.SAMSUNG_HEALTH
             if (context.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(context.packageName)) done += SetupStep.BATTERY
             if (PolicyEvents.blockingEnabled(context)) done += SetupStep.BLOCKING
             if (NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)) done += SetupStep.NOTIFICATION_ACCESS
@@ -211,6 +213,7 @@ class SetupActivity : ComponentActivity() {
                 Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS),
             )
             SetupStep.HEALTH -> requestHealth()
+            SetupStep.SAMSUNG_HEALTH -> SamsungHealthSource.request(this) { refresh() }
             SetupStep.LOCATION -> permissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
             SetupStep.BACKGROUND_LOCATION -> permissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION))
             SetupStep.CALENDAR -> permissionLauncher.launch(arrayOf(Manifest.permission.READ_CALENDAR))
