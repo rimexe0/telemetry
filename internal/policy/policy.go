@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -78,6 +79,12 @@ type Config struct {
 	// OpenAddresses are pages that stay open while their site is closed, such
 	// as one music stream. Each is a host and path prefix without a scheme.
 	OpenAddresses []string `json:"open_addresses,omitempty"`
+	// Outside asks for time outside before distractions or everything open.
+	// OutsideNext is a looser rule that applies from the local date
+	// OutsideNextFrom: loosening waits for the next day.
+	Outside         OutsideRule  `json:"outside,omitempty"`
+	OutsideNext     *OutsideRule `json:"outside_next,omitempty"`
+	OutsideNextFrom string       `json:"outside_next_from,omitempty"`
 }
 
 // NormalizeAddress reduces a URL or address to host and path without scheme
@@ -171,6 +178,9 @@ type Facts struct {
 	WakeAt     *time.Time `json:"wake_at,omitempty"`
 	Emergency  *Emergency `json:"emergency,omitempty"`
 	BreakSince *time.Time `json:"break_since,omitempty"`
+	// OutsideMinutes is how long the owner has been outside today, as the
+	// rule in force counts it. Unknown counts as none.
+	OutsideMinutes float64 `json:"outside_minutes,omitempty"`
 }
 
 type Targets struct {
@@ -261,6 +271,14 @@ func (c *Config) Normalize() error {
 	if total > 500 {
 		return fmt.Errorf("%w: at most 500 target groups are supported", ErrInvalidConfig)
 	}
+	if err := c.Outside.Normalize(); err != nil {
+		return err
+	}
+	if c.OutsideNext != nil {
+		if err := c.OutsideNext.Normalize(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -284,8 +302,9 @@ func (f Facts) Validate() error {
 // the schedule give, with the owner's current openings lifted from it.
 func Evaluate(config Config, version int64, facts Facts, at time.Time) Decision {
 	decision := evaluate(config, version, facts, at)
-	// Gates and emergencies are not touched by openings.
-	if decision.BlockAll || len(decision.BlockedGroups) == 0 {
+	// Gates and emergencies are not touched by openings, and the outside
+	// rule only when the owner allowed it.
+	if decision.BlockAll || len(decision.BlockedGroups) == 0 || (decision.Mode == ModeOutside && !config.OutsideAt(at).AllowOpenings) {
 		return decision
 	}
 	location, err := time.LoadLocation(config.Timezone)
@@ -429,6 +448,17 @@ func evaluate(config Config, version int64, facts Facts, at time.Time) Decision 
 		decision.BlockAll = config.PlanGate.LockAll && len(config.Essentials) > 0
 		decision.Reason = "No plan for today yet. Plan your day to open everything up."
 		decision.Basis = append(decision.Basis, "plan_gate")
+		blockDistractions(nil)
+		return decision
+	}
+	if rule := config.OutsideAt(at); outsideHolds(rule, facts, location, at) {
+		decision.Mode = ModeOutside
+		decision.BlockAll = slices.Contains(rule.Holds, HoldLock) && len(config.Essentials) > 0
+		decision.Reason = fmt.Sprintf("Go outside first: %d of %d minutes today.", int(facts.OutsideMinutes), rule.Minutes)
+		if rule.Until != "" {
+			decision.Reason += " It opens at " + rule.Until + " at the latest."
+		}
+		decision.Basis = append(decision.Basis, "outside")
 		blockDistractions(nil)
 		return decision
 	}

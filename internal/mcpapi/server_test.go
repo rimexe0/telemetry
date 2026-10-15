@@ -411,3 +411,7 @@ func (fakeRepository) TriggerFollowUp(context.Context, int64, time.Time) (store.
 func (fakeRepository) SearchMapPlaces(context.Context, store.PlaceQuery) ([]store.MapPlace, error) {
 	return nil, nil
 }
+
+func (fakeRepository) WatchTracks(context.Context, time.Time, time.Time) ([][]places.Fix, error) {
+	return nil, nil
+}

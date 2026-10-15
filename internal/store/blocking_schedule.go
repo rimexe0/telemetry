@@ -29,6 +29,9 @@ type ScheduleChange struct {
 	// LockUntilPlanned closes everything but the essentials from when the
 	// owner wakes until the day has a plan.
 	LockUntilPlanned *bool `json:"lock_until_planned,omitempty"`
+	// Outside replaces the outside rule. One that asks less in any way
+	// takes effect the next day; one that asks more, at once.
+	Outside *policy.OutsideRule `json:"outside,omitempty"`
 }
 
 // applyScheduleTx writes a new policy version and returns the change that
@@ -50,7 +53,21 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 	}
 	closed, times, addresses := config.ClosedByDefault, append([]policy.Window{}, config.DistractionTimes...), append([]string{}, config.OpenAddresses...)
 	locked := config.PlanGate.FromWake
+	now := time.Now().UTC()
+	outside := config.OutsideAt(now)
 	previous := ScheduleChange{ClosedByDefault: &closed, DistractionTimes: &times, OpenAddresses: &addresses, LockUntilPlanned: &locked}
+	if change.Outside != nil {
+		// Only a change to the rule restores it when reverted.
+		previous.Outside = &outside
+		next := *change.Outside
+		next.Holds = append([]string{}, next.Holds...)
+		if err := next.Normalize(); err != nil {
+			return ScheduleChange{}, config, 0, fmt.Errorf("%w: %s", ErrInvalidAgentChange, err)
+		}
+		config = config.WithOutside(next, now)
+	} else {
+		config = config.WithOutside(outside, now)
+	}
 	if change.LockUntilPlanned != nil {
 		if *change.LockUntilPlanned && !config.PlanGate.FromWake {
 			since := time.Now().UTC()

@@ -125,6 +125,7 @@ type Repository interface {
 	ListFollowUps(context.Context, time.Time) ([]FollowUp, error)
 	CloseFollowUp(context.Context, int64, string) (FollowUp, error)
 	TriggerFollowUp(context.Context, int64, time.Time) (FollowUp, error)
+	WatchTracks(context.Context, time.Time, time.Time) ([][]places.Fix, error)
 	SearchMapPlaces(ctx context.Context, query PlaceQuery) ([]MapPlace, error)
 	ApplyBlocklistChange(context.Context, []policy.BlocklistChange, string) (AgentChange, error)
 	ApplyLabelChanges(context.Context, []activity.LabelChange, string) (AgentChange, error)

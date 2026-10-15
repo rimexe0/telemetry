@@ -43,7 +43,8 @@ var changingTools = map[string]bool{
 }
 
 // Observation kinds that change decisions when a device uploads them.
-var changingKinds = [][]byte{[]byte("android.policy_emergency")}
+// Positions and the watch's walks count toward the outside rule.
+var changingKinds = [][]byte{[]byte("android.policy_emergency"), []byte("watch.outside_walk"), []byte("android.location.fix")}
 
 type recorder struct {
 	http.ResponseWriter

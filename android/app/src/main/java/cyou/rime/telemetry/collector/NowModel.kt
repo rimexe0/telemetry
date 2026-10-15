@@ -27,6 +27,7 @@ object NowModel {
         "work" to "Working",
         "break" to "Break",
         "plan_gate" to "Plan your day",
+        "outside" to "Go outside first",
         "closed" to "Focus hours",
         "leisure" to "Free time",
     )

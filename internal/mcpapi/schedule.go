@@ -20,6 +20,13 @@ const scheduleNotes = "When closed_by_default is on, everything labelled \"distr
 	"until the day has a plan; switched on during a day, it starts at the next waking; set_day_plan for that day opens it, and a day with no fixed times is planned with an empty list of blocks once its tasks are agreed. " +
 	"It cannot be turned on until the owner's way to reach you is labelled essential."
 
+const outsideNotes = "The outside rule makes the owner go outside before things open: until they have been outside for minutes today (positions at least meters from home), " +
+	"it holds \"distractions\" closed (distraction times included), \"lock\" closes everything but the essentials, or both. It counts the watch's walks (only while worn) " +
+	"and, unless watch_only, the phone's positions; on_foot leaves out cars and buses. from/from_wake and until bound its hours each day. Openings do not lift it unless allow_openings; " +
+	"an emergency unlock on the phone still does. The owner asked for it to be hard to get around: a change that asks less in any way, switching it off or reverting included, " +
+	"takes effect only the next day; one that asks more applies at once. Every number is the owner's to choose; never suggest one as a default. " +
+	"Tell them their progress from outside.today, and never shame them for not having gone out."
+
 type WindowIO struct {
 	Start string `json:"start" jsonschema:"local HH:MM"`
 	End   string `json:"end" jsonschema:"local HH:MM; at or before start means past midnight"`
@@ -44,16 +51,45 @@ type BlockingScheduleOutput struct {
 	Essentials       []string        `json:"essentials" jsonschema:"what stays open while the day is locked"`
 	Openings         []OpeningOutput `json:"openings" jsonschema:"openings in force now"`
 	Timezone         string          `json:"timezone"`
+	Outside          OutsideOutput   `json:"outside"`
 	Notes            string          `json:"notes"`
 }
 
+type OutsideRuleIO struct {
+	Enabled       bool     `json:"enabled"`
+	Minutes       int      `json:"minutes,omitempty" jsonschema:"minutes outside needed each day, 1 through 600"`
+	Meters        int      `json:"meters,omitempty" jsonschema:"how far from home counts as outside, 30 through 50000"`
+	Holds         []string `json:"holds,omitempty" jsonschema:"what stays shut until met: distractions, lock, or both"`
+	FromWake      bool     `json:"from_wake,omitempty" jsonschema:"start holding when the owner wakes"`
+	From          string   `json:"from,omitempty" jsonschema:"local HH:MM to start holding; empty for midnight or waking"`
+	Until         string   `json:"until,omitempty" jsonschema:"local HH:MM after which it gives up for the day; empty for the whole day"`
+	WatchOnly     bool     `json:"watch_only,omitempty" jsonschema:"count only walks the watch proves, worn"`
+	OnFoot        bool     `json:"on_foot,omitempty" jsonschema:"leave out stretches faster than walking"`
+	AllowOpenings bool     `json:"allow_openings,omitempty" jsonschema:"let openings lift it"`
+}
+
+type OutsideOutput struct {
+	Rule OutsideRuleIO `json:"rule" jsonschema:"in force today"`
+	// Next is a looser rule waiting for its day.
+	Next     *OutsideRuleIO         `json:"next,omitempty"`
+	NextFrom string                 `json:"next_from,omitempty" jsonschema:"local date the waiting rule starts"`
+	Today    *store.OutsideProgress `json:"today,omitempty" jsonschema:"time outside so far today, as the rule in force counts it"`
+	Notes    string                 `json:"notes"`
+}
+
+func outsideIO(rule policy.OutsideRule) OutsideRuleIO {
+	return OutsideRuleIO{Enabled: rule.Enabled, Minutes: rule.Minutes, Meters: rule.Meters, Holds: append([]string{}, rule.Holds...), FromWake: rule.FromWake,
+		From: rule.From, Until: rule.Until, WatchOnly: rule.WatchOnly, OnFoot: rule.OnFoot, AllowOpenings: rule.AllowOpenings}
+}
+
 type SetBlockingScheduleInput struct {
-	ClosedByDefault     *bool       `json:"closed_by_default,omitempty"`
-	DistractionTimes    *[]WindowIO `json:"distraction_times,omitempty" jsonschema:"the whole list of daily distraction times; replaces the current one"`
-	AddOpenAddresses    []string    `json:"add_open_addresses,omitempty" jsonschema:"page addresses to keep open, such as https://www.youtube.com/watch?v=..."`
-	RemoveOpenAddresses []string    `json:"remove_open_addresses,omitempty"`
-	LockUntilPlanned    *bool       `json:"lock_until_planned,omitempty" jsonschema:"lock everything but the essentials from waking until the day is planned"`
-	Reason              string      `json:"reason" jsonschema:"the owner's words where possible"`
+	ClosedByDefault     *bool          `json:"closed_by_default,omitempty"`
+	DistractionTimes    *[]WindowIO    `json:"distraction_times,omitempty" jsonschema:"the whole list of daily distraction times; replaces the current one"`
+	AddOpenAddresses    []string       `json:"add_open_addresses,omitempty" jsonschema:"page addresses to keep open, such as https://www.youtube.com/watch?v=..."`
+	RemoveOpenAddresses []string       `json:"remove_open_addresses,omitempty"`
+	LockUntilPlanned    *bool          `json:"lock_until_planned,omitempty" jsonschema:"lock everything but the essentials from waking until the day is planned"`
+	Outside             *OutsideRuleIO `json:"outside,omitempty" jsonschema:"the whole outside rule; replaces the current one"`
+	Reason              string         `json:"reason" jsonschema:"the owner's words where possible"`
 }
 
 type SetBlockingScheduleOutput struct {
@@ -110,13 +146,26 @@ func scheduleOutput(ctx context.Context, repository store.Repository, config pol
 	for _, opening := range openings {
 		output.Openings = append(output.Openings, openingOutput(opening, location))
 	}
+	rule := config.OutsideAt(now)
+	output.Outside = OutsideOutput{Rule: outsideIO(rule), Notes: outsideNotes}
+	if config.OutsideNext != nil && config.OutsideNextFrom > now.In(location).Format("2006-01-02") {
+		next := outsideIO(*config.OutsideNext)
+		output.Outside.Next, output.Outside.NextFrom = &next, config.OutsideNextFrom
+	}
+	if rule.Enabled {
+		progress, err := store.OutsideToday(ctx, repository, rule, location, now)
+		if err != nil {
+			return BlockingScheduleOutput{}, err
+		}
+		output.Outside.Today = &progress
+	}
 	return output, nil
 }
 
 func addScheduleTools(server *mcp.Server, repository store.Repository, now func() time.Time) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "blocking_schedule",
-		Description: "When distractions are closed: the closed-by-default switch, the daily distraction times, pages kept open, and openings in force. " + scheduleNotes,
+		Description: "When distractions are closed: the closed-by-default switch, the daily distraction times, pages kept open, openings in force, and the outside rule with today's time outside. " + scheduleNotes + " " + outsideNotes,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ BlockingScheduleInput) (*mcp.CallToolResult, BlockingScheduleOutput, error) {
 		config := policy.Config{}
 		stored, err := repository.LatestPolicy(ctx)
@@ -131,7 +180,7 @@ func addScheduleTools(server *mcp.Server, repository store.Repository, now func(
 	})
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "set_blocking_schedule",
-		Description: "Turn closed-by-default on or off, set the daily distraction times, or change which pages stay open. " + scheduleNotes + " " + approvalRule,
+		Description: "Turn closed-by-default on or off, set the daily distraction times, change which pages stay open, or set the outside rule. " + scheduleNotes + " " + outsideNotes + " " + approvalRule,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input SetBlockingScheduleInput) (*mcp.CallToolResult, SetBlockingScheduleOutput, error) {
 		change := store.ScheduleChange{ClosedByDefault: input.ClosedByDefault, AddOpenAddresses: input.AddOpenAddresses, RemoveOpenAddresses: input.RemoveOpenAddresses}
 		if input.DistractionTimes != nil {
@@ -142,7 +191,11 @@ func addScheduleTools(server *mcp.Server, repository store.Repository, now func(
 			change.DistractionTimes = &windows
 		}
 		change.LockUntilPlanned = input.LockUntilPlanned
-		if change.ClosedByDefault == nil && change.DistractionTimes == nil && change.LockUntilPlanned == nil && len(change.AddOpenAddresses)+len(change.RemoveOpenAddresses) == 0 {
+		if rule := input.Outside; rule != nil {
+			change.Outside = &policy.OutsideRule{Enabled: rule.Enabled, Minutes: rule.Minutes, Meters: rule.Meters, Holds: rule.Holds, FromWake: rule.FromWake,
+				From: rule.From, Until: rule.Until, WatchOnly: rule.WatchOnly, OnFoot: rule.OnFoot, AllowOpenings: rule.AllowOpenings}
+		}
+		if change.ClosedByDefault == nil && change.DistractionTimes == nil && change.LockUntilPlanned == nil && change.Outside == nil && len(change.AddOpenAddresses)+len(change.RemoveOpenAddresses) == 0 {
 			return nil, SetBlockingScheduleOutput{}, errors.New("nothing to change")
 		}
 		if change.LockUntilPlanned != nil && *change.LockUntilPlanned {

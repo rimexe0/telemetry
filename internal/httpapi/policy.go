@@ -165,6 +165,24 @@ func (s *Server) policyInputs(ctx context.Context, from, to time.Time) (policy.C
 			return config, 0, policy.Facts{}, err
 		}
 	}
+	// Time outside today, for the outside rule. Missing positions count as
+	// none, so the rule holds until the walk is proven.
+	if rule := config.OutsideAt(time.Now()); rule.Enabled {
+		location, err := time.LoadLocation(config.Timezone)
+		if err != nil {
+			return config, 0, policy.Facts{}, err
+		}
+		progress, err := store.OutsideToday(ctx, s.repository, rule, location, time.Now())
+		if err != nil {
+			return config, 0, policy.Facts{}, err
+		}
+		facts.OutsideMinutes = progress.Minutes
+		if rule.FromWake && facts.WakeAt == nil {
+			if facts.WakeAt, err = store.LoadWakeTime(ctx, s.repository, from); err != nil {
+				return config, 0, policy.Facts{}, err
+			}
+		}
+	}
 	// An emergency unlock started on the phone opens every device.
 	if facts.Emergency, err = s.repository.LatestEmergency(ctx, from); err != nil {
 		return config, 0, policy.Facts{}, err

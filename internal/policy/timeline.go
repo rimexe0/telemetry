@@ -60,6 +60,24 @@ func Timeline(config Config, version int64, facts Facts, from, to time.Time) []S
 		}
 	}
 	if location, err := time.LoadLocation(config.Timezone); err == nil {
+		// The outside rule's hours, and the day a looser rule starts.
+		for _, rule := range []OutsideRule{config.Outside, derefOutside(config.OutsideNext)} {
+			for day := from.In(location); !day.After(to); day = day.AddDate(0, 0, 1) {
+				for _, clock := range []string{rule.From, rule.Until} {
+					if clock == "" {
+						continue
+					}
+					if t, err := time.ParseInLocation("2006-01-02 15:04", day.Format("2006-01-02")+" "+clock, location); err == nil {
+						add(t)
+					}
+				}
+			}
+		}
+		if config.OutsideNextFrom != "" {
+			if t, err := time.ParseInLocation("2006-01-02", config.OutsideNextFrom, location); err == nil {
+				add(t)
+			}
+		}
 		if config.ClosedByDefault {
 			for day := from; !day.After(to.Add(24 * time.Hour)); day = day.Add(24 * time.Hour) {
 				for _, bound := range windowBounds(config, location, day) {
@@ -98,4 +116,11 @@ func Timeline(config Config, version int64, facts Facts, from, to time.Time) []S
 func sameDecision(a, b Decision) bool {
 	a.At, b.At = time.Time{}, time.Time{}
 	return reflect.DeepEqual(a, b)
+}
+
+func derefOutside(rule *OutsideRule) OutsideRule {
+	if rule == nil {
+		return OutsideRule{}
+	}
+	return *rule
 }
