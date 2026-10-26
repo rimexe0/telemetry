@@ -280,6 +280,16 @@ func (fakeRepository) OpenNow(context.Context, store.Opening, string) (store.Age
 func (fakeRepository) ActiveOpenings(context.Context, time.Time) ([]store.Opening, error) {
 	return nil, nil
 }
+func (fakeRepository) OpeningsSince(context.Context, time.Time) (int, error) { return 0, nil }
+func (fakeRepository) EndOpening(context.Context, int64) (store.Opening, error) {
+	return store.Opening{}, store.ErrNotFound
+}
+func (fakeRepository) CreateMorningCode(context.Context) (string, error)     { return "", nil }
+func (fakeRepository) ScanMorningCode(context.Context, string) (bool, error) { return false, nil }
+func (fakeRepository) MorningCodeMade(context.Context) (*time.Time, error)   { return nil, nil }
+func (fakeRepository) LatestMorningScan(context.Context, time.Time) (*time.Time, error) {
+	return nil, nil
+}
 
 func (fakeRepository) AddTaskClaim(_ context.Context, claim store.TaskClaim) (store.TaskClaim, error) {
 	return claim, nil

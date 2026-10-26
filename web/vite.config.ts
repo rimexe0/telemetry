@@ -58,6 +58,12 @@ function fixtureExecution() {
   const proposals: Record<string, any>[] = [];
   const rules: Record<string, any>[] = [];
   let eventId = 0;
+  let openingRule: Record<string, number> = { wait_minutes: 10, max_minutes: 30, per_day: 2 };
+  const openings: Record<string, any>[] = [];
+  let morningRule: Record<string, any> = { enabled: false, from_wake: true, until: '11:00', lock_all: true };
+  let morningMade: string | undefined;
+  // A 1x1 placeholder; the real server draws the code.
+  const fixtureQR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==';
   let policyVersion = 2;
   const policyConfig: Record<string, any> = { timezone: 'Europe/Istanbul', plan_gate: { enabled: false }, essentials: [], distractions: [], emergency_minutes: 10 };
   const policyProposals: Record<string, any>[] = [{ id: 1, status: 'pending', content_hash: 'fixture-policy-1', created_at: created, reason: 'Fixture: owner named x, reddit and youtube',
@@ -148,6 +154,31 @@ function fixtureExecution() {
         }
         return [200, proposal];
       }
+      if (path === '/openings' && method === 'GET') return [200, { rule: openingRule, used_today: openings.length, openings, distractions: policyConfig.distractions.length ? policyConfig.distractions : [{ id: 'fixture-feed', label: 'Fixture feed' }, { id: 'fixture-video', label: 'Fixture video' }] }];
+      if (path === '/openings' && method === 'POST') {
+        if (openingRule.max_minutes && body.minutes > openingRule.max_minutes) return [409, { error: { detail: `opening refused: an opening lasts at most ${openingRule.max_minutes} minutes` } }];
+        if (openingRule.per_day && openings.length >= openingRule.per_day) return [409, { error: { detail: `opening refused: all ${openingRule.per_day} openings for today are used` } }];
+        const starts = Date.now() + (openingRule.wait_minutes ?? 0) * 60_000;
+        openings.push({ id: openings.length + 1, purpose: body.purpose, sites: [], apps: [], everything: body.everything, starts_at: new Date(starts).toISOString(), until: new Date(starts + body.minutes * 60_000).toISOString(), created_at: created });
+        return [201, { opening: openings[openings.length - 1] }];
+      }
+      const endMatch = path.match(/^\/openings\/(\d+)\/end$/);
+      if (endMatch && method === 'POST') {
+        const opening = openings.find(row => row.id === Number(endMatch[1]));
+        if (!opening) return [404, { error: { detail: 'no such opening' } }];
+        opening.ended_at = new Date().toISOString();
+        return [200, { opening }];
+      }
+      if (path === '/openings/rule' && method === 'PUT') {
+        openingRule = body;
+        return [200, { opening_rule: openingRule, morning: morningRule }];
+      }
+      if (path === '/morning' && method === 'GET') return [200, { rule: morningRule, holding: false, scan_address: 'http://127.0.0.1/morning?code=', code_made: morningMade }];
+      if (path === '/morning' && method === 'PUT') { morningRule = body; return [200, { opening_rule: openingRule, morning: morningRule }]; }
+      if (path === '/morning/code' && method === 'POST') {
+        morningMade = new Date().toISOString();
+        return [201, { address: 'http://127.0.0.1/morning?code=fixture', image: fixtureQR }];
+      }
       if (path === '/planning/settings') return [200, { daily_plan_gate_enabled: true, enforcement_active: false }];
       if (path.startsWith('/activities')) return [200, { activities }];
       if (path === `/plans/${day}/replan-proposals` && method === 'GET') return [200, { proposals: [...proposals].reverse() }];
@@ -231,7 +262,7 @@ function fixtureAPI(): Plugin {
           return;
         }
         const path = (request.url ?? '/').split('?')[0];
-        if (path.startsWith('/execution') || path.startsWith('/plans') || path.startsWith('/activities') || path.startsWith('/activity') || path.startsWith('/policy') || path.startsWith('/context-rules') || path === '/planning/settings') {
+        if (path.startsWith('/execution') || path.startsWith('/plans') || path.startsWith('/activities') || path.startsWith('/activity') || path.startsWith('/policy') || path.startsWith('/context-rules') || path.startsWith('/openings') || path.startsWith('/morning') || path === '/planning/settings') {
           let raw = '';
           request.on('data', chunk => raw += chunk);
           request.on('end', () => {

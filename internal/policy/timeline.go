@@ -38,7 +38,11 @@ func Timeline(config Config, version int64, facts Facts, from, to time.Time) []S
 		add(facts.Urgent.Until)
 	}
 	for _, opening := range facts.Openings {
+		add(opening.From)
 		add(opening.Until)
+	}
+	if facts.MorningScannedAt != nil {
+		add(*facts.MorningScannedAt)
 	}
 	if facts.Emergency != nil {
 		add(facts.Emergency.StartedAt)
@@ -73,8 +77,24 @@ func Timeline(config Config, version int64, facts Facts, from, to time.Time) []S
 				}
 			}
 		}
-		if config.OutsideNextFrom != "" {
-			if t, err := time.ParseInLocation("2006-01-02", config.OutsideNextFrom, location); err == nil {
+		// The morning rule's hours, and the days looser rules start.
+		for _, rule := range []MorningRule{config.Morning, derefMorning(config.MorningNext)} {
+			for day := from.In(location); !day.After(to); day = day.AddDate(0, 0, 1) {
+				for _, clock := range []string{rule.From, rule.Until} {
+					if clock == "" {
+						continue
+					}
+					if t, err := time.ParseInLocation("2006-01-02 15:04", day.Format("2006-01-02")+" "+clock, location); err == nil {
+						add(t)
+					}
+				}
+			}
+		}
+		for _, date := range []string{config.OutsideNextFrom, config.MorningNextFrom} {
+			if date == "" {
+				continue
+			}
+			if t, err := time.ParseInLocation("2006-01-02", date, location); err == nil {
 				add(t)
 			}
 		}
@@ -121,6 +141,13 @@ func sameDecision(a, b Decision) bool {
 func derefOutside(rule *OutsideRule) OutsideRule {
 	if rule == nil {
 		return OutsideRule{}
+	}
+	return *rule
+}
+
+func derefMorning(rule *MorningRule) MorningRule {
+	if rule == nil {
+		return MorningRule{}
 	}
 	return *rule
 }

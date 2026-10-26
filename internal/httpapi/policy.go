@@ -183,6 +183,17 @@ func (s *Server) policyInputs(ctx context.Context, from, to time.Time) (policy.C
 			}
 		}
 	}
+	// The morning hold starts from waking and ends at a scan of the code.
+	if rule := config.MorningAt(from); rule.Enabled {
+		if rule.FromWake && rule.From == "" && facts.WakeAt == nil {
+			if facts.WakeAt, err = store.LoadWakeTime(ctx, s.repository, from); err != nil {
+				return config, 0, policy.Facts{}, err
+			}
+		}
+		if facts.MorningScannedAt, err = s.repository.LatestMorningScan(ctx, from); err != nil {
+			return config, 0, policy.Facts{}, err
+		}
+	}
 	// An emergency unlock started on the phone opens every device.
 	if facts.Emergency, err = s.repository.LatestEmergency(ctx, from); err != nil {
 		return config, 0, policy.Facts{}, err

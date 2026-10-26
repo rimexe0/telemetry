@@ -733,3 +733,54 @@ export async function decidePolicyProposal(proposal: Pick<PolicyProposal, 'id' |
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content_hash: proposal.content_hash })
   });
 }
+
+export type OpeningRule = { wait_minutes?: number; max_minutes?: number; per_day?: number };
+export type Opening = { id: number; purpose: string; sites: string[]; apps: string[]; everything: boolean; starts_at: string; until: string; ended_at?: string };
+export type OpeningsState = {
+  rule: OpeningRule; next?: OpeningRule; next_from?: string; used_today: number;
+  openings: Opening[]; distractions: TargetGroup[];
+};
+
+export async function getOpenings(): Promise<OpeningsState> {
+  return request<OpeningsState>('/v1/openings');
+}
+
+export async function createOpening(input: { purpose: string; group_ids: string[]; everything: boolean; minutes: number }): Promise<Opening> {
+  const result = await request<{ opening: Opening }>('/v1/openings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input)
+  });
+  return result.opening;
+}
+
+export async function endOpening(id: number): Promise<Opening> {
+  const result = await request<{ opening: Opening }>(`/v1/openings/${id}/end`, { method: 'POST' });
+  return result.opening;
+}
+
+export type MorningRule = { enabled: boolean; from_wake?: boolean; from?: string; until: string; lock_all?: boolean };
+export type RulesSaved = { opening_rule: OpeningRule; morning: MorningRule; opening_rule_next_from?: string; morning_next_from?: string };
+
+export async function saveOpeningRule(rule: OpeningRule): Promise<RulesSaved> {
+  return request<RulesSaved>('/v1/openings/rule', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rule)
+  });
+}
+
+export type MorningState = {
+  rule: MorningRule; next?: MorningRule; next_from?: string; code_made?: string;
+  holding: boolean; scanned_at?: string; scan_address: string;
+};
+
+export async function getMorning(): Promise<MorningState> {
+  return request<MorningState>('/v1/morning');
+}
+
+export async function saveMorningRule(rule: MorningRule): Promise<RulesSaved> {
+  return request<RulesSaved>('/v1/morning', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rule)
+  });
+}
+
+export async function newMorningCode(): Promise<{ address: string; image: string }> {
+  return request<{ address: string; image: string }>('/v1/morning/code', { method: 'POST' });
+}

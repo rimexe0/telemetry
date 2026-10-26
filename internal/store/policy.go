@@ -38,8 +38,23 @@ func (p *Postgres) LatestPolicy(ctx context.Context) (*PolicyVersion, error) {
 	return &version, nil
 }
 
-// SavePolicy appends a new version; earlier versions stay readable.
+// SavePolicy appends a new version; earlier versions stay readable. The
+// outside, opening and morning rules keep their rule that looser ones wait
+// for the next day, as when they are set with the blocking schedule.
 func (p *Postgres) SavePolicy(ctx context.Context, config policy.Config, note string) (PolicyVersion, error) {
+	latest, err := p.LatestPolicy(ctx)
+	if err != nil {
+		return PolicyVersion{}, err
+	}
+	if latest != nil {
+		now := time.Now().UTC()
+		outside, openingRule, morning := config.OutsideAt(now), config.OpeningRuleAt(now), config.MorningAt(now)
+		stored := latest.Config
+		config.Outside, config.OutsideNext, config.OutsideNextFrom = stored.Outside, stored.OutsideNext, stored.OutsideNextFrom
+		config.OpeningRule, config.OpeningRuleNext, config.OpeningRuleNextFrom = stored.OpeningRule, stored.OpeningRuleNext, stored.OpeningRuleNextFrom
+		config.Morning, config.MorningNext, config.MorningNextFrom = stored.Morning, stored.MorningNext, stored.MorningNextFrom
+		config = config.WithOutside(outside, now).WithOpeningRule(openingRule, now).WithMorning(morning, now)
+	}
 	if err := config.Normalize(); err != nil {
 		return PolicyVersion{}, fmt.Errorf("%w: %s", ErrInvalidPolicy, err)
 	}

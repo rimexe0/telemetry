@@ -10,6 +10,8 @@
   import ReplanReview from '$lib/ReplanReview.svelte';
   import ContextRules from '$lib/ContextRules.svelte';
   import BlockedApps from '$lib/BlockedApps.svelte';
+  import Openings from '$lib/Openings.svelte';
+  import MorningCode from '$lib/MorningCode.svelte';
   import ActivityView from '$lib/ActivityView.svelte';
   import { performNowAction, type NowAction, type NowSnapshot, type NowView } from '$lib/execution';
   import { dayKey, dayStart } from '$lib/health';
@@ -872,6 +874,7 @@
     {/if}
     {#if view === 'now'}
       <ExecutionNow snapshot={nowSnapshot} loading={nowLoading} error={nowError || error} onaction={handleNowAction} onopenplan={openTodayPlan} onrefresh={() => refresh()} />
+      <Openings />
     {:else if view === 'activity'}
       <ActivityView date={selectedDay} />
     {:else if view === 'day'}
@@ -896,6 +899,7 @@
       <ReplanReview day={selectedDay} {plan} onchanged={refreshPlan} />
       <ContextRules {activities} />
       <BlockedApps />
+      <MorningCode />
     {:else if view === 'devices'}
       <section class="devices" aria-labelledby="devices-heading">
         <div class="section-title"><h2 id="devices-heading">Devices</h2><button class="quiet-button" on:click={refreshDevices} disabled={devicesLoading}>{devicesLoading ? 'Refreshing…' : 'Refresh'}</button></div>

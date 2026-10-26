@@ -40,6 +40,8 @@ type Config struct {
 	// Changes, when set, wakes devices waiting on /v1/device/now as soon as
 	// something that affects them changes.
 	Changes *changes.Feed
+	// PublicURL is the origin the printed morning code points at.
+	PublicURL string
 }
 
 type Server struct {
@@ -95,6 +97,12 @@ func New(repository store.Repository, config Config) (*Server, error) {
 	server.mux.HandleFunc("GET /v1/policy/current", server.policyCurrent)
 	server.mux.HandleFunc("GET /v1/policy/timeline", server.policyTimeline)
 	server.mux.HandleFunc("GET /v1/policy/suggestions", server.policySuggestions)
+	server.mux.HandleFunc("/v1/openings", server.openings)
+	server.mux.HandleFunc("POST /v1/openings/{id}/end", server.endOpening)
+	server.mux.HandleFunc("PUT /v1/openings/rule", server.openingRule)
+	server.mux.HandleFunc("/v1/morning", server.morning)
+	server.mux.HandleFunc("POST /v1/morning/code", server.newMorningCode)
+	server.mux.HandleFunc("GET /morning", server.scanMorning)
 	server.mux.HandleFunc("GET /v1/device/now", server.deviceNow)
 	server.mux.HandleFunc("GET /v1/device/day", server.deviceDay)
 	server.mux.HandleFunc("POST /v1/device/follow-ups/{id}/done", server.deviceFollowUpDone)

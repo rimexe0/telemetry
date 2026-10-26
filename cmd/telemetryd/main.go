@@ -115,6 +115,7 @@ func main() {
 		PairingEnabled:      clerkKey != "" && ownerID != "",
 		DeviceSessions:      deviceSessions,
 		Changes:             feed,
+		PublicURL:           publicURL,
 		ClerkPublishableKey: clerkKey,
 		IngestDeviceTokens:  ingestDeviceTokens,
 		ReadToken:           *readToken,

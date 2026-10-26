@@ -85,6 +85,16 @@ type Config struct {
 	Outside         OutsideRule  `json:"outside,omitempty"`
 	OutsideNext     *OutsideRule `json:"outside_next,omitempty"`
 	OutsideNextFrom string       `json:"outside_next_from,omitempty"`
+	// OpeningRule sets the wait before an opening starts, its longest
+	// length and how many a day. OpeningRuleNext is a looser rule waiting
+	// for its day, as with Outside.
+	OpeningRule         OpeningRule  `json:"opening_rule,omitempty"`
+	OpeningRuleNext     *OpeningRule `json:"opening_rule_next,omitempty"`
+	OpeningRuleNextFrom string       `json:"opening_rule_next_from,omitempty"`
+	// Morning holds the day shut until the printed morning code is scanned.
+	Morning         MorningRule  `json:"morning,omitempty"`
+	MorningNext     *MorningRule `json:"morning_next,omitempty"`
+	MorningNextFrom string       `json:"morning_next_from,omitempty"`
 }
 
 // NormalizeAddress reduces a URL or address to host and path without scheme
@@ -156,9 +166,11 @@ type Opening struct {
 	ID      int64  `json:"id"`
 	Purpose string `json:"purpose"`
 	// GroupIDs are the distraction groups opened; All opens every one.
-	GroupIDs []string  `json:"group_ids,omitempty"`
-	All      bool      `json:"all,omitempty"`
-	Until    time.Time `json:"until"`
+	GroupIDs []string `json:"group_ids,omitempty"`
+	All      bool     `json:"all,omitempty"`
+	// From is when it starts, after the owner's wait; zero is at once.
+	From  time.Time `json:"from,omitempty"`
+	Until time.Time `json:"until"`
 }
 
 type Emergency struct {
@@ -181,6 +193,8 @@ type Facts struct {
 	// OutsideMinutes is how long the owner has been outside today, as the
 	// rule in force counts it. Unknown counts as none.
 	OutsideMinutes float64 `json:"outside_minutes,omitempty"`
+	// MorningScannedAt is the latest scan of the morning code.
+	MorningScannedAt *time.Time `json:"morning_scanned_at,omitempty"`
 }
 
 type Targets struct {
@@ -279,6 +293,20 @@ func (c *Config) Normalize() error {
 			return err
 		}
 	}
+	for _, rule := range []*OpeningRule{&c.OpeningRule, c.OpeningRuleNext} {
+		if rule != nil {
+			if err := rule.Normalize(); err != nil {
+				return err
+			}
+		}
+	}
+	for _, rule := range []*MorningRule{&c.Morning, c.MorningNext} {
+		if rule != nil {
+			if err := rule.Normalize(); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -312,7 +340,7 @@ func Evaluate(config Config, version int64, facts Facts, at time.Time) Decision 
 		location = time.UTC
 	}
 	for _, opening := range facts.Openings {
-		if !at.Before(opening.Until) {
+		if at.Before(opening.From) || !at.Before(opening.Until) {
 			continue
 		}
 		opened := map[string]bool{}
@@ -405,6 +433,15 @@ func evaluate(config Config, version int64, facts Facts, at time.Time) Decision 
 		decision.Reason = "Urgent: " + urgent.Purpose + " (until " + clock(urgent.Until) + "). Only what this needs is opened up."
 		decision.Basis = append(decision.Basis, "urgent")
 		blockDistractions(allowed)
+		return decision
+	}
+	if rule := config.MorningAt(at); morningHolds(rule, facts, location, at) {
+		decision.Mode = ModeMorning
+		// With no essentials there would be no way left to reach anyone.
+		decision.BlockAll = rule.LockAll && len(config.Essentials) > 0
+		decision.Reason = "Scan the morning code to open the day. It opens at " + rule.Until + " at the latest."
+		decision.Basis = append(decision.Basis, "morning")
+		blockDistractions(nil)
 		return decision
 	}
 	if execution := facts.Execution; execution != nil && execution.Recovery {

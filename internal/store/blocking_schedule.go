@@ -32,6 +32,10 @@ type ScheduleChange struct {
 	// Outside replaces the outside rule. One that asks less in any way
 	// takes effect the next day; one that asks more, at once.
 	Outside *policy.OutsideRule `json:"outside,omitempty"`
+	// OpeningRule and Morning replace those rules; a looser one waits for
+	// the next day in the same way.
+	OpeningRule *policy.OpeningRule `json:"opening_rule,omitempty"`
+	Morning     *policy.MorningRule `json:"morning,omitempty"`
 }
 
 // applyScheduleTx writes a new policy version and returns the change that
@@ -68,6 +72,23 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 	} else {
 		config = config.WithOutside(outside, now)
 	}
+	openingRule, morning := config.OpeningRuleAt(now), config.MorningAt(now)
+	if change.OpeningRule != nil {
+		previous.OpeningRule = &openingRule
+		if err := change.OpeningRule.Normalize(); err != nil {
+			return ScheduleChange{}, config, 0, fmt.Errorf("%w: %s", ErrInvalidAgentChange, err)
+		}
+		openingRule = *change.OpeningRule
+	}
+	config = config.WithOpeningRule(openingRule, now)
+	if change.Morning != nil {
+		previous.Morning = &morning
+		if err := change.Morning.Normalize(); err != nil {
+			return ScheduleChange{}, config, 0, fmt.Errorf("%w: %s", ErrInvalidAgentChange, err)
+		}
+		morning = *change.Morning
+	}
+	config = config.WithMorning(morning, now)
 	if change.LockUntilPlanned != nil {
 		if *change.LockUntilPlanned && !config.PlanGate.FromWake {
 			since := time.Now().UTC()
@@ -145,23 +166,27 @@ func (p *Postgres) ApplyBlockingSchedule(ctx context.Context, change ScheduleCha
 }
 
 // Opening lifts the block on named sites and apps, or on every distraction,
-// for a stated purpose until a time.
+// for a stated purpose from StartsAt until a time.
 type Opening struct {
 	ID         int64      `json:"id"`
 	Purpose    string     `json:"purpose"`
 	Sites      []string   `json:"sites"`
 	Apps       []string   `json:"apps"`
 	Everything bool       `json:"everything"`
+	StartsAt   time.Time  `json:"starts_at"`
 	Until      time.Time  `json:"until"`
 	CreatedAt  time.Time  `json:"created_at"`
 	EndedAt    *time.Time `json:"ended_at,omitempty"`
 }
 
-const openingColumns = `id, purpose, sites, apps, everything, until, created_at, ended_at`
+const openingColumns = `id, purpose, sites, apps, everything, starts_at, until, created_at, ended_at`
+
+// ErrOpeningRefused is an opening the owner's opening rule does not allow.
+var ErrOpeningRefused = errors.New("opening refused")
 
 func scanOpening(row pgx.Row) (Opening, error) {
 	var opening Opening
-	err := row.Scan(&opening.ID, &opening.Purpose, &opening.Sites, &opening.Apps, &opening.Everything, &opening.Until, &opening.CreatedAt, &opening.EndedAt)
+	err := row.Scan(&opening.ID, &opening.Purpose, &opening.Sites, &opening.Apps, &opening.Everything, &opening.StartsAt, &opening.Until, &opening.CreatedAt, &opening.EndedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return opening, ErrNotFound
 	}
@@ -169,6 +194,9 @@ func scanOpening(row pgx.Row) (Opening, error) {
 }
 
 // OpenNow records an opening and logs it; reverting the change ends it.
+// Until is read as the length asked for from now. Under the owner's opening
+// rule the opening starts after the wait and keeps that length, a length
+// over the limit or an opening over the day's count is refused.
 func (p *Postgres) OpenNow(ctx context.Context, opening Opening, reason string) (AgentChange, Opening, error) {
 	reason, err := validReason(reason)
 	if err != nil {
@@ -201,8 +229,48 @@ func (p *Postgres) OpenNow(ctx context.Context, opening Opening, reason string) 
 		return AgentChange{}, Opening{}, err
 	}
 	defer tx.Rollback(ctx)
-	saved, err := scanOpening(tx.QueryRow(ctx, `INSERT INTO openings (purpose, sites, apps, everything, until) VALUES ($1, $2, $3, $4, $5) RETURNING `+openingColumns,
-		opening.Purpose, opening.Sites, opening.Apps, opening.Everything, opening.Until.UTC()))
+	// One opening at a time is checked against the day's count.
+	if _, err := tx.Exec(ctx, `LOCK TABLE openings IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+		return AgentChange{}, Opening{}, err
+	}
+	config := policy.Config{}
+	var raw []byte
+	if err := tx.QueryRow(ctx, `SELECT config FROM policy_versions ORDER BY id DESC LIMIT 1`).Scan(&raw); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return AgentChange{}, Opening{}, err
+	}
+	if raw != nil {
+		if err := json.Unmarshal(raw, &config); err != nil {
+			return AgentChange{}, Opening{}, err
+		}
+	}
+	if err := config.Normalize(); err != nil {
+		return AgentChange{}, Opening{}, err
+	}
+	now := time.Now().UTC()
+	rule := config.OpeningRuleAt(now)
+	length := opening.Until.Sub(now).Round(time.Minute)
+	if rule.MaxMinutes > 0 && length > time.Duration(rule.MaxMinutes)*time.Minute {
+		return AgentChange{}, Opening{}, fmt.Errorf("%w: an opening lasts at most %d minutes", ErrOpeningRefused, rule.MaxMinutes)
+	}
+	if rule.PerDay > 0 {
+		location, err := time.LoadLocation(config.Timezone)
+		if err != nil {
+			return AgentChange{}, Opening{}, err
+		}
+		local := now.In(location)
+		dayStart := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, location)
+		used, err := openingsSince(ctx, tx, dayStart)
+		if err != nil {
+			return AgentChange{}, Opening{}, err
+		}
+		if used >= rule.PerDay {
+			return AgentChange{}, Opening{}, fmt.Errorf("%w: all %d openings for today are used", ErrOpeningRefused, rule.PerDay)
+		}
+	}
+	opening.StartsAt = now.Add(time.Duration(rule.WaitMinutes) * time.Minute)
+	opening.Until = opening.StartsAt.Add(length)
+	saved, err := scanOpening(tx.QueryRow(ctx, `INSERT INTO openings (purpose, sites, apps, everything, starts_at, until) VALUES ($1, $2, $3, $4, $5, $6) RETURNING `+openingColumns,
+		opening.Purpose, opening.Sites, opening.Apps, opening.Everything, opening.StartsAt, opening.Until.UTC()))
 	if err != nil {
 		return AgentChange{}, Opening{}, err
 	}
@@ -213,7 +281,30 @@ func (p *Postgres) OpenNow(ctx context.Context, opening Opening, reason string) 
 	return logged, saved, tx.Commit(ctx)
 }
 
-// ActiveOpenings returns the openings in force at a time.
+// openingsSince counts the openings made since a time, leaving out those
+// ended before they started.
+func openingsSince(ctx context.Context, q interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, since time.Time) (int, error) {
+	var used int
+	err := q.QueryRow(ctx, `SELECT count(*) FROM openings WHERE created_at >= $1 AND (ended_at IS NULL OR ended_at > starts_at)`, since).Scan(&used)
+	return used, err
+}
+
+// OpeningsSince counts the openings made since a time that count toward the
+// day's limit.
+func (p *Postgres) OpeningsSince(ctx context.Context, since time.Time) (int, error) {
+	return openingsSince(ctx, p.pool, since)
+}
+
+// EndOpening ends an opening now, or before it starts. Ending one that has
+// ended already changes nothing.
+func (p *Postgres) EndOpening(ctx context.Context, id int64) (Opening, error) {
+	return scanOpening(p.pool.QueryRow(ctx, `UPDATE openings SET ended_at = COALESCE(ended_at, now()) WHERE id = $1 RETURNING `+openingColumns, id))
+}
+
+// ActiveOpenings returns the openings in force at a time and those waiting
+// to start.
 func (p *Postgres) ActiveOpenings(ctx context.Context, at time.Time) ([]Opening, error) {
 	rows, err := p.pool.Query(ctx, `SELECT `+openingColumns+` FROM openings WHERE until > $1 AND ended_at IS NULL ORDER BY id LIMIT 50`, at)
 	if err != nil {
@@ -248,7 +339,7 @@ func revertOpening(ctx context.Context, tx pgx.Tx, raw json.RawMessage) (any, an
 func PolicyOpenings(config policy.Config, openings []Opening) []policy.Opening {
 	result := []policy.Opening{}
 	for _, opening := range openings {
-		item := policy.Opening{ID: opening.ID, Purpose: opening.Purpose, All: opening.Everything, Until: opening.Until}
+		item := policy.Opening{ID: opening.ID, Purpose: opening.Purpose, All: opening.Everything, From: opening.StartsAt, Until: opening.Until}
 		for _, group := range config.Distractions {
 			matched := false
 			for _, domain := range group.Domains {

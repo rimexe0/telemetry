@@ -258,6 +258,9 @@ func testServer(t *testing.T, repository *fakeRepository) *Server {
 }
 
 type fakeRepository struct {
+	morningCode  string
+	morningScans []time.Time
+	openings     []store.Opening
 	followUps    []store.FollowUp
 	ingested     model.Batch
 	query        store.Query
@@ -634,12 +637,57 @@ func (f *fakeRepository) ApplyBlockingSchedule(context.Context, store.ScheduleCh
 	return store.AgentChange{}, policy.Config{}, nil
 }
 
-func (f *fakeRepository) OpenNow(context.Context, store.Opening, string) (store.AgentChange, store.Opening, error) {
-	return store.AgentChange{}, store.Opening{}, nil
+func (f *fakeRepository) OpenNow(_ context.Context, opening store.Opening, _ string) (store.AgentChange, store.Opening, error) {
+	opening.ID = int64(len(f.openings) + 1)
+	f.openings = append(f.openings, opening)
+	return store.AgentChange{}, opening, nil
 }
 
 func (f *fakeRepository) ActiveOpenings(context.Context, time.Time) ([]store.Opening, error) {
-	return nil, nil
+	return f.openings, nil
+}
+
+func (f *fakeRepository) OpeningsSince(context.Context, time.Time) (int, error) {
+	return len(f.openings), nil
+}
+
+func (f *fakeRepository) EndOpening(_ context.Context, id int64) (store.Opening, error) {
+	for i := range f.openings {
+		if f.openings[i].ID == id {
+			ended := time.Now()
+			f.openings[i].EndedAt = &ended
+			return f.openings[i], nil
+		}
+	}
+	return store.Opening{}, store.ErrNotFound
+}
+
+func (f *fakeRepository) CreateMorningCode(context.Context) (string, error) {
+	f.morningCode = fmt.Sprintf("code-%d", len(f.morningScans)+1)
+	return f.morningCode, nil
+}
+
+func (f *fakeRepository) ScanMorningCode(_ context.Context, code string) (bool, error) {
+	if code == "" || code != f.morningCode {
+		return false, nil
+	}
+	f.morningScans = append(f.morningScans, time.Now())
+	return true, nil
+}
+
+func (f *fakeRepository) MorningCodeMade(context.Context) (*time.Time, error) {
+	if f.morningCode == "" {
+		return nil, nil
+	}
+	made := time.Now()
+	return &made, nil
+}
+
+func (f *fakeRepository) LatestMorningScan(context.Context, time.Time) (*time.Time, error) {
+	if len(f.morningScans) == 0 {
+		return nil, nil
+	}
+	return &f.morningScans[len(f.morningScans)-1], nil
 }
 
 func (f *fakeRepository) AddTaskClaim(_ context.Context, claim store.TaskClaim) (store.TaskClaim, error) {
