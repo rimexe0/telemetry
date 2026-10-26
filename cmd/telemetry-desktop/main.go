@@ -104,7 +104,7 @@ func defaultModules() string {
 	return "activitywatch-api,t3"
 }
 
-func buildModules(names, listen, t3Dir, t3Token, notices string, credentials *collector.Credentials) ([]collector.Module, error) {
+func buildModules(names, listen, t3Dir, t3Token, notices string, distractionsOnly bool, credentials *collector.Credentials) ([]collector.Module, error) {
 	modules := []collector.Module{}
 	seen := map[string]bool{}
 	var blocker *collector.Blocker
@@ -127,7 +127,7 @@ func buildModules(names, listen, t3Dir, t3Token, notices string, credentials *co
 		case "t3-open":
 			modules = append(modules, &collector.T3Open{Dir: t3Dir, TokenFile: t3Token})
 		case "blocker":
-			blocker = &collector.Blocker{Credentials: credentials}
+			blocker = &collector.Blocker{Credentials: credentials, DistractionsOnly: distractionsOnly}
 			modules = append(modules, blocker)
 		case "tracker":
 			tracker = &collector.Tracker{Credentials: credentials, Notices: notices}
@@ -165,6 +165,7 @@ func run(arguments []string) error {
 	hostname := flags.String("hostname", "", "hostname used in bucket names (default: this computer's)")
 	deliverEvery := flags.Duration("deliver-every", 30*time.Second, "how often queued records are sent")
 	notices := flags.String("notices", collector.NoticesFocus, "tracker notices: focus (only in a focus session), all, or off")
+	distractionsOnly := flags.Bool("distractions-only", false, "block only distractions, never everything but the essentials; for a machine agents also use")
 	relay := flags.String("relay", "", "relay that carries sealed device requests to the server, such as https://relay.example.com; the server address is used when it cannot be reached")
 	relayKey := flags.String("relay-key", "", "the server's public key for -relay")
 	flags.Parse(arguments)
@@ -207,7 +208,7 @@ func run(arguments []string) error {
 		}
 		*t3Token = filepath.Join(filepath.Dir(beside), "t3-session-token")
 	}
-	modules, err := buildModules(*moduleNames, *listen, *t3Dir, *t3Token, *notices, credentials)
+	modules, err := buildModules(*moduleNames, *listen, *t3Dir, *t3Token, *notices, *distractionsOnly, credentials)
 	if err != nil {
 		return err
 	}

@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -118,5 +119,23 @@ func TestBlockerAppliesAChangeAsSoonAsItComes(t *testing.T) {
 			t.Fatal("the change did not arrive within a second")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestDistractionsOnlyNeverBlocksEverything(t *testing.T) {
+	now := time.Now().UTC()
+	decision := policy.Decision{Mode: policy.ModeMorning, BlockAll: true, Blocked: policy.Targets{Domains: []string{"x.com"}}}
+	body, _ := json.Marshal(map[string]any{"timeline": []policy.Segment{{From: now.Add(-time.Minute), To: now.Add(time.Hour), Decision: decision}}})
+	for _, only := range []bool{false, true} {
+		blocker := &Blocker{DistractionsOnly: only}
+		if err := blocker.load(body, now); err != nil {
+			t.Fatal(err)
+		}
+		if !blocker.SiteDecision("x.com", "x.com/home").Blocked {
+			t.Fatalf("distractions only %v: a distraction was not blocked", only)
+		}
+		if blocked := blocker.SiteDecision("github.com", "github.com/rimexe0").Blocked; blocked == only {
+			t.Fatalf("distractions only %v: github.com blocked = %v", only, blocked)
+		}
 	}
 }

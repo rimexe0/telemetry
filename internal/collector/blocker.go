@@ -34,6 +34,10 @@ type Blocker struct {
 	HTTP        *http.Client
 	// OnNow, when set, receives each fresh /v1/device/now answer.
 	OnNow func(body []byte)
+	// DistractionsOnly blocks only what is labelled a distraction, never
+	// everything but the essentials, for a machine agents also use (owner
+	// request 2026-10-26).
+	DistractionsOnly bool
 
 	health    Health
 	mu        sync.Mutex
@@ -222,6 +226,11 @@ func (b *Blocker) load(body []byte, fetchedAt time.Time) error {
 	}
 	if err := json.Unmarshal(body, &now); err != nil {
 		return fmt.Errorf("decisions: %w", err)
+	}
+	if b.DistractionsOnly {
+		for i := range now.Timeline {
+			now.Timeline[i].Decision.BlockAll = false
+		}
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -432,6 +441,10 @@ func ModeLabel(mode string) string {
 		return "Focus hours"
 	case policy.ModeLeisure:
 		return "Free time"
+	case policy.ModeOutside:
+		return "Go outside first"
+	case policy.ModeMorning:
+		return "Morning"
 	}
 	return mode
 }
