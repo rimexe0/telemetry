@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -36,6 +37,60 @@ type ScheduleChange struct {
 	// the next day in the same way.
 	OpeningRule *policy.OpeningRule `json:"opening_rule,omitempty"`
 	Morning     *policy.MorningRule `json:"morning,omitempty"`
+	// SettingsLock and Bedtime replace those rules in the same way.
+	SettingsLock *policy.SettingsLock `json:"settings_lock,omitempty"`
+	Bedtime      *policy.Bedtime      `json:"bedtime,omitempty"`
+}
+
+// windowMinutes marks each minute of the day the windows cover.
+func windowMinutes(windows []policy.Window) [1440]bool {
+	var minutes [1440]bool
+	for _, window := range windows {
+		start, err1 := time.Parse("15:04", window.Start)
+		end, err2 := time.Parse("15:04", window.End)
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		from, to := start.Hour()*60+start.Minute(), end.Hour()*60+end.Minute()
+		for minute := from; minute != to; minute = (minute + 1) % 1440 {
+			minutes[minute] = true
+		}
+	}
+	return minutes
+}
+
+// scheduleLoosens reports whether a change asks less of the owner than the
+// config in force in any way.
+func scheduleLoosens(config policy.Config, change ScheduleChange, now time.Time) bool {
+	if change.ClosedByDefault != nil && !*change.ClosedByDefault && config.ClosedByDefault {
+		return true
+	}
+	if change.DistractionTimes != nil {
+		before, after := windowMinutes(config.DistractionTimes), windowMinutes(*change.DistractionTimes)
+		for minute := range after {
+			if after[minute] && !before[minute] {
+				return true
+			}
+		}
+	}
+	if len(change.AddOpenAddresses) > 0 {
+		return true
+	}
+	if change.OpenAddresses != nil {
+		for _, address := range *change.OpenAddresses {
+			if !slices.Contains(config.OpenAddresses, policy.NormalizeAddress(address)) {
+				return true
+			}
+		}
+	}
+	if change.LockUntilPlanned != nil && !*change.LockUntilPlanned && config.PlanGate.FromWake {
+		return true
+	}
+	return change.Outside != nil && config.OutsideAt(now).Looser(*change.Outside) ||
+		change.OpeningRule != nil && config.OpeningRuleAt(now).Looser(*change.OpeningRule) ||
+		change.Morning != nil && config.MorningAt(now).Looser(*change.Morning) ||
+		change.SettingsLock != nil && config.SettingsLockAt(now).Looser(*change.SettingsLock) ||
+		change.Bedtime != nil && config.BedtimeAt(now).Looser(*change.Bedtime)
 }
 
 // applyScheduleTx writes a new policy version and returns the change that
@@ -55,9 +110,24 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 			return ScheduleChange{}, config, 0, err
 		}
 	}
+	now := time.Now().UTC()
+	// Loosening is refused while the settings lock holds; after the PIN,
+	// changes apply at once instead of waiting for the next day.
+	immediate, err := refuseIfLocked(ctx, tx, scheduleLoosens(config, change, now))
+	if err != nil {
+		return ScheduleChange{}, config, 0, err
+	}
+	if change.SettingsLock != nil && change.SettingsLock.Enabled {
+		var pinSet bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM settings_pin WHERE replaced_at IS NULL)`).Scan(&pinSet); err != nil {
+			return ScheduleChange{}, config, 0, err
+		}
+		if !pinSet {
+			return ScheduleChange{}, config, 0, fmt.Errorf("%w: set the PIN in the panel before turning the settings lock on", ErrInvalidAgentChange)
+		}
+	}
 	closed, times, addresses := config.ClosedByDefault, append([]policy.Window{}, config.DistractionTimes...), append([]string{}, config.OpenAddresses...)
 	locked := config.PlanGate.FromWake
-	now := time.Now().UTC()
 	outside := config.OutsideAt(now)
 	previous := ScheduleChange{ClosedByDefault: &closed, DistractionTimes: &times, OpenAddresses: &addresses, LockUntilPlanned: &locked}
 	if change.Outside != nil {
@@ -89,6 +159,41 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 		morning = *change.Morning
 	}
 	config = config.WithMorning(morning, now)
+	lock, bedtime := config.SettingsLockAt(now), config.BedtimeAt(now)
+	if change.SettingsLock != nil {
+		previous.SettingsLock = &lock
+		if err := change.SettingsLock.Normalize(); err != nil {
+			return ScheduleChange{}, config, 0, fmt.Errorf("%w: %s", ErrInvalidAgentChange, err)
+		}
+		lock = *change.SettingsLock
+	}
+	config = config.WithSettingsLock(lock, now)
+	if change.Bedtime != nil {
+		previous.Bedtime = &bedtime
+		if err := change.Bedtime.Normalize(); err != nil {
+			return ScheduleChange{}, config, 0, fmt.Errorf("%w: %s", ErrInvalidAgentChange, err)
+		}
+		bedtime = *change.Bedtime
+	}
+	config = config.WithBedtime(bedtime, now)
+	if immediate {
+		// Unlocked with the PIN: what was asked applies today.
+		if change.Outside != nil {
+			config.Outside, config.OutsideNext, config.OutsideNextFrom = *change.Outside, nil, ""
+		}
+		if change.OpeningRule != nil {
+			config.OpeningRule, config.OpeningRuleNext, config.OpeningRuleNextFrom = *change.OpeningRule, nil, ""
+		}
+		if change.Morning != nil {
+			config.Morning, config.MorningNext, config.MorningNextFrom = *change.Morning, nil, ""
+		}
+		if change.SettingsLock != nil {
+			config.SettingsLock, config.SettingsLockNext, config.SettingsLockNextFrom = *change.SettingsLock, nil, ""
+		}
+		if change.Bedtime != nil {
+			config.Bedtime, config.BedtimeNext, config.BedtimeNextFrom = *change.Bedtime, nil, ""
+		}
+	}
 	if change.LockUntilPlanned != nil {
 		if *change.LockUntilPlanned && !config.PlanGate.FromWake {
 			since := time.Now().UTC()
@@ -261,7 +366,10 @@ func (p *Postgres) OpenNow(ctx context.Context, opening Opening, reason string) 
 	if _, err := tx.Exec(ctx, `LOCK TABLE openings IN SHARE ROW EXCLUSIVE MODE`); err != nil {
 		return AgentChange{}, Opening{}, err
 	}
-	config, err := latestConfigTx(ctx, tx)
+	if _, err := refuseIfLocked(ctx, tx, true); err != nil {
+		return AgentChange{}, Opening{}, err
+	}
+	config, err := latestConfig(ctx, tx)
 	if err != nil {
 		return AgentChange{}, Opening{}, err
 	}
@@ -293,20 +401,6 @@ func (p *Postgres) OpenNow(ctx context.Context, opening Opening, reason string) 
 		return AgentChange{}, Opening{}, err
 	}
 	return logged, saved, tx.Commit(ctx)
-}
-
-func latestConfigTx(ctx context.Context, tx pgx.Tx) (policy.Config, error) {
-	config := policy.Config{}
-	var raw []byte
-	if err := tx.QueryRow(ctx, `SELECT config FROM policy_versions ORDER BY id DESC LIMIT 1`).Scan(&raw); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return config, err
-	}
-	if raw != nil {
-		if err := json.Unmarshal(raw, &config); err != nil {
-			return config, err
-		}
-	}
-	return config, config.Normalize()
 }
 
 // checkDayCount refuses an opening when the day's openings are used up.
@@ -369,6 +463,9 @@ func (p *Postgres) ConfirmOpening(ctx context.Context, id int64) (Opening, error
 	if err != nil {
 		return Opening{}, err
 	}
+	if _, err := refuseIfLocked(ctx, tx, true); err != nil {
+		return Opening{}, err
+	}
 	now := time.Now().UTC()
 	switch {
 	case opening.EndedAt != nil || !now.Before(opening.Until):
@@ -380,7 +477,7 @@ func (p *Postgres) ConfirmOpening(ctx context.Context, id int64) (Opening, error
 	}
 	starts, until := opening.StartsAt, opening.Until
 	if opening.Confirmations+1 >= opening.ConfirmationsNeeded {
-		config, err := latestConfigTx(ctx, tx)
+		config, err := latestConfig(ctx, tx)
 		if err != nil {
 			return Opening{}, err
 		}

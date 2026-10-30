@@ -38,6 +38,8 @@ type Blocker struct {
 	// everything but the essentials, for a machine agents also use (owner
 	// request 2026-10-26).
 	DistractionsOnly bool
+	// Lock locks the screen; desktop.LockScreen when unset.
+	Lock func() error
 
 	health    Health
 	mu        sync.Mutex
@@ -48,6 +50,7 @@ type Blocker struct {
 	fingerprint string
 	blocking    string
 	lastBlock   string
+	lastLock    time.Time
 	// host is set by Run; site checks record blocks through it.
 	host      *Host
 	lastSites map[string]bool
@@ -59,6 +62,10 @@ const (
 	// first segment.
 	clockTolerance = 10 * time.Minute
 	ownBundleID    = "cyou.rime.telemetry.desktop"
+	// lockInputWithin is how recent input must be for the computer to count
+	// as in use; lockEvery spaces the locks.
+	lockInputWithin = 30 * time.Second
+	lockEvery       = 5 * time.Second
 )
 
 // macSystemSafe stay usable even when a gate blocks everything else.
@@ -112,6 +119,9 @@ func (b *Blocker) Run(ctx context.Context, host Host) error {
 		case <-refresh.C:
 			b.refresh(ctx, host)
 		case <-sample.C:
+			if b.lockScreen(ctx, host, platform, time.Now()) {
+				continue
+			}
 			window, ok, err := platform.ActiveWindow()
 			if err != nil || !ok {
 				continue
@@ -119,6 +129,39 @@ func (b *Blocker) Run(ctx context.Context, host Host) error {
 			b.enforce(ctx, host, window, time.Now())
 		}
 	}
+}
+
+// lockScreen locks the screen when the decision asks for it (bedtime) and
+// someone is using the computer: recent input on an unlocked screen. Nothing
+// is hidden or closed, so agents keep running. It reports whether the
+// decision asks for a locked screen, when apps are left alone.
+func (b *Blocker) lockScreen(ctx context.Context, host Host, platform desktop.Platform, now time.Time) bool {
+	b.mu.Lock()
+	decision := DecisionAt(b.timeline, now)
+	b.mu.Unlock()
+	if decision == nil || !decision.LockScreen {
+		return false
+	}
+	locked, err := platform.ScreenLocked()
+	if err != nil || locked {
+		return true
+	}
+	idle, err := platform.IdleTime()
+	if err != nil || idle > lockInputWithin || now.Sub(b.lastLock) < lockEvery {
+		return true
+	}
+	b.lastLock = now
+	lock := b.Lock
+	if lock == nil {
+		lock = desktop.LockScreen
+	}
+	if err := lock(); err != nil {
+		b.health.Failed(now, err)
+		return true
+	}
+	key := fmt.Sprintf("lock:%d", now.Unix()/60)
+	b.record(ctx, host, key, desktop.Window{App: "screen lock"}, *decision, now)
+	return true
 }
 
 func (b *Blocker) refresh(ctx context.Context, host Host) {

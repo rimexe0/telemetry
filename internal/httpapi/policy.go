@@ -43,6 +43,10 @@ func (s *Server) policyConfig(writer http.ResponseWriter, request *http.Request)
 			writeError(writer, http.StatusBadRequest, "invalid_policy", err.Error())
 			return
 		}
+		if errors.Is(err, store.ErrSettingsLocked) {
+			writeError(writer, http.StatusLocked, "settings_locked", err.Error())
+			return
+		}
 		if err != nil {
 			writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
 			return

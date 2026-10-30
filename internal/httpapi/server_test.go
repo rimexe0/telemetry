@@ -258,6 +258,8 @@ func testServer(t *testing.T, repository *fakeRepository) *Server {
 }
 
 type fakeRepository struct {
+	pin          string
+	lockState    store.SettingsLockState
 	morningCode  string
 	morningScans []time.Time
 	openings     []store.Opening
@@ -846,4 +848,25 @@ func (f *fakeRepository) ConfirmOpening(_ context.Context, id int64) (store.Open
 		}
 	}
 	return store.Opening{}, store.ErrNotFound
+}
+
+func (f *fakeRepository) SettingsLock(context.Context) (store.SettingsLockState, error) {
+	return f.lockState, nil
+}
+
+func (f *fakeRepository) SetSettingsPin(_ context.Context, current, next string) error {
+	if f.pin != "" && current != f.pin {
+		return store.ErrSettingsLocked
+	}
+	f.pin, f.lockState.PinSet = next, true
+	return nil
+}
+
+func (f *fakeRepository) UnlockSettings(_ context.Context, pin string) (time.Time, error) {
+	if pin != f.pin || !f.lockState.PinOpen {
+		return time.Time{}, store.ErrSettingsLocked
+	}
+	until := time.Now().Add(15 * time.Minute)
+	f.lockState.Locked, f.lockState.UnlockedUntil = false, &until
+	return until, nil
 }

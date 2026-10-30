@@ -42,6 +42,11 @@ func (p *Postgres) LatestPolicy(ctx context.Context) (*PolicyVersion, error) {
 // outside, opening and morning rules keep their rule that looser ones wait
 // for the next day, as when they are set with the blocking schedule.
 func (p *Postgres) SavePolicy(ctx context.Context, config policy.Config, note string) (PolicyVersion, error) {
+	// A whole policy can loosen anything, so it is refused while the
+	// settings lock holds.
+	if _, err := refuseIfLocked(ctx, p.pool, true); err != nil {
+		return PolicyVersion{}, err
+	}
 	latest, err := p.LatestPolicy(ctx)
 	if err != nil {
 		return PolicyVersion{}, err

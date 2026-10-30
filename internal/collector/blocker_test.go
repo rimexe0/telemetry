@@ -139,3 +139,50 @@ func TestDistractionsOnlyNeverBlocksEverything(t *testing.T) {
 		}
 	}
 }
+
+type lockPlatform struct {
+	idle   time.Duration
+	locked bool
+}
+
+func (p *lockPlatform) ActiveWindow() (desktop.Window, bool, error) {
+	return desktop.Window{}, false, nil
+}
+func (p *lockPlatform) IdleTime() (time.Duration, error) { return p.idle, nil }
+func (p *lockPlatform) ScreenLocked() (bool, error)      { return p.locked, nil }
+func (p *lockPlatform) CanReadTitles(bool) bool          { return false }
+
+func TestBedtimeLocksTheScreenOnlyWhenSomeoneUsesIt(t *testing.T) {
+	q, err := queue.Open(filepath.Join(t.TempDir(), "q.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Close()
+	host := Host{Queue: q, DeviceID: "mac"}
+	now := time.Now().UTC()
+	locks := 0
+	blocker := &Blocker{Lock: func() error { locks++; return nil }}
+	body, _ := json.Marshal(map[string]any{"timeline": []policy.Segment{{From: now.Add(-time.Minute), To: now.Add(time.Hour), Decision: policy.Decision{Mode: policy.ModeBedtime, LockScreen: true}}}})
+	if err := blocker.load(body, now); err != nil {
+		t.Fatal(err)
+	}
+	platform := &lockPlatform{idle: 10 * time.Minute}
+	if !blocker.lockScreen(context.Background(), host, platform, now) || locks != 0 {
+		t.Fatalf("locked an unused computer: %d", locks)
+	}
+	platform.idle = 2 * time.Second
+	blocker.lockScreen(context.Background(), host, platform, now)
+	blocker.lockScreen(context.Background(), host, platform, now.Add(time.Second))
+	if locks != 1 {
+		t.Fatalf("locks = %d, want one", locks)
+	}
+	platform.locked = true
+	blocker.lockScreen(context.Background(), host, platform, now.Add(10*time.Second))
+	if locks != 1 {
+		t.Fatalf("locked a locked screen: %d", locks)
+	}
+	blocker.timeline = nil
+	if blocker.lockScreen(context.Background(), host, platform, now) {
+		t.Fatal("no decision asks for a lock")
+	}
+}

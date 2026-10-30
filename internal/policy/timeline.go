@@ -90,7 +90,19 @@ func Timeline(config Config, version int64, facts Facts, from, to time.Time) []S
 				}
 			}
 		}
-		for _, date := range []string{config.OutsideNextFrom, config.MorningNextFrom} {
+		for _, rule := range []Bedtime{config.Bedtime, derefBedtime(config.BedtimeNext)} {
+			for day := from.In(location).AddDate(0, 0, -1); !day.After(to); day = day.AddDate(0, 0, 1) {
+				for _, clock := range []string{rule.Start, rule.End} {
+					if clock == "" {
+						continue
+					}
+					if t, err := time.ParseInLocation("2006-01-02 15:04", day.Format("2006-01-02")+" "+clock, location); err == nil {
+						add(t)
+					}
+				}
+			}
+		}
+		for _, date := range []string{config.OutsideNextFrom, config.MorningNextFrom, config.BedtimeNextFrom} {
 			if date == "" {
 				continue
 			}
@@ -148,6 +160,13 @@ func derefOutside(rule *OutsideRule) OutsideRule {
 func derefMorning(rule *MorningRule) MorningRule {
 	if rule == nil {
 		return MorningRule{}
+	}
+	return *rule
+}
+
+func derefBedtime(rule *Bedtime) Bedtime {
+	if rule == nil {
+		return Bedtime{}
 	}
 	return *rule
 }

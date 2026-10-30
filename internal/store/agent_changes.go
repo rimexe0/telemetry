@@ -85,6 +85,14 @@ func applyBlocklistTx(ctx context.Context, tx pgx.Tx, changes []policy.Blocklist
 	if _, err := tx.Exec(ctx, `LOCK TABLE policy_versions IN SHARE ROW EXCLUSIVE MODE`); err != nil {
 		return nil, 0, err
 	}
+	// Only blocking more is allowed while the settings lock holds.
+	loosens := false
+	for _, change := range changes {
+		loosens = loosens || change.Action != "block"
+	}
+	if _, err := refuseIfLocked(ctx, tx, loosens); err != nil {
+		return nil, 0, err
+	}
 	config := policy.Config{}
 	var raw []byte
 	err := tx.QueryRow(ctx, `SELECT config FROM policy_versions ORDER BY id DESC LIMIT 1`).Scan(&raw)
@@ -119,6 +127,21 @@ func applyBlocklistTx(ctx context.Context, tx pgx.Tx, changes []policy.Blocklist
 // applyLabelsTx applies label changes and returns, per change, the change
 // that restores the previous label (or its absence).
 func applyLabelsTx(ctx context.Context, tx pgx.Tx, changes []activity.LabelChange, proposalID *int64) ([]activity.LabelChange, error) {
+	// While the settings lock holds, a label may become a distraction but
+	// none may stop being one or become essential.
+	loosens := false
+	for _, change := range changes {
+		var label string
+		err := tx.QueryRow(ctx, `SELECT label FROM activity_labels WHERE kind = $1 AND lower(match) = lower($2) AND removed_at IS NULL`, change.Kind, change.Match).Scan(&label)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+		toDistraction := change.Action == "set" && change.Label == policy.LabelDistraction
+		loosens = loosens || (label == policy.LabelDistraction && !toDistraction) || (change.Action == "set" && change.Label == policy.LabelEssential)
+	}
+	if _, err := refuseIfLocked(ctx, tx, loosens); err != nil {
+		return nil, err
+	}
 	previous := make([]activity.LabelChange, 0, len(changes))
 	for _, change := range changes {
 		var label string

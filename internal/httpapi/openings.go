@@ -97,6 +97,9 @@ func (s *Server) openings(writer http.ResponseWriter, request *http.Request) {
 		}
 		_, saved, err := s.repository.OpenNow(request.Context(), opening, input.Purpose)
 		switch {
+		case errors.Is(err, store.ErrSettingsLocked):
+			writeError(writer, http.StatusLocked, "settings_locked", err.Error())
+			return
 		case errors.Is(err, store.ErrOpeningRefused), errors.Is(err, store.ErrInvalidAgentChange):
 			writeError(writer, http.StatusConflict, "opening_refused", err.Error())
 			return
@@ -160,6 +163,8 @@ func (s *Server) confirmOpening(writer http.ResponseWriter, request *http.Reques
 		writeError(writer, http.StatusNotFound, "not_found", "no such opening")
 	case errors.Is(err, store.ErrOpeningRefused):
 		writeError(writer, http.StatusConflict, "confirmation_refused", err.Error())
+	case errors.Is(err, store.ErrSettingsLocked):
+		writeError(writer, http.StatusLocked, "settings_locked", err.Error())
 	case err != nil:
 		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
 	default:
@@ -172,6 +177,10 @@ func (s *Server) confirmOpening(writer http.ResponseWriter, request *http.Reques
 // and can be reverted.
 func (s *Server) scheduleRule(writer http.ResponseWriter, request *http.Request, change store.ScheduleChange, note string) {
 	_, config, err := s.repository.ApplyBlockingSchedule(request.Context(), change, note)
+	if errors.Is(err, store.ErrSettingsLocked) {
+		writeError(writer, http.StatusLocked, "settings_locked", err.Error())
+		return
+	}
 	if errors.Is(err, store.ErrInvalidAgentChange) {
 		writeError(writer, http.StatusBadRequest, "invalid_rule", err.Error())
 		return

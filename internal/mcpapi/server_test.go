@@ -429,3 +429,11 @@ func (fakeRepository) WatchTracks(context.Context, time.Time, time.Time) ([][]pl
 func (fakeRepository) ConfirmOpening(context.Context, int64) (store.Opening, error) {
 	return store.Opening{}, store.ErrNotFound
 }
+
+func (fakeRepository) SettingsLock(context.Context) (store.SettingsLockState, error) {
+	return store.SettingsLockState{}, nil
+}
+func (fakeRepository) SetSettingsPin(context.Context, string, string) error { return nil }
+func (fakeRepository) UnlockSettings(context.Context, string) (time.Time, error) {
+	return time.Time{}, nil
+}

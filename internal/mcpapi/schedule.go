@@ -35,6 +35,12 @@ const openingNotes = "opening_rule is the owner's: an opening starts wait_minute
 	"and gives up at until each day. Only the owner's scan opens it; neither you nor an opening can. The code is printed from the panel. " +
 	"As with the outside rule, a change to either that asks less waits for the next day; one that asks more applies at once."
 
+const lockNotes = "settings_lock is the owner's: during its windows (none means always) nothing that loosens blocking is accepted from you or the panel, " +
+	"including openings, labels that stop being distractions or become essential, unblocking apps, reverting stricter changes, and loosening any rule. " +
+	"Only a PIN held by someone else, entered in the panel during pin_windows, lifts it for unlock_minutes; you never ask for, hold or enter the PIN. " +
+	"When a change is refused because of the lock, say so plainly and do not look for another way to the same result. " +
+	"bedtime locks the owner's screens during its hours without closing anything, so agents keep running; the phone keeps only its essentials."
+
 type WindowIO struct {
 	Start string `json:"start" jsonschema:"local HH:MM"`
 	End   string `json:"end" jsonschema:"local HH:MM; at or before start means past midnight"`
@@ -67,6 +73,41 @@ type MorningRuleIO struct {
 	LockAll  bool   `json:"lock_all,omitempty" jsonschema:"close everything but the essentials, not only distractions"`
 }
 
+type SettingsLockIO struct {
+	Enabled       bool       `json:"enabled"`
+	Windows       []WindowIO `json:"windows,omitempty" jsonschema:"when the lock holds; none means always"`
+	PinWindows    []WindowIO `json:"pin_windows,omitempty" jsonschema:"when the PIN is accepted; none means any time"`
+	UnlockMinutes int        `json:"unlock_minutes,omitempty" jsonschema:"how long the PIN lifts the lock, 1 through 240"`
+}
+
+type BedtimeIO struct {
+	Enabled bool   `json:"enabled"`
+	Start   string `json:"start,omitempty" jsonschema:"local HH:MM"`
+	End     string `json:"end,omitempty" jsonschema:"local HH:MM; at or before start means past midnight"`
+}
+
+type LockOutput struct {
+	Rule   SettingsLockIO          `json:"rule" jsonschema:"in force today"`
+	Locked bool                    `json:"locked" jsonschema:"loosening is refused now"`
+	State  store.SettingsLockState `json:"state"`
+}
+
+func windowsIO(windows []policy.Window) []WindowIO {
+	result := []WindowIO{}
+	for _, window := range windows {
+		result = append(result, WindowIO{Start: window.Start, End: window.End})
+	}
+	return result
+}
+
+func policyWindows(windows []WindowIO) []policy.Window {
+	result := []policy.Window{}
+	for _, window := range windows {
+		result = append(result, policy.Window{Start: window.Start, End: window.End})
+	}
+	return result
+}
+
 type OpeningRuleOutput struct {
 	Rule      OpeningRuleIO  `json:"rule" jsonschema:"in force today"`
 	Next      *OpeningRuleIO `json:"next,omitempty"`
@@ -94,6 +135,8 @@ type BlockingScheduleOutput struct {
 	Outside          OutsideOutput     `json:"outside"`
 	OpeningRule      OpeningRuleOutput `json:"opening_rule"`
 	Morning          MorningOutput     `json:"morning"`
+	SettingsLock     LockOutput        `json:"settings_lock"`
+	Bedtime          BedtimeIO         `json:"bedtime" jsonschema:"in force today"`
 	Notes            string            `json:"notes"`
 }
 
@@ -125,15 +168,17 @@ func outsideIO(rule policy.OutsideRule) OutsideRuleIO {
 }
 
 type SetBlockingScheduleInput struct {
-	ClosedByDefault     *bool          `json:"closed_by_default,omitempty"`
-	DistractionTimes    *[]WindowIO    `json:"distraction_times,omitempty" jsonschema:"the whole list of daily distraction times; replaces the current one"`
-	AddOpenAddresses    []string       `json:"add_open_addresses,omitempty" jsonschema:"page addresses to keep open, such as https://www.youtube.com/watch?v=..."`
-	RemoveOpenAddresses []string       `json:"remove_open_addresses,omitempty"`
-	LockUntilPlanned    *bool          `json:"lock_until_planned,omitempty" jsonschema:"lock everything but the essentials from waking until the day is planned"`
-	Outside             *OutsideRuleIO `json:"outside,omitempty" jsonschema:"the whole outside rule; replaces the current one"`
-	OpeningRule         *OpeningRuleIO `json:"opening_rule,omitempty" jsonschema:"the whole opening rule; replaces the current one"`
-	Morning             *MorningRuleIO `json:"morning,omitempty" jsonschema:"the whole morning rule; replaces the current one"`
-	Reason              string         `json:"reason" jsonschema:"the owner's words where possible"`
+	ClosedByDefault     *bool           `json:"closed_by_default,omitempty"`
+	DistractionTimes    *[]WindowIO     `json:"distraction_times,omitempty" jsonschema:"the whole list of daily distraction times; replaces the current one"`
+	AddOpenAddresses    []string        `json:"add_open_addresses,omitempty" jsonschema:"page addresses to keep open, such as https://www.youtube.com/watch?v=..."`
+	RemoveOpenAddresses []string        `json:"remove_open_addresses,omitempty"`
+	LockUntilPlanned    *bool           `json:"lock_until_planned,omitempty" jsonschema:"lock everything but the essentials from waking until the day is planned"`
+	Outside             *OutsideRuleIO  `json:"outside,omitempty" jsonschema:"the whole outside rule; replaces the current one"`
+	OpeningRule         *OpeningRuleIO  `json:"opening_rule,omitempty" jsonschema:"the whole opening rule; replaces the current one"`
+	Morning             *MorningRuleIO  `json:"morning,omitempty" jsonschema:"the whole morning rule; replaces the current one"`
+	SettingsLock        *SettingsLockIO `json:"settings_lock,omitempty" jsonschema:"the whole settings lock; replaces the current one"`
+	Bedtime             *BedtimeIO      `json:"bedtime,omitempty" jsonschema:"bed hours; replaces the current ones"`
+	Reason              string          `json:"reason" jsonschema:"the owner's words where possible"`
 }
 
 type SetBlockingScheduleOutput struct {
@@ -173,7 +218,7 @@ func scheduleOutput(ctx context.Context, repository store.Repository, config pol
 		return BlockingScheduleOutput{}, err
 	}
 	output := BlockingScheduleOutput{ClosedByDefault: config.ClosedByDefault, DistractionTimes: []WindowIO{}, OpenAddresses: []string{}, Openings: []OpeningOutput{},
-		LockUntilPlanned: config.PlanGate.FromWake, Essentials: []string{}, Timezone: config.Timezone, Notes: scheduleNotes + " " + openingNotes}
+		LockUntilPlanned: config.PlanGate.FromWake, Essentials: []string{}, Timezone: config.Timezone, Notes: scheduleNotes + " " + openingNotes + " " + lockNotes}
 	labels, err := repository.ListActivityLabels(ctx)
 	if err != nil {
 		return BlockingScheduleOutput{}, err
@@ -216,6 +261,14 @@ func scheduleOutput(ctx context.Context, repository store.Repository, config pol
 	if scanned != nil && scanned.In(location).Format("2006-01-02") == today.Format("2006-01-02") {
 		output.Morning.ScannedAt = scanned.In(location).Format("15:04")
 	}
+	lock := config.SettingsLockAt(now)
+	output.SettingsLock.Rule = SettingsLockIO{Enabled: lock.Enabled, Windows: windowsIO(lock.Windows), PinWindows: windowsIO(lock.PinWindows), UnlockMinutes: lock.UnlockMinutes}
+	if output.SettingsLock.State, err = repository.SettingsLock(ctx); err != nil {
+		return BlockingScheduleOutput{}, err
+	}
+	output.SettingsLock.Locked = output.SettingsLock.State.Locked
+	bedtime := config.BedtimeAt(now)
+	output.Bedtime = BedtimeIO{Enabled: bedtime.Enabled, Start: bedtime.Start, End: bedtime.End}
 	rule := config.OutsideAt(now)
 	output.Outside = OutsideOutput{Rule: outsideIO(rule), Notes: outsideNotes}
 	if config.OutsideNext != nil && config.OutsideNextFrom > now.In(location).Format("2006-01-02") {
@@ -235,7 +288,7 @@ func scheduleOutput(ctx context.Context, repository store.Repository, config pol
 func addScheduleTools(server *mcp.Server, repository store.Repository, now func() time.Time) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "blocking_schedule",
-		Description: "When distractions are closed: the closed-by-default switch, the daily distraction times, pages kept open, openings in force or waiting, the opening rule, the morning code rule, and the outside rule with today's time outside. " + scheduleNotes + " " + outsideNotes + " " + openingNotes,
+		Description: "When distractions are closed: the closed-by-default switch, the daily distraction times, pages kept open, openings in force or waiting, the opening rule, the morning code rule, and the outside rule with today's time outside. " + scheduleNotes + " " + outsideNotes + " " + openingNotes + " " + lockNotes,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ BlockingScheduleInput) (*mcp.CallToolResult, BlockingScheduleOutput, error) {
 		config := policy.Config{}
 		stored, err := repository.LatestPolicy(ctx)
@@ -250,7 +303,7 @@ func addScheduleTools(server *mcp.Server, repository store.Repository, now func(
 	})
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "set_blocking_schedule",
-		Description: "Turn closed-by-default on or off, set the daily distraction times, change which pages stay open, or set the outside, opening or morning rule. " + scheduleNotes + " " + outsideNotes + " " + openingNotes + " " + approvalRule,
+		Description: "Turn closed-by-default on or off, set the daily distraction times, change which pages stay open, or set the outside, opening or morning rule. " + scheduleNotes + " " + outsideNotes + " " + openingNotes + " " + lockNotes + " " + approvalRule,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input SetBlockingScheduleInput) (*mcp.CallToolResult, SetBlockingScheduleOutput, error) {
 		change := store.ScheduleChange{ClosedByDefault: input.ClosedByDefault, AddOpenAddresses: input.AddOpenAddresses, RemoveOpenAddresses: input.RemoveOpenAddresses}
 		if input.DistractionTimes != nil {
@@ -264,6 +317,12 @@ func addScheduleTools(server *mcp.Server, repository store.Repository, now func(
 		if rule := input.OpeningRule; rule != nil {
 			change.OpeningRule = (*policy.OpeningRule)(rule)
 		}
+		if lock := input.SettingsLock; lock != nil {
+			change.SettingsLock = &policy.SettingsLock{Enabled: lock.Enabled, Windows: policyWindows(lock.Windows), PinWindows: policyWindows(lock.PinWindows), UnlockMinutes: lock.UnlockMinutes}
+		}
+		if bedtime := input.Bedtime; bedtime != nil {
+			change.Bedtime = &policy.Bedtime{Enabled: bedtime.Enabled, Start: bedtime.Start, End: bedtime.End}
+		}
 		if rule := input.Morning; rule != nil {
 			change.Morning = &policy.MorningRule{Enabled: rule.Enabled, FromWake: rule.FromWake, From: rule.From, Until: rule.Until, LockAll: rule.LockAll}
 		}
@@ -271,7 +330,7 @@ func addScheduleTools(server *mcp.Server, repository store.Repository, now func(
 			change.Outside = &policy.OutsideRule{Enabled: rule.Enabled, Minutes: rule.Minutes, Meters: rule.Meters, Holds: rule.Holds, FromWake: rule.FromWake,
 				From: rule.From, Until: rule.Until, WatchOnly: rule.WatchOnly, OnFoot: rule.OnFoot, AllowOpenings: rule.AllowOpenings}
 		}
-		if change.ClosedByDefault == nil && change.DistractionTimes == nil && change.LockUntilPlanned == nil && change.Outside == nil && change.OpeningRule == nil && change.Morning == nil && len(change.AddOpenAddresses)+len(change.RemoveOpenAddresses) == 0 {
+		if change.ClosedByDefault == nil && change.DistractionTimes == nil && change.LockUntilPlanned == nil && change.Outside == nil && change.OpeningRule == nil && change.Morning == nil && change.SettingsLock == nil && change.Bedtime == nil && len(change.AddOpenAddresses)+len(change.RemoveOpenAddresses) == 0 {
 			return nil, SetBlockingScheduleOutput{}, errors.New("nothing to change")
 		}
 		if change.LockUntilPlanned != nil && *change.LockUntilPlanned {

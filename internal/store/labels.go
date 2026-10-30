@@ -183,6 +183,12 @@ func (p *Postgres) ListActivityLabels(ctx context.Context) ([]ActivityLabel, err
 
 // RemoveActivityLabel is an owner action; the label's history is kept.
 func (p *Postgres) RemoveActivityLabel(ctx context.Context, id int64) error {
+	var label string
+	if err := p.pool.QueryRow(ctx, `SELECT label FROM activity_labels WHERE id = $1 AND removed_at IS NULL`, id).Scan(&label); err == nil {
+		if _, err := refuseIfLocked(ctx, p.pool, label == policy.LabelDistraction); err != nil {
+			return err
+		}
+	}
 	tag, err := p.pool.Exec(ctx, `UPDATE activity_labels SET removed_at = now() WHERE id = $1 AND removed_at IS NULL`, id)
 	if err != nil {
 		return err

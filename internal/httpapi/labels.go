@@ -75,6 +75,8 @@ func (s *Server) removeActivityLabel(writer http.ResponseWriter, request *http.R
 	}
 	if err := s.repository.RemoveActivityLabel(request.Context(), id); errors.Is(err, store.ErrNotFound) {
 		writeError(writer, http.StatusNotFound, "not_found", "label does not exist")
+	} else if errors.Is(err, store.ErrSettingsLocked) {
+		writeError(writer, http.StatusLocked, "settings_locked", err.Error())
 	} else if err != nil {
 		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
 	} else {

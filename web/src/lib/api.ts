@@ -792,3 +792,33 @@ export async function saveMorningRule(rule: MorningRule): Promise<RulesSaved> {
 export async function newMorningCode(): Promise<{ address: string; image: string }> {
   return request<{ address: string; image: string }>('/v1/morning/code', { method: 'POST' });
 }
+
+export type Window = { start: string; end: string };
+export type SettingsLock = { enabled: boolean; windows?: Window[]; pin_windows?: Window[]; unlock_minutes?: number };
+export type Bedtime = { enabled: boolean; start?: string; end?: string };
+export type LockState = { locked: boolean; until?: string; unlocked_until?: string; pin_set: boolean; pin_open: boolean; tries_left: number };
+export type LockResponse = {
+  lock: SettingsLock; lock_next?: SettingsLock; lock_next_from?: string;
+  bedtime: Bedtime; bedtime_next?: Bedtime; bedtime_next_from?: string; state: LockState;
+};
+
+export async function getLock(): Promise<LockResponse> {
+  return request<LockResponse>('/v1/lock');
+}
+
+export async function saveLock(input: { lock?: SettingsLock; bedtime?: Bedtime }): Promise<LockResponse> {
+  return request<LockResponse>('/v1/lock', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input)
+  });
+}
+
+export async function setPin(current: string, pin: string): Promise<void> {
+  await request('/v1/lock/pin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current, pin }) });
+}
+
+export async function unlockWithPin(pin: string): Promise<string> {
+  const result = await request<{ unlocked_until: string }>('/v1/lock/unlock', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin })
+  });
+  return result.unlocked_until;
+}

@@ -95,6 +95,14 @@ type Config struct {
 	Morning         MorningRule  `json:"morning,omitempty"`
 	MorningNext     *MorningRule `json:"morning_next,omitempty"`
 	MorningNextFrom string       `json:"morning_next_from,omitempty"`
+	// SettingsLock keeps blocking from being loosened at set times.
+	SettingsLock         SettingsLock  `json:"settings_lock,omitempty"`
+	SettingsLockNext     *SettingsLock `json:"settings_lock_next,omitempty"`
+	SettingsLockNextFrom string        `json:"settings_lock_next_from,omitempty"`
+	// Bedtime locks the screens during bed hours without closing anything.
+	Bedtime         Bedtime  `json:"bedtime,omitempty"`
+	BedtimeNext     *Bedtime `json:"bedtime_next,omitempty"`
+	BedtimeNextFrom string   `json:"bedtime_next_from,omitempty"`
 }
 
 // NormalizeAddress reduces a URL or address to host and path without scheme
@@ -211,7 +219,10 @@ type Decision struct {
 	Reason        string    `json:"reason"`
 	PolicyVersion int64     `json:"policy_version"`
 	// BlockAll means everything except essentials is blocked (gates).
-	BlockAll      bool     `json:"block_all"`
+	BlockAll bool `json:"block_all"`
+	// LockScreen asks desktops to lock the screen when someone uses them,
+	// closing nothing.
+	LockScreen    bool     `json:"lock_screen,omitempty"`
 	BlockedGroups []string `json:"blocked_groups"`
 	Blocked       Targets  `json:"blocked"`
 	AlwaysAllowed Targets  `json:"always_allowed"`
@@ -296,6 +307,20 @@ func (c *Config) Normalize() error {
 		}
 	}
 	for _, rule := range []*OpeningRule{&c.OpeningRule, c.OpeningRuleNext} {
+		if rule != nil {
+			if err := rule.Normalize(); err != nil {
+				return err
+			}
+		}
+	}
+	for _, rule := range []*SettingsLock{&c.SettingsLock, c.SettingsLockNext} {
+		if rule != nil {
+			if err := rule.Normalize(); err != nil {
+				return err
+			}
+		}
+	}
+	for _, rule := range []*Bedtime{&c.Bedtime, c.BedtimeNext} {
 		if rule != nil {
 			if err := rule.Normalize(); err != nil {
 				return err
@@ -413,6 +438,15 @@ func evaluate(config Config, version int64, facts Facts, at time.Time) Decision 
 		decision.Reason = "Emergency unlock until " + clock(emergency.Until) + "."
 		decision.Basis = append(decision.Basis, "emergency")
 		decision.Blocked = emptyTargets()
+		return decision
+	}
+	if end, in := bedtimeEnd(config.BedtimeAt(at), location, at); in {
+		decision.Mode = ModeBedtime
+		decision.BlockAll = len(config.Essentials) > 0
+		decision.LockScreen = true
+		decision.Reason = "Bedtime until " + clock(end) + ". Screens lock; nothing is closed."
+		decision.Basis = append(decision.Basis, "bedtime")
+		blockDistractions(nil)
 		return decision
 	}
 	for _, gate := range facts.Gates {

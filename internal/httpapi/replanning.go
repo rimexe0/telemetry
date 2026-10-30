@@ -126,6 +126,8 @@ func proposalID(writer http.ResponseWriter, request *http.Request) (int64, bool)
 
 func writeProposalError(writer http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, store.ErrSettingsLocked):
+		writeError(writer, http.StatusLocked, "settings_locked", err.Error())
 	case errors.Is(err, store.ErrNotFound):
 		writeError(writer, http.StatusNotFound, "not_found", "plan or proposal does not exist")
 	case errors.Is(err, store.ErrProposalStale):

@@ -119,6 +119,9 @@ type Repository interface {
 	EndOpening(context.Context, int64) (Opening, error)
 	ConfirmOpening(context.Context, int64) (Opening, error)
 	CreateMorningCode(context.Context) (string, error)
+	SettingsLock(context.Context) (SettingsLockState, error)
+	SetSettingsPin(context.Context, string, string) error
+	UnlockSettings(context.Context, string) (time.Time, error)
 	ScanMorningCode(context.Context, string) (bool, error)
 	MorningCodeMade(context.Context) (*time.Time, error)
 	LatestMorningScan(context.Context, time.Time) (*time.Time, error)

@@ -152,3 +152,47 @@ func TestPostgresOpeningNeedsItsConfirmations(t *testing.T) {
 		t.Fatalf("a confirmed opening did not open: %+v", active)
 	}
 }
+
+func TestPostgresSettingsLockRefusesLooseningUntilThePin(t *testing.T) {
+	ctx, database := openCleanIntegration(t)
+	on := true
+	if _, _, err := database.ApplyBlockingSchedule(ctx, ScheduleChange{ClosedByDefault: &on}, "closed"); err != nil {
+		t.Fatal(err)
+	}
+	lock := policy.SettingsLock{Enabled: true, UnlockMinutes: 10}
+	if _, _, err := database.ApplyBlockingSchedule(ctx, ScheduleChange{SettingsLock: &lock}, "lock"); !errors.Is(err, ErrInvalidAgentChange) {
+		t.Fatalf("a lock without a PIN = %v", err)
+	}
+	if err := database.SetSettingsPin(ctx, "", "482913"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := database.ApplyBlockingSchedule(ctx, ScheduleChange{SettingsLock: &lock}, "lock"); err != nil {
+		t.Fatal(err)
+	}
+	off := false
+	if _, _, err := database.ApplyBlockingSchedule(ctx, ScheduleChange{ClosedByDefault: &off}, "open"); !errors.Is(err, ErrSettingsLocked) {
+		t.Fatalf("switching off while locked = %v", err)
+	}
+	if _, _, err := database.OpenNow(ctx, Opening{Purpose: "x", Everything: true, Until: time.Now().Add(time.Minute)}, "x"); !errors.Is(err, ErrSettingsLocked) {
+		t.Fatalf("an opening while locked = %v", err)
+	}
+	if _, err := database.ApplyBlocklistChange(ctx, []policy.BlocklistChange{{Action: "unlist", AndroidPackage: "com.example.feed"}}, "x"); !errors.Is(err, ErrSettingsLocked) {
+		t.Fatalf("unblocking while locked = %v", err)
+	}
+	if _, err := database.ApplyBlocklistChange(ctx, []policy.BlocklistChange{{Action: "block", AndroidPackage: "com.example.feed"}}, "x"); err != nil {
+		t.Fatalf("blocking more while locked = %v", err)
+	}
+	if err := database.SetSettingsPin(ctx, "000000", "111111"); !errors.Is(err, ErrSettingsLocked) {
+		t.Fatalf("changing the PIN without the current one = %v", err)
+	}
+	if _, err := database.UnlockSettings(ctx, "123456"); !errors.Is(err, ErrSettingsLocked) {
+		t.Fatalf("a wrong PIN = %v", err)
+	}
+	// Two wrong tries so far; the right PIN still works.
+	if _, err := database.UnlockSettings(ctx, "482913"); err != nil {
+		t.Fatal(err)
+	}
+	if _, config, err := database.ApplyBlockingSchedule(ctx, ScheduleChange{ClosedByDefault: &off}, "open"); err != nil || config.ClosedByDefault {
+		t.Fatalf("after the PIN = %+v, %v", config.ClosedByDefault, err)
+	}
+}

@@ -63,6 +63,10 @@ function fixtureExecution() {
   const openings: Record<string, any>[] = [];
   let morningRule: Record<string, any> = { enabled: false, from_wake: true, until: '11:00', lock_all: true };
   let morningMade: string | undefined;
+  let lockRule: Record<string, any> = { enabled: false };
+  let bedtime: Record<string, any> = { enabled: false };
+  let fixturePin = '';
+  const lockState: Record<string, any> = { locked: false, pin_set: false, pin_open: true, tries_left: 3 };
   // A 1x1 placeholder; the real server draws the code.
   const fixtureQR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==';
   let policyVersion = 2;
@@ -197,6 +201,19 @@ function fixtureExecution() {
         morningMade = new Date().toISOString();
         return [201, { address: 'http://127.0.0.1/morning?code=fixture', image: fixtureQR }];
       }
+      if (path === '/lock' && method === 'GET') return [200, { lock: lockRule, bedtime, state: lockState }];
+      if (path === '/lock' && method === 'PUT') {
+        if (body.lock) { if (body.lock.enabled && !lockState.pin_set) return [400, { error: { detail: 'set the PIN in the panel before turning the settings lock on' } }]; lockRule = body.lock; lockState.locked = body.lock.enabled; }
+        if (body.bedtime) bedtime = body.bedtime;
+        return [200, { lock: lockRule, bedtime, state: lockState }];
+      }
+      if (path === '/lock/pin' && method === 'POST') { if (fixturePin && body.current !== fixturePin) return [423, { error: { detail: 'blocking settings are locked: wrong PIN' } }]; fixturePin = body.pin; lockState.pin_set = true; return [200, { pin_set: true }]; }
+      if (path === '/lock/unlock' && method === 'POST') {
+        if (body.pin !== fixturePin) { lockState.tries_left = Math.max(0, lockState.tries_left - 1); return [423, { error: { detail: `blocking settings are locked: wrong PIN, ${lockState.tries_left} tries left this hour` } }]; }
+        const until = new Date(Date.now() + (lockRule.unlock_minutes ?? 15) * 60_000).toISOString();
+        lockState.locked = false; lockState.unlocked_until = until;
+        return [200, { unlocked_until: until }];
+      }
       if (path === '/planning/settings') return [200, { daily_plan_gate_enabled: true, enforcement_active: false }];
       if (path.startsWith('/activities')) return [200, { activities }];
       if (path === `/plans/${day}/replan-proposals` && method === 'GET') return [200, { proposals: [...proposals].reverse() }];
@@ -280,7 +297,7 @@ function fixtureAPI(): Plugin {
           return;
         }
         const path = (request.url ?? '/').split('?')[0];
-        if (path.startsWith('/execution') || path.startsWith('/plans') || path.startsWith('/activities') || path.startsWith('/activity') || path.startsWith('/policy') || path.startsWith('/context-rules') || path.startsWith('/openings') || path.startsWith('/morning') || path === '/planning/settings') {
+        if (path.startsWith('/execution') || path.startsWith('/plans') || path.startsWith('/activities') || path.startsWith('/activity') || path.startsWith('/policy') || path.startsWith('/context-rules') || path.startsWith('/openings') || path.startsWith('/morning') || path.startsWith('/lock') || path === '/planning/settings') {
           let raw = '';
           request.on('data', chunk => raw += chunk);
           request.on('end', () => {
