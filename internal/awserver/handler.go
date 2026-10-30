@@ -25,6 +25,10 @@ type Handler struct {
 	Site func(host, address string) SiteDecision
 	// Status, when set, describes the decision in force for the extension.
 	Status func() BrowserStatus
+	// CheckIn, when set, hears each request from the Telemetry extension:
+	// the connection's remote address, and whether the extension may run in
+	// private windows when it said so.
+	CheckIn func(remote string, incognito *bool)
 }
 
 // BrowserStatus is what the extension shows in its popup.
@@ -64,6 +68,14 @@ func (h Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		}
 	}
 	if request.URL.Path == "/api/telemetry/status" && request.Method == http.MethodGet {
+		if h.CheckIn != nil && origin != "" {
+			var incognito *bool
+			if value := request.URL.Query().Get("incognito"); value != "" {
+				allowed := value == "1"
+				incognito = &allowed
+			}
+			h.CheckIn(request.RemoteAddr, incognito)
+		}
 		status := BrowserStatus{BlockingSites: []string{}}
 		if h.Status != nil {
 			status = h.Status()
@@ -74,6 +86,9 @@ func (h Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	if request.URL.Path == "/api/telemetry/site" && request.Method == http.MethodGet {
 		host := strings.ToLower(strings.TrimSpace(request.URL.Query().Get("host")))
 		decision := SiteDecision{Host: host}
+		if h.CheckIn != nil && origin != "" {
+			h.CheckIn(request.RemoteAddr, nil)
+		}
 		if h.Site != nil && host != "" {
 			decision = h.Site(host, request.URL.Query().Get("url"))
 		}

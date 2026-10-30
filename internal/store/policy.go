@@ -59,6 +59,11 @@ func (p *Postgres) SavePolicy(ctx context.Context, config policy.Config, note st
 		config.OpeningRule, config.OpeningRuleNext, config.OpeningRuleNextFrom = stored.OpeningRule, stored.OpeningRuleNext, stored.OpeningRuleNextFrom
 		config.Morning, config.MorningNext, config.MorningNextFrom = stored.Morning, stored.MorningNext, stored.MorningNextFrom
 		config = config.WithOutside(outside, now).WithOpeningRule(openingRule, now).WithMorning(morning, now)
+		lock, bedtime, extension := config.SettingsLockAt(now), config.BedtimeAt(now), config.ExtensionRuleAt(now)
+		config.SettingsLock, config.SettingsLockNext, config.SettingsLockNextFrom = stored.SettingsLock, stored.SettingsLockNext, stored.SettingsLockNextFrom
+		config.Bedtime, config.BedtimeNext, config.BedtimeNextFrom = stored.Bedtime, stored.BedtimeNext, stored.BedtimeNextFrom
+		config.Extension, config.ExtensionNext, config.ExtensionNextFrom = stored.Extension, stored.ExtensionNext, stored.ExtensionNextFrom
+		config = config.WithSettingsLock(lock, now).WithBedtime(bedtime, now).WithExtensionRule(extension, now)
 	}
 	if err := config.Normalize(); err != nil {
 		return PolicyVersion{}, fmt.Errorf("%w: %s", ErrInvalidPolicy, err)

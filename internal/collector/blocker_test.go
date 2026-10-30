@@ -186,3 +186,65 @@ func TestBedtimeLocksTheScreenOnlyWhenSomeoneUsesIt(t *testing.T) {
 		t.Fatal("no decision asks for a lock")
 	}
 }
+
+func TestBrowserWithoutAWorkingExtensionIsHiddenWhileSitesAreBlocked(t *testing.T) {
+	q, err := queue.Open(filepath.Join(t.TempDir(), "q.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Close()
+	host := Host{Queue: q, DeviceID: "mac"}
+	hidden, opened := []string{}, []string{}
+	blocker := &Blocker{
+		Hide:            func(title, _ string, _ int) { hidden = append(hidden, title) },
+		OpenExtensions:  func(id string) error { opened = append(opened, id); return nil },
+		AppOfConnection: func(string) (string, error) { return "net.imput.helium", nil },
+	}
+	decision := policy.Decision{Mode: policy.ModeClosed, RequireExtensionSeconds: 60, Blocked: policy.Targets{Domains: []string{"x.com"}}}
+	helium := desktop.Window{App: "Helium", BundleID: "net.imput.helium", Title: "GitHub", PID: 40}
+	// Helium was first seen two minutes ago, so check-ins made now are fresh.
+	start := time.Now().Add(-2 * time.Minute)
+	ctx := context.Background()
+
+	if blocker.hideBrowser(ctx, host, helium, decision, start) {
+		t.Fatal("hidden before its minute to start")
+	}
+	if !blocker.hideBrowser(ctx, host, helium, decision, start.Add(61*time.Second)) || len(opened) != 1 || len(hidden) != 1 {
+		t.Fatalf("no extension after a minute: hidden %v, opened %v", hidden, opened)
+	}
+	// Its Extensions page stays usable.
+	page := helium
+	page.Title = "Extensions"
+	if blocker.hideBrowser(ctx, host, page, decision, start.Add(62*time.Second)) {
+		t.Fatal("the Extensions page was hidden")
+	}
+	// Running but not allowed in private windows still hides it.
+	no, yes := false, true
+	blocker.ExtensionCheckIn("127.0.0.1:50000", &no)
+	if !blocker.hideBrowser(ctx, host, helium, decision, time.Now()) {
+		t.Fatal("not allowed in private windows, yet not hidden")
+	}
+	blocker.ExtensionCheckIn("127.0.0.1:50000", &yes)
+	if blocker.hideBrowser(ctx, host, helium, decision, time.Now()) {
+		t.Fatal("hidden although its extension runs")
+	}
+	// Quiet longer than allowed hides it again.
+	if !blocker.hideBrowser(ctx, host, helium, decision, time.Now().Add(61*time.Second)) {
+		t.Fatal("a quiet extension was not noticed")
+	}
+	// A browser that cannot run the extension is hidden once its minute is up.
+	safari := desktop.Window{App: "Safari", BundleID: "com.apple.Safari", Title: "Apple", PID: 41}
+	blocker.hideBrowser(ctx, host, safari, decision, start)
+	if !blocker.hideBrowser(ctx, host, safari, decision, start.Add(61*time.Second)) {
+		t.Fatal("Safari was not hidden")
+	}
+	// Nothing is asked when sites are not blocked, or for other apps.
+	free := policy.Decision{Mode: policy.ModeLeisure}
+	if blocker.hideBrowser(ctx, host, helium, free, start.Add(time.Hour)) {
+		t.Fatal("hidden in free time")
+	}
+	notes := desktop.Window{App: "Notes", BundleID: "com.apple.Notes", PID: 42}
+	if blocker.hideBrowser(ctx, host, notes, decision, start.Add(time.Hour)) {
+		t.Fatal("a non-browser was hidden")
+	}
+}

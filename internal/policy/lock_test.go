@@ -90,3 +90,26 @@ func TestLooserBedtime(t *testing.T) {
 		}
 	}
 }
+
+func TestExtensionRuleOnlyWhileSitesAreBlocked(t *testing.T) {
+	location, _ := time.LoadLocation("Europe/Istanbul")
+	config := outsideConfig(OutsideRule{})
+	config.Distractions[0].Domains = []string{"x.com"}
+	config.Extension = ExtensionRule{Enabled: true, QuietSeconds: 60}
+	if err := config.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	closed := Evaluate(config, 1, Facts{PlanExists: true}, time.Date(2026, 10, 30, 15, 0, 0, 0, location))
+	if closed.Mode != ModeClosed || closed.RequireExtensionSeconds != 60 {
+		t.Fatalf("closed: %+v", closed)
+	}
+	free := Evaluate(config, 1, Facts{PlanExists: true}, time.Date(2026, 10, 30, 21, 30, 0, 0, location))
+	if free.Mode != ModeLeisure || free.RequireExtensionSeconds != 0 {
+		t.Fatalf("distraction time: %+v", free)
+	}
+	if !(ExtensionRule{Enabled: true, QuietSeconds: 60}).Looser(ExtensionRule{Enabled: true, QuietSeconds: 120}) ||
+		!(ExtensionRule{Enabled: true, QuietSeconds: 60}).Looser(ExtensionRule{}) ||
+		(ExtensionRule{Enabled: true, QuietSeconds: 60}).Looser(ExtensionRule{Enabled: true, QuietSeconds: 30}) {
+		t.Fatal("looser")
+	}
+}

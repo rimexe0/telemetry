@@ -39,7 +39,8 @@ const lockNotes = "settings_lock is the owner's: during its windows (none means 
 	"including openings, labels that stop being distractions or become essential, unblocking apps, reverting stricter changes, and loosening any rule. " +
 	"Only a PIN held by someone else, entered in the panel during pin_windows, lifts it for unlock_minutes; you never ask for, hold or enter the PIN. " +
 	"When a change is refused because of the lock, say so plainly and do not look for another way to the same result. " +
-	"bedtime locks the owner's screens during its hours without closing anything, so agents keep running; the phone keeps only its essentials."
+	"bedtime locks the owner's screens during its hours without closing anything, so agents keep running; the phone keeps only its essentials. " +
+	"extension hides (never quits) a browser on the Mac whose Telemetry extension has been quiet for quiet_seconds while sites are blocked; its Extensions page stays usable to switch the extension back on."
 
 type WindowIO struct {
 	Start string `json:"start" jsonschema:"local HH:MM"`
@@ -84,6 +85,11 @@ type BedtimeIO struct {
 	Enabled bool   `json:"enabled"`
 	Start   string `json:"start,omitempty" jsonschema:"local HH:MM"`
 	End     string `json:"end,omitempty" jsonschema:"local HH:MM; at or before start means past midnight"`
+}
+
+type ExtensionIO struct {
+	Enabled      bool `json:"enabled"`
+	QuietSeconds int  `json:"quiet_seconds,omitempty" jsonschema:"seconds without the extension before the browser is hidden, 30 through 3600"`
 }
 
 type LockOutput struct {
@@ -137,6 +143,7 @@ type BlockingScheduleOutput struct {
 	Morning          MorningOutput     `json:"morning"`
 	SettingsLock     LockOutput        `json:"settings_lock"`
 	Bedtime          BedtimeIO         `json:"bedtime" jsonschema:"in force today"`
+	Extension        ExtensionIO       `json:"extension" jsonschema:"in force today"`
 	Notes            string            `json:"notes"`
 }
 
@@ -178,6 +185,7 @@ type SetBlockingScheduleInput struct {
 	Morning             *MorningRuleIO  `json:"morning,omitempty" jsonschema:"the whole morning rule; replaces the current one"`
 	SettingsLock        *SettingsLockIO `json:"settings_lock,omitempty" jsonschema:"the whole settings lock; replaces the current one"`
 	Bedtime             *BedtimeIO      `json:"bedtime,omitempty" jsonschema:"bed hours; replaces the current ones"`
+	Extension           *ExtensionIO    `json:"extension,omitempty" jsonschema:"the browser extension rule; replaces the current one"`
 	Reason              string          `json:"reason" jsonschema:"the owner's words where possible"`
 }
 
@@ -269,6 +277,7 @@ func scheduleOutput(ctx context.Context, repository store.Repository, config pol
 	output.SettingsLock.Locked = output.SettingsLock.State.Locked
 	bedtime := config.BedtimeAt(now)
 	output.Bedtime = BedtimeIO{Enabled: bedtime.Enabled, Start: bedtime.Start, End: bedtime.End}
+	output.Extension = ExtensionIO(config.ExtensionRuleAt(now))
 	rule := config.OutsideAt(now)
 	output.Outside = OutsideOutput{Rule: outsideIO(rule), Notes: outsideNotes}
 	if config.OutsideNext != nil && config.OutsideNextFrom > now.In(location).Format("2006-01-02") {
@@ -320,6 +329,9 @@ func addScheduleTools(server *mcp.Server, repository store.Repository, now func(
 		if lock := input.SettingsLock; lock != nil {
 			change.SettingsLock = &policy.SettingsLock{Enabled: lock.Enabled, Windows: policyWindows(lock.Windows), PinWindows: policyWindows(lock.PinWindows), UnlockMinutes: lock.UnlockMinutes}
 		}
+		if extension := input.Extension; extension != nil {
+			change.Extension = (*policy.ExtensionRule)(extension)
+		}
 		if bedtime := input.Bedtime; bedtime != nil {
 			change.Bedtime = &policy.Bedtime{Enabled: bedtime.Enabled, Start: bedtime.Start, End: bedtime.End}
 		}
@@ -330,7 +342,7 @@ func addScheduleTools(server *mcp.Server, repository store.Repository, now func(
 			change.Outside = &policy.OutsideRule{Enabled: rule.Enabled, Minutes: rule.Minutes, Meters: rule.Meters, Holds: rule.Holds, FromWake: rule.FromWake,
 				From: rule.From, Until: rule.Until, WatchOnly: rule.WatchOnly, OnFoot: rule.OnFoot, AllowOpenings: rule.AllowOpenings}
 		}
-		if change.ClosedByDefault == nil && change.DistractionTimes == nil && change.LockUntilPlanned == nil && change.Outside == nil && change.OpeningRule == nil && change.Morning == nil && change.SettingsLock == nil && change.Bedtime == nil && len(change.AddOpenAddresses)+len(change.RemoveOpenAddresses) == 0 {
+		if change.ClosedByDefault == nil && change.DistractionTimes == nil && change.LockUntilPlanned == nil && change.Outside == nil && change.OpeningRule == nil && change.Morning == nil && change.SettingsLock == nil && change.Bedtime == nil && change.Extension == nil && len(change.AddOpenAddresses)+len(change.RemoveOpenAddresses) == 0 {
 			return nil, SetBlockingScheduleOutput{}, errors.New("nothing to change")
 		}
 		if change.LockUntilPlanned != nil && *change.LockUntilPlanned {

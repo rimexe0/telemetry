@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getLock, saveLock, setPin, unlockWithPin, type Bedtime, type LockResponse } from './api';
+  import { getLock, saveLock, setPin, unlockWithPin, type Bedtime, type ExtensionRule, type LockResponse } from './api';
   import { formatWindows, parseWindows } from './lock';
 
   let data: LockResponse | null = null;
@@ -11,6 +11,7 @@
   let pinTimes = '';
   let unlockMinutes = 15;
   let bedtime: Bedtime = { enabled: false, start: '', end: '' };
+  let extension: ExtensionRule = { enabled: false, quiet_seconds: 60 };
   let currentPin = '';
   let newPin = '';
   let enteredPin = '';
@@ -25,6 +26,7 @@
       pinTimes = formatWindows(data.lock.pin_windows);
       unlockMinutes = data.lock.unlock_minutes || 15;
       bedtime = { ...data.bedtime };
+      extension = { enabled: data.extension?.enabled ?? false, quiet_seconds: data.extension?.quiet_seconds || 60 };
     } catch (cause) {
       error = cause instanceof Error ? cause.message : 'Unable to load the lock.';
     }
@@ -55,6 +57,10 @@
   const saveBedtime = () => act(async () => {
     const saved = await saveLock({ bedtime });
     return saved.bedtime_next_from ? `Saved. It asks less, so it starts on ${saved.bedtime_next_from}.` : 'Saved.';
+  });
+  const saveExtension = () => act(async () => {
+    const saved = await saveLock({ extension });
+    return saved.extension_next_from ? `Saved. It asks less, so it starts on ${saved.extension_next_from}.` : 'Saved.';
   });
   const savePin = () => act(async () => {
     await setPin(currentPin, newPin);
@@ -111,6 +117,14 @@
     <label>to <input type="time" bind:value={bedtime.end} /></label>
     <button disabled={busy}>Save</button>
     <span class="muted small">Screens lock when used; nothing is closed.</span>
+  </form>
+
+  <h4>Browser extension</h4>
+  <form class="row" on:submit|preventDefault={saveExtension}>
+    <label><input type="checkbox" bind:checked={extension.enabled} /> Hide a browser without it</label>
+    <label>after <input type="number" min="30" max="3600" bind:value={extension.quiet_seconds} /> s</label>
+    <button disabled={busy}>Save</button>
+    <span class="muted small">Only while sites are blocked; the browser is hidden, never quit, and its Extensions page stays open.</span>
   </form>
 </section>
 

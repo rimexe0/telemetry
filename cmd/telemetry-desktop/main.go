@@ -138,7 +138,7 @@ func buildModules(names, listen, t3Dir, t3Token, notices string, distractionsOnl
 	}
 	// The browser extension asks the local API; the blocker answers.
 	if api != nil && blocker != nil {
-		api.Site, api.Browser = blocker.SiteDecision, blocker.BrowserStatus
+		api.Site, api.Browser, api.CheckIn = blocker.SiteDecision, blocker.BrowserStatus, blocker.ExtensionCheckIn
 	}
 	// The tracker reads the answers the blocker already fetches.
 	if tracker != nil && blocker != nil {

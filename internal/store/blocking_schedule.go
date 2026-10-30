@@ -40,6 +40,8 @@ type ScheduleChange struct {
 	// SettingsLock and Bedtime replace those rules in the same way.
 	SettingsLock *policy.SettingsLock `json:"settings_lock,omitempty"`
 	Bedtime      *policy.Bedtime      `json:"bedtime,omitempty"`
+	// Extension replaces the rule that hides browsers without the extension.
+	Extension *policy.ExtensionRule `json:"extension,omitempty"`
 }
 
 // windowMinutes marks each minute of the day the windows cover.
@@ -90,7 +92,8 @@ func scheduleLoosens(config policy.Config, change ScheduleChange, now time.Time)
 		change.OpeningRule != nil && config.OpeningRuleAt(now).Looser(*change.OpeningRule) ||
 		change.Morning != nil && config.MorningAt(now).Looser(*change.Morning) ||
 		change.SettingsLock != nil && config.SettingsLockAt(now).Looser(*change.SettingsLock) ||
-		change.Bedtime != nil && config.BedtimeAt(now).Looser(*change.Bedtime)
+		change.Bedtime != nil && config.BedtimeAt(now).Looser(*change.Bedtime) ||
+		change.Extension != nil && config.ExtensionRuleAt(now).Looser(*change.Extension)
 }
 
 // applyScheduleTx writes a new policy version and returns the change that
@@ -176,7 +179,19 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 		bedtime = *change.Bedtime
 	}
 	config = config.WithBedtime(bedtime, now)
+	extension := config.ExtensionRuleAt(now)
+	if change.Extension != nil {
+		previous.Extension = &extension
+		if err := change.Extension.Normalize(); err != nil {
+			return ScheduleChange{}, config, 0, fmt.Errorf("%w: %s", ErrInvalidAgentChange, err)
+		}
+		extension = *change.Extension
+	}
+	config = config.WithExtensionRule(extension, now)
 	if immediate {
+		if change.Extension != nil {
+			config.Extension, config.ExtensionNext, config.ExtensionNextFrom = *change.Extension, nil, ""
+		}
 		// Unlocked with the PIN: what was asked applies today.
 		if change.Outside != nil {
 			config.Outside, config.OutsideNext, config.OutsideNextFrom = *change.Outside, nil, ""

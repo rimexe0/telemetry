@@ -796,17 +796,19 @@ export async function newMorningCode(): Promise<{ address: string; image: string
 export type Window = { start: string; end: string };
 export type SettingsLock = { enabled: boolean; windows?: Window[]; pin_windows?: Window[]; unlock_minutes?: number };
 export type Bedtime = { enabled: boolean; start?: string; end?: string };
+export type ExtensionRule = { enabled: boolean; quiet_seconds?: number };
 export type LockState = { locked: boolean; until?: string; unlocked_until?: string; pin_set: boolean; pin_open: boolean; tries_left: number };
 export type LockResponse = {
   lock: SettingsLock; lock_next?: SettingsLock; lock_next_from?: string;
   bedtime: Bedtime; bedtime_next?: Bedtime; bedtime_next_from?: string; state: LockState;
+  extension: ExtensionRule; extension_next?: ExtensionRule; extension_next_from?: string;
 };
 
 export async function getLock(): Promise<LockResponse> {
   return request<LockResponse>('/v1/lock');
 }
 
-export async function saveLock(input: { lock?: SettingsLock; bedtime?: Bedtime }): Promise<LockResponse> {
+export async function saveLock(input: { lock?: SettingsLock; bedtime?: Bedtime; extension?: ExtensionRule }): Promise<LockResponse> {
   return request<LockResponse>('/v1/lock', {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input)
   });

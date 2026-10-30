@@ -102,7 +102,7 @@ func Timeline(config Config, version int64, facts Facts, from, to time.Time) []S
 				}
 			}
 		}
-		for _, date := range []string{config.OutsideNextFrom, config.MorningNextFrom, config.BedtimeNextFrom} {
+		for _, date := range []string{config.OutsideNextFrom, config.MorningNextFrom, config.BedtimeNextFrom, config.ExtensionNextFrom} {
 			if date == "" {
 				continue
 			}

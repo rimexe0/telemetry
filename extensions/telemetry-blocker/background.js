@@ -4,6 +4,18 @@
 const COLLECTOR = "http://127.0.0.1:5600/api/telemetry/site?host=";
 const STATUS = "http://127.0.0.1:5600/api/telemetry/status";
 
+// The status request is also this browser checking in: the collector hides
+// a browser whose extension stays quiet while sites are blocked. It says
+// whether the extension may run in private windows, since without that
+// those windows are not covered.
+async function statusAddress() {
+  let incognito = false;
+  try {
+    incognito = await chrome.extension.isAllowedIncognitoAccess();
+  } catch {}
+  return STATUS + "?incognito=" + (incognito ? "1" : "0");
+}
+
 // The page address goes along so a single page of a closed site can stay
 // open, such as one music stream.
 async function decision(host, address) {
@@ -42,7 +54,7 @@ async function refreshTabs() {
 // The badge shows whether sites are being closed right now.
 async function badge() {
   try {
-    const response = await fetch(STATUS, { cache: "no-store" });
+    const response = await fetch(await statusAddress(), { cache: "no-store" });
     const status = await response.json();
     const blocking = status.connected && (status.block_all || status.blocking_sites.length > 0);
     chrome.action.setBadgeText({ text: blocking ? "ON" : "" });
@@ -53,10 +65,12 @@ async function badge() {
   }
 }
 
-chrome.alarms.create("recheck", { periodInMinutes: 1 });
+// Every 30 seconds, the shortest alarm Chrome allows.
+chrome.alarms.create("recheck", { periodInMinutes: 0.5 });
 chrome.alarms.onAlarm.addListener(() => {
   badge();
   refreshTabs();
 });
+chrome.runtime.onStartup.addListener(badge);
 badge();
 refreshTabs();

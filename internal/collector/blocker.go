@@ -40,6 +40,13 @@ type Blocker struct {
 	DistractionsOnly bool
 	// Lock locks the screen; desktop.LockScreen when unset.
 	Lock func() error
+	// OpenExtensions opens a browser's Extensions page; AppOfConnection
+	// finds the app behind an extension's request. Both default to the
+	// desktop package.
+	OpenExtensions  func(bundleID string) error
+	Hide            func(title, reason string, pid int)
+	AppOfConnection func(remote string) (string, error)
+	extensions      extensionState
 
 	health    Health
 	mu        sync.Mutex
@@ -289,6 +296,9 @@ func (b *Blocker) enforce(ctx context.Context, host Host, window desktop.Window,
 	decision := DecisionAt(b.timeline, now)
 	b.mu.Unlock()
 	if window.BundleID == ownBundleID {
+		return
+	}
+	if decision != nil && b.hideBrowser(ctx, host, window, *decision, now) {
 		return
 	}
 	if decision == nil || !Blocks(*decision, window) {

@@ -103,6 +103,11 @@ type Config struct {
 	Bedtime         Bedtime  `json:"bedtime,omitempty"`
 	BedtimeNext     *Bedtime `json:"bedtime_next,omitempty"`
 	BedtimeNextFrom string   `json:"bedtime_next_from,omitempty"`
+	// Extension hides browsers whose extension is not running while sites
+	// are blocked.
+	Extension         ExtensionRule  `json:"extension,omitempty"`
+	ExtensionNext     *ExtensionRule `json:"extension_next,omitempty"`
+	ExtensionNextFrom string         `json:"extension_next_from,omitempty"`
 }
 
 // NormalizeAddress reduces a URL or address to host and path without scheme
@@ -222,10 +227,13 @@ type Decision struct {
 	BlockAll bool `json:"block_all"`
 	// LockScreen asks desktops to lock the screen when someone uses them,
 	// closing nothing.
-	LockScreen    bool     `json:"lock_screen,omitempty"`
-	BlockedGroups []string `json:"blocked_groups"`
-	Blocked       Targets  `json:"blocked"`
-	AlwaysAllowed Targets  `json:"always_allowed"`
+	LockScreen bool `json:"lock_screen,omitempty"`
+	// RequireExtensionSeconds asks desktops to hide a browser whose
+	// Telemetry extension has been quiet this long; zero asks nothing.
+	RequireExtensionSeconds int      `json:"require_extension_seconds,omitempty"`
+	BlockedGroups           []string `json:"blocked_groups"`
+	Blocked                 Targets  `json:"blocked"`
+	AlwaysAllowed           Targets  `json:"always_allowed"`
 	// OpenAddresses are pages that stay open although their site is blocked.
 	OpenAddresses []string `json:"open_addresses,omitempty"`
 	Basis         []string `json:"basis"`
@@ -320,6 +328,13 @@ func (c *Config) Normalize() error {
 			}
 		}
 	}
+	for _, rule := range []*ExtensionRule{&c.Extension, c.ExtensionNext} {
+		if rule != nil {
+			if err := rule.Normalize(); err != nil {
+				return err
+			}
+		}
+	}
 	for _, rule := range []*Bedtime{&c.Bedtime, c.BedtimeNext} {
 		if rule != nil {
 			if err := rule.Normalize(); err != nil {
@@ -356,6 +371,10 @@ func (f Facts) Validate() error {
 // Evaluate returns the decision at one instant: the decision the plan and
 // the schedule give, with the owner's current openings lifted from it.
 func Evaluate(config Config, version int64, facts Facts, at time.Time) Decision {
+	return withExtension(config, evaluateOpened(config, version, facts, at), at)
+}
+
+func evaluateOpened(config Config, version int64, facts Facts, at time.Time) Decision {
 	decision := evaluate(config, version, facts, at)
 	// Gates and emergencies are not touched by openings, and the outside
 	// rule only when the owner allowed it.
