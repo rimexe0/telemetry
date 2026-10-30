@@ -218,6 +218,12 @@ func TestBrowserWithoutAWorkingExtensionIsHiddenWhileSitesAreBlocked(t *testing.
 	if blocker.hideBrowser(ctx, host, page, decision, start.Add(62*time.Second)) {
 		t.Fatal("the Extensions page was hidden")
 	}
+	// A menu opened from it has no title and stays too.
+	menu := helium
+	menu.Title = ""
+	if blocker.hideBrowser(ctx, host, menu, decision, start.Add(63*time.Second)) {
+		t.Fatal("a menu on the Extensions page was hidden")
+	}
 	// Running but not allowed in private windows still hides it.
 	no, yes := false, true
 	blocker.ExtensionCheckIn("127.0.0.1:50000", &no)
@@ -257,6 +263,7 @@ func TestExtensionsPageIsRecognisedByItsTitle(t *testing.T) {
 		"chrome://extensions":                            true,
 		"chrome://extensions/?id=abc":                    true,
 		"Uzantılar - Helium - You":                       true,
+		"Extensions - Telemetry - Helium - You":          true,
 		"Extensions - YouTube - Helium - You":            false,
 		"Extensions for VS Code - Helium - You":          false,
 		"GitHub - Helium - You":                          false,

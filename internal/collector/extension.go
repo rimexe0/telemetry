@@ -33,9 +33,10 @@ var (
 // extensionsPage reports whether a browser window shows its Extensions page.
 // Chromium browsers put the tab title first and then their own parts, such
 // as "Extensions - Helium - You" or "Extensions - Part of group work -
-// Helium - You"; while loading the title is the address. A web page whose
-// title only starts with "Extensions" is followed by its site's name instead
-// and does not count.
+// Helium - You"; the Telemetry extension's own details page adds its name,
+// "Extensions - Telemetry - Helium - You". While loading the title is the
+// address. A web page whose title only starts with "Extensions" is followed
+// by its site's name instead and does not count.
 func extensionsPage(title, browser string) bool {
 	title = strings.TrimSpace(title)
 	if strings.HasPrefix(title, "chrome://extensions") {
@@ -46,6 +47,7 @@ func extensionsPage(title, browser string) bool {
 		if !found {
 			continue
 		}
+		rest = strings.TrimPrefix(rest, " - Telemetry")
 		if rest == "" || strings.HasPrefix(rest, " - "+browser) || strings.HasPrefix(rest, " - Part of group ") || strings.HasPrefix(rest, " - Audio playing") {
 			return true
 		}
@@ -60,13 +62,14 @@ type extensionState struct {
 	incognito map[string]bool      // bundle ID → may run in private windows
 	ports     map[string]string    // remote address → bundle ID
 	since     map[int]time.Time    // browser process → first seen in front
+	titles    map[int]string       // browser process → last window title that was not empty
 	opened    map[string]time.Time // bundle ID → last time its Extensions page was opened
 }
 
 func (s *extensionState) init() {
 	if s.seen == nil {
 		*s = extensionState{seen: map[string]time.Time{}, incognito: map[string]bool{}, ports: map[string]string{},
-			since: map[int]time.Time{}, opened: map[string]time.Time{}}
+			since: map[int]time.Time{}, opened: map[string]time.Time{}, titles: map[int]string{}}
 	}
 }
 
@@ -110,11 +113,26 @@ func (b *Blocker) hideBrowser(ctx context.Context, host Host, window desktop.Win
 	if !canRun {
 		name = otherBrowsers[window.BundleID]
 	}
-	if limit == 0 || name == "" || extensionsPage(window.Title, name) {
+	if limit == 0 || name == "" {
 		return false
 	}
 	b.mu.Lock()
 	b.extensions.init()
+	// A menu or dropdown opened from a page has no title; it belongs to the
+	// page shown just before.
+	title := window.Title
+	if strings.TrimSpace(title) == "" {
+		title = b.extensions.titles[window.PID]
+	} else {
+		if len(b.extensions.titles) > 100 {
+			b.extensions.titles = map[int]string{}
+		}
+		b.extensions.titles[window.PID] = title
+	}
+	if extensionsPage(title, name) {
+		b.mu.Unlock()
+		return false
+	}
 	first, ok := b.extensions.since[window.PID]
 	if !ok {
 		if len(b.extensions.since) > 100 {
@@ -139,7 +157,7 @@ func (b *Blocker) hideBrowser(ctx context.Context, host Host, window desktop.Win
 	case canRun && running && (!said || !incognito):
 		reason = "Allow the Telemetry extension in private windows: on " + name + "'s Extensions page, open Telemetry's Details and turn on Allow in Incognito. Its Extensions page is opening."
 	case canRun:
-		reason = "The Telemetry extension is not running in " + name + ". Turn it on on " + name + "'s Extensions page, which is opening; " + name + " comes back once it runs."
+		reason = "The Telemetry extension is not running in " + name + ". On " + name + "'s Extensions page, which is opening, turn it on and set its Site access to On all sites; " + name + " comes back once it runs."
 	}
 	hide := b.Hide
 	if hide == nil {
