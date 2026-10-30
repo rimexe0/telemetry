@@ -263,12 +263,12 @@ var Problems = map[string]Problem{
 		return "Your phone has sent nothing to Telemetry since " + since + " while you were using the Mac, so tracking and blocking on the phone are probably not running. " +
 			"Open the Telemetry app on the phone once to restart it."
 	}},
-	// Stopping it is the easy way out of blocking, so it is told at once and
-	// again until it runs (owner decision 2026-10-15).
-	"stopped_while_on": {Grace: time.Minute, Repeat: StoppedRepeat, Message: func(device, since string, _ map[string]any) string {
+	// Told at once, then once a day at most like any other problem: telling
+	// it every 15 minutes became endless messages (owner decision 2026-10-30,
+	// replacing 2026-10-15).
+	"stopped_while_on": {Grace: time.Minute, Message: func(device, since string, _ map[string]any) string {
 		return "Telemetry on " + device + " has been stopped since " + since + " while " + device + " is on: nothing there is tracked or blocked. " +
-			"It starts itself again within a minute; if it does not, it was switched off in System Settings → General → Login Items → Telemetry Desktop, so switch it back on there. " +
-			"I will keep telling you every 15 minutes until it runs."
+			"It starts itself again within a minute; if it does not, it was switched off in System Settings → General → Login Items → Telemetry Desktop, so switch it back on there."
 	}},
 	"disk_low": {Grace: CollectionGrace, Message: func(_, _ string, detail map[string]any) string {
 		free, _ := detail["free_bytes"].(float64)
@@ -295,7 +295,6 @@ const PhoneSilentWhileActive = 20 * time.Minute
 const (
 	CollectionGrace  = 30 * time.Minute
 	CollectionRepeat = 24 * time.Hour
-	StoppedRepeat    = 15 * time.Minute
 )
 
 // Told is a collection message already delivered.

@@ -193,7 +193,7 @@ func TestMissedStartIsAskedOncePerBlock(t *testing.T) {
 	}
 }
 
-func TestStoppedWhileOnIsToldAgainUntilItRuns(t *testing.T) {
+func TestStoppedWhileOnIsToldAtOnceThenAtMostDaily(t *testing.T) {
 	started := time.Date(2026, 10, 15, 9, 0, 0, 0, time.UTC)
 	if CollectionDue(7, "mac-1", "stopped_while_on", started, started.Add(30*time.Second), nil) {
 		t.Fatal("told before its minute of grace")
@@ -203,11 +203,12 @@ func TestStoppedWhileOnIsToldAgainUntilItRuns(t *testing.T) {
 		t.Fatal("not told at once")
 	}
 	told := []Told{{Facts: CollectionMarker(7, "mac-1", "stopped_while_on"), At: now}}
-	if CollectionDue(7, "mac-1", "stopped_while_on", started, now.Add(10*time.Minute), told) {
-		t.Fatal("told again within 15 minutes")
+	if CollectionDue(7, "mac-1", "stopped_while_on", started, now.Add(16*time.Minute), told) {
+		t.Fatal("told again while the same stop lasts")
 	}
-	if !CollectionDue(7, "mac-1", "stopped_while_on", started, now.Add(16*time.Minute), told) {
-		t.Fatal("not told again after 15 minutes")
+	// A new stop a day later is told again.
+	if !CollectionDue(9, "mac-1", "stopped_while_on", started.Add(25*time.Hour), now.Add(25*time.Hour), told) {
+		t.Fatal("a new stop a day later was not told")
 	}
 	// Other problems are still told once.
 	once := []Told{{Facts: CollectionMarker(8, "mac-1", "titles_unreadable"), At: now}}
