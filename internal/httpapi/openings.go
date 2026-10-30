@@ -142,6 +142,31 @@ func (s *Server) endOpening(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusOK, map[string]any{"opening": ended})
 }
 
+// confirmOpening records one of the owner's confirmations of an opening;
+// the server refuses one given before its time.
+func (s *Server) confirmOpening(writer http.ResponseWriter, request *http.Request) {
+	if !s.ownerAuthorized(request) {
+		writeError(writer, http.StatusUnauthorized, "unauthorized", "owner credentials are required")
+		return
+	}
+	id, err := strconv.ParseInt(request.PathValue("id"), 10, 64)
+	if err != nil || id < 1 {
+		writeError(writer, http.StatusBadRequest, "invalid_id", "opening id must be a positive integer")
+		return
+	}
+	confirmed, err := s.repository.ConfirmOpening(request.Context(), id)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		writeError(writer, http.StatusNotFound, "not_found", "no such opening")
+	case errors.Is(err, store.ErrOpeningRefused):
+		writeError(writer, http.StatusConflict, "confirmation_refused", err.Error())
+	case err != nil:
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+	default:
+		writeJSON(writer, http.StatusOK, map[string]any{"opening": confirmed})
+	}
+}
+
 // scheduleRule sets the opening or morning rule through the blocking
 // schedule, so a looser one waits for the next day and the change is logged
 // and can be reverted.

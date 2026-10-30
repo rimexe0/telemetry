@@ -16,6 +16,11 @@ type OpeningRule struct {
 	// PerDay is how many openings may be made each local day. One ended
 	// before it started does not count.
 	PerDay int `json:"per_day,omitempty"`
+	// Confirmations is how many times the owner confirms, one page each,
+	// after the wait before an opening starts; ConfirmSeconds is how long
+	// each confirmation waits before it can be given.
+	Confirmations  int `json:"confirmations,omitempty"`
+	ConfirmSeconds int `json:"confirm_seconds,omitempty"`
 }
 
 func (r OpeningRule) Normalize() error {
@@ -26,15 +31,20 @@ func (r OpeningRule) Normalize() error {
 		return fmt.Errorf("%w: opening_rule.max_minutes must be between 0 and 1440", ErrInvalidConfig)
 	case r.PerDay < 0 || r.PerDay > 50:
 		return fmt.Errorf("%w: opening_rule.per_day must be between 0 and 50", ErrInvalidConfig)
+	case r.Confirmations < 0 || r.Confirmations > 30:
+		return fmt.Errorf("%w: opening_rule.confirmations must be between 0 and 30", ErrInvalidConfig)
+	case r.ConfirmSeconds < 0 || r.ConfirmSeconds > 120:
+		return fmt.Errorf("%w: opening_rule.confirm_seconds must be between 0 and 120", ErrInvalidConfig)
 	}
 	return nil
 }
 
 // Looser reports whether next asks less of the owner than r in any way: a
-// shorter wait, or a longer or removed limit.
+// shorter wait, fewer or quicker confirmations, or a longer or removed limit.
 func (r OpeningRule) Looser(next OpeningRule) bool {
 	raised := func(limit, next int) bool { return limit > 0 && (next == 0 || next > limit) }
-	return next.WaitMinutes < r.WaitMinutes || raised(r.MaxMinutes, next.MaxMinutes) || raised(r.PerDay, next.PerDay)
+	return next.WaitMinutes < r.WaitMinutes || raised(r.MaxMinutes, next.MaxMinutes) || raised(r.PerDay, next.PerDay) ||
+		next.Confirmations < r.Confirmations || next.ConfirmSeconds < r.ConfirmSeconds
 }
 
 // OpeningRuleAt is the opening rule in force at an instant.

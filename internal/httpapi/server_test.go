@@ -834,3 +834,16 @@ func (*fakeRepository) SearchMapPlaces(context.Context, store.PlaceQuery) ([]sto
 func (*fakeRepository) WatchTracks(context.Context, time.Time, time.Time) ([][]places.Fix, error) {
 	return nil, nil
 }
+
+func (f *fakeRepository) ConfirmOpening(_ context.Context, id int64) (store.Opening, error) {
+	for i := range f.openings {
+		if f.openings[i].ID == id {
+			if f.openings[i].Confirmed() {
+				return store.Opening{}, store.ErrOpeningRefused
+			}
+			f.openings[i].Confirmations++
+			return f.openings[i], nil
+		}
+	}
+	return store.Opening{}, store.ErrNotFound
+}

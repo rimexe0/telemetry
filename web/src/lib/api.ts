@@ -734,8 +734,11 @@ export async function decidePolicyProposal(proposal: Pick<PolicyProposal, 'id' |
   });
 }
 
-export type OpeningRule = { wait_minutes?: number; max_minutes?: number; per_day?: number };
-export type Opening = { id: number; purpose: string; sites: string[]; apps: string[]; everything: boolean; starts_at: string; until: string; ended_at?: string };
+export type OpeningRule = { wait_minutes?: number; max_minutes?: number; per_day?: number; confirmations?: number; confirm_seconds?: number };
+export type Opening = {
+  id: number; purpose: string; sites: string[]; apps: string[]; everything: boolean; starts_at: string; until: string; ended_at?: string;
+  confirmations_needed?: number; confirmations?: number; next_confirm_at?: string; length_minutes?: number;
+};
 export type OpeningsState = {
   rule: OpeningRule; next?: OpeningRule; next_from?: string; used_today: number;
   openings: Opening[]; distractions: TargetGroup[];
@@ -749,6 +752,11 @@ export async function createOpening(input: { purpose: string; group_ids: string[
   const result = await request<{ opening: Opening }>('/v1/openings', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input)
   });
+  return result.opening;
+}
+
+export async function confirmOpening(id: number): Promise<Opening> {
+  const result = await request<{ opening: Opening }>(`/v1/openings/${id}/confirm`, { method: 'POST' });
   return result.opening;
 }
 

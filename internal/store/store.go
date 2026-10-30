@@ -117,6 +117,7 @@ type Repository interface {
 	ActiveOpenings(context.Context, time.Time) ([]Opening, error)
 	OpeningsSince(context.Context, time.Time) (int, error)
 	EndOpening(context.Context, int64) (Opening, error)
+	ConfirmOpening(context.Context, int64) (Opening, error)
 	CreateMorningCode(context.Context) (string, error)
 	ScanMorningCode(context.Context, string) (bool, error)
 	MorningCodeMade(context.Context) (*time.Time, error)

@@ -425,3 +425,7 @@ func (fakeRepository) SearchMapPlaces(context.Context, store.PlaceQuery) ([]stor
 func (fakeRepository) WatchTracks(context.Context, time.Time, time.Time) ([][]places.Fix, error) {
 	return nil, nil
 }
+
+func (fakeRepository) ConfirmOpening(context.Context, int64) (store.Opening, error) {
+	return store.Opening{}, store.ErrNotFound
+}

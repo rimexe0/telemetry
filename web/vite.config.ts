@@ -58,7 +58,8 @@ function fixtureExecution() {
   const proposals: Record<string, any>[] = [];
   const rules: Record<string, any>[] = [];
   let eventId = 0;
-  let openingRule: Record<string, number> = { wait_minutes: 10, max_minutes: 30, per_day: 2 };
+  // Fixture numbers: no wait, so the confirmation pages show at once.
+  let openingRule: Record<string, number> = { wait_minutes: 0, max_minutes: 30, per_day: 2, confirmations: 10, confirm_seconds: 2 };
   const openings: Record<string, any>[] = [];
   let morningRule: Record<string, any> = { enabled: false, from_wake: true, until: '11:00', lock_all: true };
   let morningMade: string | undefined;
@@ -159,7 +160,10 @@ function fixtureExecution() {
         if (openingRule.max_minutes && body.minutes > openingRule.max_minutes) return [409, { error: { detail: `opening refused: an opening lasts at most ${openingRule.max_minutes} minutes` } }];
         if (openingRule.per_day && openings.length >= openingRule.per_day) return [409, { error: { detail: `opening refused: all ${openingRule.per_day} openings for today are used` } }];
         const starts = Date.now() + (openingRule.wait_minutes ?? 0) * 60_000;
-        openings.push({ id: openings.length + 1, purpose: body.purpose, sites: [], apps: [], everything: body.everything, starts_at: new Date(starts).toISOString(), until: new Date(starts + body.minutes * 60_000).toISOString(), created_at: created });
+        const needed = openingRule.confirmations ?? 0, seconds = openingRule.confirm_seconds ?? 0;
+        openings.push({ id: openings.length + 1, purpose: body.purpose, sites: [], apps: [], everything: body.everything, starts_at: new Date(starts).toISOString(),
+          until: new Date(starts + (needed ? 3_600_000 : body.minutes * 60_000)).toISOString(), created_at: created,
+          confirmations_needed: needed, confirmations: 0, confirm_seconds: seconds, length_minutes: body.minutes, next_confirm_at: needed ? new Date(starts + seconds * 1000).toISOString() : undefined });
         return [201, { opening: openings[openings.length - 1] }];
       }
       const endMatch = path.match(/^\/openings\/(\d+)\/end$/);
@@ -167,6 +171,20 @@ function fixtureExecution() {
         const opening = openings.find(row => row.id === Number(endMatch[1]));
         if (!opening) return [404, { error: { detail: 'no such opening' } }];
         opening.ended_at = new Date().toISOString();
+        return [200, { opening }];
+      }
+      const confirmMatch = path.match(/^\/openings\/(\d+)\/confirm$/);
+      if (confirmMatch && method === 'POST') {
+        const opening = openings.find(row => row.id === Number(confirmMatch[1]));
+        if (!opening) return [404, { error: { detail: 'no such opening' } }];
+        if (Date.now() < Date.parse(opening.next_confirm_at)) return [409, { error: { detail: 'opening refused: wait' } }];
+        opening.confirmations++;
+        opening.next_confirm_at = new Date(Date.now() + opening.confirm_seconds * 1000).toISOString();
+        if (opening.confirmations >= opening.confirmations_needed) {
+          opening.starts_at = new Date().toISOString();
+          opening.until = new Date(Date.now() + opening.length_minutes * 60_000).toISOString();
+          delete opening.next_confirm_at;
+        }
         return [200, { opening }];
       }
       if (path === '/openings/rule' && method === 'PUT') {

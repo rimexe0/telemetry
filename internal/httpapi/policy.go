@@ -145,7 +145,7 @@ func (s *Server) policyInputs(ctx context.Context, from, to time.Time) (policy.C
 			continue
 		}
 		if day.Equal(alignmentPlanDate(from)) {
-			facts.PlanExists = true
+			facts.PlanExists, facts.PlanEmpty = true, len(plan.Blocks) == 0
 		}
 		for _, block := range plan.Blocks {
 			kind := policy.BlockKindFree

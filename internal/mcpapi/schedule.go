@@ -18,7 +18,8 @@ const scheduleNotes = "When closed_by_default is on, everything labelled \"distr
 	"and say back what you opened and until when. Times are the owner's local time. " +
 	"lock_until_planned closes everything except what is labelled \"essential\" on every device from the moment the owner wakes (taken from the records, never asked) " +
 	"until the day has a plan; switched on during a day, it starts at the next waking; set_day_plan for that day opens it, and a day with no fixed times is planned with an empty list of blocks once its tasks are agreed. " +
-	"It cannot be turned on until the owner's way to reach you is labelled essential."
+	"It cannot be turned on until the owner's way to reach you is labelled essential. " +
+	"A day with no plan, or a plan with no blocks, keeps distractions closed whatever the schedule says outside distraction times: the owner asked that saying there is no plan never opens them."
 
 const outsideNotes = "The outside rule makes the owner go outside before things open: until they have been outside for minutes today (positions at least meters from home), " +
 	"it holds \"distractions\" closed (distraction times included), \"lock\" closes everything but the essentials, or both. It counts the watch's walks (only while worn) " +
@@ -28,7 +29,8 @@ const outsideNotes = "The outside rule makes the owner go outside before things 
 	"Tell them their progress from outside.today, and never shame them for not having gone out."
 
 const openingNotes = "opening_rule is the owner's: an opening starts wait_minutes after it is made, lasts at most max_minutes, and at most per_day are made each day " +
-	"(one ended before it started does not count; zero leaves that part out). It applies to open_now too, so say back when it starts as well as when it ends. " +
+	"(one ended before it started does not count; zero leaves that part out). With confirmations, an opening opens nothing until the owner confirms it that many times in the panel after the wait, " +
+	"each confirm_seconds apart; you cannot confirm it for them. It applies to open_now too, so say back when it can be confirmed and that it then needs the panel. " +
 	"morning closes everything but the essentials (lock_all) or the distractions from waking (from_wake) or a set time (from) until the owner scans the printed morning code, " +
 	"and gives up at until each day. Only the owner's scan opens it; neither you nor an opening can. The code is printed from the panel. " +
 	"As with the outside rule, a change to either that asks less waits for the next day; one that asks more applies at once."
@@ -52,6 +54,9 @@ type OpeningRuleIO struct {
 	WaitMinutes int `json:"wait_minutes" jsonschema:"minutes from asking until an opening starts, 0 through 240"`
 	MaxMinutes  int `json:"max_minutes" jsonschema:"longest an opening may last, 0 for no limit, up to 1440"`
 	PerDay      int `json:"per_day" jsonschema:"openings each day, 0 for no limit, up to 50"`
+	// Confirmations are given by the owner in the panel, one page each.
+	Confirmations  int `json:"confirmations" jsonschema:"times the owner confirms in the panel after the wait, 0 through 30"`
+	ConfirmSeconds int `json:"confirm_seconds" jsonschema:"seconds each confirmation waits before it can be given, 0 through 120"`
 }
 
 type MorningRuleIO struct {
@@ -257,7 +262,7 @@ func addScheduleTools(server *mcp.Server, repository store.Repository, now func(
 		}
 		change.LockUntilPlanned = input.LockUntilPlanned
 		if rule := input.OpeningRule; rule != nil {
-			change.OpeningRule = &policy.OpeningRule{WaitMinutes: rule.WaitMinutes, MaxMinutes: rule.MaxMinutes, PerDay: rule.PerDay}
+			change.OpeningRule = (*policy.OpeningRule)(rule)
 		}
 		if rule := input.Morning; rule != nil {
 			change.Morning = &policy.MorningRule{Enabled: rule.Enabled, FromWake: rule.FromWake, From: rule.From, Until: rule.Until, LockAll: rule.LockAll}

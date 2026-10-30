@@ -179,13 +179,15 @@ type Emergency struct {
 }
 
 type Facts struct {
-	PlanExists bool       `json:"plan_exists"`
-	PlanDate   string     `json:"plan_date,omitempty"`
-	Blocks     []Block    `json:"blocks,omitempty"`
-	Execution  *Execution `json:"execution,omitempty"`
-	Gates      []Gate     `json:"gates,omitempty"`
-	Urgent     *Urgent    `json:"urgent,omitempty"`
-	Openings   []Opening  `json:"openings,omitempty"`
+	PlanExists bool `json:"plan_exists"`
+	// PlanEmpty is a plan for the day with no blocks in it.
+	PlanEmpty bool       `json:"plan_empty,omitempty"`
+	PlanDate  string     `json:"plan_date,omitempty"`
+	Blocks    []Block    `json:"blocks,omitempty"`
+	Execution *Execution `json:"execution,omitempty"`
+	Gates     []Gate     `json:"gates,omitempty"`
+	Urgent    *Urgent    `json:"urgent,omitempty"`
+	Openings  []Opening  `json:"openings,omitempty"`
 	// WakeAt is when the owner's day started, when that is known.
 	WakeAt     *time.Time `json:"wake_at,omitempty"`
 	Emergency  *Emergency `json:"emergency,omitempty"`
@@ -513,6 +515,16 @@ func evaluate(config Config, version int64, facts Facts, at time.Time) Decision 
 			decision.Reason += " Distraction time starts at " + clock(next) + "."
 		}
 		decision.Basis = append(decision.Basis, "closed_by_default")
+		blockDistractions(nil)
+		return decision
+	}
+	// A day with nothing planned keeps distractions closed: saying there is
+	// no plan does not open them (owner request 2026-10-30).
+	// The plan gate's own end, when the owner set one, still frees the day.
+	if (!facts.PlanExists || facts.PlanEmpty) && !(config.PlanGate.Enabled && planGateEnded(config, location, at)) {
+		decision.Mode = ModeClosed
+		decision.Reason = "Nothing is planned today, so distractions stay closed."
+		decision.Basis = append(decision.Basis, "no_plan")
 		blockDistractions(nil)
 		return decision
 	}

@@ -122,3 +122,33 @@ func TestPostgresMorningCodes(t *testing.T) {
 		t.Fatalf("made = %v, %v", made, err)
 	}
 }
+
+func TestPostgresOpeningNeedsItsConfirmations(t *testing.T) {
+	ctx, database := openCleanIntegration(t)
+	rule := policy.OpeningRule{Confirmations: 2, ConfirmSeconds: 1}
+	if _, _, err := database.ApplyBlockingSchedule(ctx, ScheduleChange{OpeningRule: &rule}, "the owner's numbers"); err != nil {
+		t.Fatal(err)
+	}
+	_, opening, err := database.OpenNow(ctx, Opening{Purpose: "a call", Everything: true, Until: time.Now().Add(20 * time.Minute)}, "a call")
+	if err != nil || opening.Confirmed() || opening.NextConfirmAt == nil {
+		t.Fatalf("opening = %+v, %v", opening, err)
+	}
+	active, _ := database.ActiveOpenings(ctx, time.Now())
+	if len(PolicyOpenings(policy.Config{}, active)) != 0 {
+		t.Fatalf("an unconfirmed opening opened something: %+v", active)
+	}
+	if _, err := database.ConfirmOpening(ctx, opening.ID); !errors.Is(err, ErrOpeningRefused) {
+		t.Fatalf("a confirmation before its time = %v", err)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	if opening, err = database.ConfirmOpening(ctx, opening.ID); err != nil || opening.Confirmed() {
+		t.Fatalf("first = %+v, %v", opening, err)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	if opening, err = database.ConfirmOpening(ctx, opening.ID); err != nil || !opening.Confirmed() || opening.Until.Sub(opening.StartsAt).Round(time.Minute) != 20*time.Minute {
+		t.Fatalf("last = %+v, %v", opening, err)
+	}
+	if active, _ = database.ActiveOpenings(ctx, time.Now()); len(PolicyOpenings(policy.Config{}, active)) != 1 {
+		t.Fatalf("a confirmed opening did not open: %+v", active)
+	}
+}

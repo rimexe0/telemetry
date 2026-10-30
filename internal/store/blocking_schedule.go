@@ -177,16 +177,44 @@ type Opening struct {
 	Until      time.Time  `json:"until"`
 	CreatedAt  time.Time  `json:"created_at"`
 	EndedAt    *time.Time `json:"ended_at,omitempty"`
+	// An opening that needs confirmations opens nothing until the owner has
+	// given them all; StartsAt is then when the first may be given, and the
+	// opening runs LengthMinutes from the last one.
+	ConfirmationsNeeded int        `json:"confirmations_needed"`
+	Confirmations       int        `json:"confirmations"`
+	ConfirmSeconds      int        `json:"confirm_seconds"`
+	LastConfirmedAt     *time.Time `json:"last_confirmed_at,omitempty"`
+	LengthMinutes       int        `json:"length_minutes"`
+	// NextConfirmAt is when the next confirmation can be given.
+	NextConfirmAt *time.Time `json:"next_confirm_at,omitempty"`
 }
 
-const openingColumns = `id, purpose, sites, apps, everything, starts_at, until, created_at, ended_at`
+// Confirmed reports whether every confirmation the opening needs is given.
+func (o Opening) Confirmed() bool { return o.Confirmations >= o.ConfirmationsNeeded }
+
+// confirmableAt is when the next confirmation can be given: its seconds
+// after the wait for the first, after the last confirmation for the rest.
+func (o Opening) confirmableAt() time.Time {
+	from := o.StartsAt
+	if o.LastConfirmedAt != nil {
+		from = *o.LastConfirmedAt
+	}
+	return from.Add(time.Duration(o.ConfirmSeconds) * time.Second)
+}
+
+const openingColumns = `id, purpose, sites, apps, everything, starts_at, until, created_at, ended_at, confirmations_needed, confirmations, confirm_seconds, last_confirmed_at, length_minutes`
 
 // ErrOpeningRefused is an opening the owner's opening rule does not allow.
 var ErrOpeningRefused = errors.New("opening refused")
 
 func scanOpening(row pgx.Row) (Opening, error) {
 	var opening Opening
-	err := row.Scan(&opening.ID, &opening.Purpose, &opening.Sites, &opening.Apps, &opening.Everything, &opening.StartsAt, &opening.Until, &opening.CreatedAt, &opening.EndedAt)
+	err := row.Scan(&opening.ID, &opening.Purpose, &opening.Sites, &opening.Apps, &opening.Everything, &opening.StartsAt, &opening.Until, &opening.CreatedAt, &opening.EndedAt,
+		&opening.ConfirmationsNeeded, &opening.Confirmations, &opening.ConfirmSeconds, &opening.LastConfirmedAt, &opening.LengthMinutes)
+	if err == nil && !opening.Confirmed() {
+		next := opening.confirmableAt()
+		opening.NextConfirmAt = &next
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return opening, ErrNotFound
 	}
@@ -233,17 +261,8 @@ func (p *Postgres) OpenNow(ctx context.Context, opening Opening, reason string) 
 	if _, err := tx.Exec(ctx, `LOCK TABLE openings IN SHARE ROW EXCLUSIVE MODE`); err != nil {
 		return AgentChange{}, Opening{}, err
 	}
-	config := policy.Config{}
-	var raw []byte
-	if err := tx.QueryRow(ctx, `SELECT config FROM policy_versions ORDER BY id DESC LIMIT 1`).Scan(&raw); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return AgentChange{}, Opening{}, err
-	}
-	if raw != nil {
-		if err := json.Unmarshal(raw, &config); err != nil {
-			return AgentChange{}, Opening{}, err
-		}
-	}
-	if err := config.Normalize(); err != nil {
+	config, err := latestConfigTx(ctx, tx)
+	if err != nil {
 		return AgentChange{}, Opening{}, err
 	}
 	now := time.Now().UTC()
@@ -252,25 +271,20 @@ func (p *Postgres) OpenNow(ctx context.Context, opening Opening, reason string) 
 	if rule.MaxMinutes > 0 && length > time.Duration(rule.MaxMinutes)*time.Minute {
 		return AgentChange{}, Opening{}, fmt.Errorf("%w: an opening lasts at most %d minutes", ErrOpeningRefused, rule.MaxMinutes)
 	}
-	if rule.PerDay > 0 {
-		location, err := time.LoadLocation(config.Timezone)
-		if err != nil {
-			return AgentChange{}, Opening{}, err
-		}
-		local := now.In(location)
-		dayStart := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, location)
-		used, err := openingsSince(ctx, tx, dayStart)
-		if err != nil {
-			return AgentChange{}, Opening{}, err
-		}
-		if used >= rule.PerDay {
-			return AgentChange{}, Opening{}, fmt.Errorf("%w: all %d openings for today are used", ErrOpeningRefused, rule.PerDay)
-		}
+	if err := checkDayCount(ctx, tx, config, now); err != nil {
+		return AgentChange{}, Opening{}, err
 	}
 	opening.StartsAt = now.Add(time.Duration(rule.WaitMinutes) * time.Minute)
 	opening.Until = opening.StartsAt.Add(length)
-	saved, err := scanOpening(tx.QueryRow(ctx, `INSERT INTO openings (purpose, sites, apps, everything, starts_at, until) VALUES ($1, $2, $3, $4, $5, $6) RETURNING `+openingColumns,
-		opening.Purpose, opening.Sites, opening.Apps, opening.Everything, opening.StartsAt, opening.Until.UTC()))
+	opening.ConfirmationsNeeded, opening.ConfirmSeconds, opening.LengthMinutes = rule.Confirmations, rule.ConfirmSeconds, int(length/time.Minute)
+	if rule.Confirmations > 0 {
+		// Left unconfirmed, it lapses an hour after its confirmations could
+		// have been given.
+		opening.Until = opening.StartsAt.Add(time.Duration(rule.Confirmations*rule.ConfirmSeconds)*time.Second + time.Hour)
+	}
+	saved, err := scanOpening(tx.QueryRow(ctx, `INSERT INTO openings (purpose, sites, apps, everything, starts_at, until, confirmations_needed, confirm_seconds, length_minutes)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING `+openingColumns,
+		opening.Purpose, opening.Sites, opening.Apps, opening.Everything, opening.StartsAt, opening.Until.UTC(), opening.ConfirmationsNeeded, opening.ConfirmSeconds, opening.LengthMinutes))
 	if err != nil {
 		return AgentChange{}, Opening{}, err
 	}
@@ -281,13 +295,48 @@ func (p *Postgres) OpenNow(ctx context.Context, opening Opening, reason string) 
 	return logged, saved, tx.Commit(ctx)
 }
 
-// openingsSince counts the openings made since a time, leaving out those
-// ended before they started.
+func latestConfigTx(ctx context.Context, tx pgx.Tx) (policy.Config, error) {
+	config := policy.Config{}
+	var raw []byte
+	if err := tx.QueryRow(ctx, `SELECT config FROM policy_versions ORDER BY id DESC LIMIT 1`).Scan(&raw); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return config, err
+	}
+	if raw != nil {
+		if err := json.Unmarshal(raw, &config); err != nil {
+			return config, err
+		}
+	}
+	return config, config.Normalize()
+}
+
+// checkDayCount refuses an opening when the day's openings are used up.
+func checkDayCount(ctx context.Context, tx pgx.Tx, config policy.Config, now time.Time) error {
+	rule := config.OpeningRuleAt(now)
+	if rule.PerDay == 0 {
+		return nil
+	}
+	location, err := time.LoadLocation(config.Timezone)
+	if err != nil {
+		return err
+	}
+	local := now.In(location)
+	used, err := openingsSince(ctx, tx, time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, location))
+	if err != nil {
+		return err
+	}
+	if used >= rule.PerDay {
+		return fmt.Errorf("%w: all %d openings for today are used", ErrOpeningRefused, rule.PerDay)
+	}
+	return nil
+}
+
+// openingsSince counts the openings made since a time that opened: fully
+// confirmed and not ended before they started.
 func openingsSince(ctx context.Context, q interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }, since time.Time) (int, error) {
 	var used int
-	err := q.QueryRow(ctx, `SELECT count(*) FROM openings WHERE created_at >= $1 AND (ended_at IS NULL OR ended_at > starts_at)`, since).Scan(&used)
+	err := q.QueryRow(ctx, `SELECT count(*) FROM openings WHERE created_at >= $1 AND confirmations >= confirmations_needed AND (ended_at IS NULL OR ended_at > starts_at)`, since).Scan(&used)
 	return used, err
 }
 
@@ -301,6 +350,51 @@ func (p *Postgres) OpeningsSince(ctx context.Context, since time.Time) (int, err
 // ended already changes nothing.
 func (p *Postgres) EndOpening(ctx context.Context, id int64) (Opening, error) {
 	return scanOpening(p.pool.QueryRow(ctx, `UPDATE openings SET ended_at = COALESCE(ended_at, now()) WHERE id = $1 RETURNING `+openingColumns, id))
+}
+
+// ConfirmOpening records one confirmation of an opening. It is refused
+// before the confirmation's time, after the opening ended or lapsed, and once
+// every confirmation is given. The last one starts the opening now for its
+// length.
+func (p *Postgres) ConfirmOpening(ctx context.Context, id int64) (Opening, error) {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return Opening{}, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `LOCK TABLE openings IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+		return Opening{}, err
+	}
+	opening, err := scanOpening(tx.QueryRow(ctx, `SELECT `+openingColumns+` FROM openings WHERE id = $1 FOR UPDATE`, id))
+	if err != nil {
+		return Opening{}, err
+	}
+	now := time.Now().UTC()
+	switch {
+	case opening.EndedAt != nil || !now.Before(opening.Until):
+		return Opening{}, fmt.Errorf("%w: this opening has ended", ErrOpeningRefused)
+	case opening.Confirmed():
+		return Opening{}, fmt.Errorf("%w: this opening needs no more confirmations", ErrOpeningRefused)
+	case now.Before(opening.confirmableAt()):
+		return Opening{}, fmt.Errorf("%w: wait %d more seconds", ErrOpeningRefused, int(opening.confirmableAt().Sub(now).Seconds())+1)
+	}
+	starts, until := opening.StartsAt, opening.Until
+	if opening.Confirmations+1 >= opening.ConfirmationsNeeded {
+		config, err := latestConfigTx(ctx, tx)
+		if err != nil {
+			return Opening{}, err
+		}
+		if err := checkDayCount(ctx, tx, config, now); err != nil {
+			return Opening{}, err
+		}
+		starts, until = now, now.Add(time.Duration(opening.LengthMinutes)*time.Minute)
+	}
+	confirmed, err := scanOpening(tx.QueryRow(ctx, `UPDATE openings SET confirmations = confirmations + 1, last_confirmed_at = $2, starts_at = $3, until = $4 WHERE id = $1 RETURNING `+openingColumns,
+		id, now, starts, until))
+	if err != nil {
+		return Opening{}, err
+	}
+	return confirmed, tx.Commit(ctx)
 }
 
 // ActiveOpenings returns the openings in force at a time and those waiting
@@ -339,6 +433,9 @@ func revertOpening(ctx context.Context, tx pgx.Tx, raw json.RawMessage) (any, an
 func PolicyOpenings(config policy.Config, openings []Opening) []policy.Opening {
 	result := []policy.Opening{}
 	for _, opening := range openings {
+		if !opening.Confirmed() {
+			continue
+		}
 		item := policy.Opening{ID: opening.ID, Purpose: opening.Purpose, All: opening.Everything, From: opening.StartsAt, Until: opening.Until}
 		for _, group := range config.Distractions {
 			matched := false

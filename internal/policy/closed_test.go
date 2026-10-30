@@ -48,10 +48,18 @@ func TestClosedByDefaultOpensOnlyInDistractionTime(t *testing.T) {
 	if work.Mode != ModeWork || len(work.BlockedGroups) == 0 {
 		t.Fatalf("work block in distraction time = %+v", work)
 	}
-	// Without the switch, a day with nothing planned is free as before.
+	// Without the switch, a day with nothing planned still keeps
+	// distractions closed; a planned day with no work block is free.
 	config.ClosedByDefault = false
-	if free := Evaluate(config, 1, Facts{}, at(11, 0)); free.Mode != ModeLeisure || len(free.BlockedGroups) != 0 {
-		t.Fatalf("switch off = %+v", free)
+	if closed := Evaluate(config, 1, Facts{}, at(11, 0)); closed.Mode != ModeClosed || len(closed.BlockedGroups) == 0 {
+		t.Fatalf("switch off, no plan = %+v", closed)
+	}
+	if closed := Evaluate(config, 1, Facts{PlanExists: true, PlanEmpty: true}, at(11, 0)); closed.Mode != ModeClosed || len(closed.BlockedGroups) == 0 {
+		t.Fatalf("switch off, empty plan = %+v", closed)
+	}
+	planned := Facts{PlanExists: true, Blocks: []Block{{ID: 1, Title: "Album", Start: at(9, 0), End: at(10, 0), Kind: BlockKindWork, State: "done"}}}
+	if free := Evaluate(config, 1, planned, at(11, 0)); free.Mode != ModeLeisure || len(free.BlockedGroups) != 0 {
+		t.Fatalf("switch off, planned = %+v", free)
 	}
 }
 
@@ -138,11 +146,11 @@ func TestPlanGateFromWakeLocksEverythingUntilPlanned(t *testing.T) {
 	wake := at(8, 26)
 	// Up past midnight, not yet slept: yesterday's wake does not lock today.
 	yesterday := at(8, 26).AddDate(0, 0, -1)
-	if got := Evaluate(config, 1, Facts{WakeAt: &yesterday}, at(0, 30)); got.Mode != ModeLeisure || got.BlockAll {
+	if got := Evaluate(config, 1, Facts{WakeAt: &yesterday}, at(0, 30)); got.Mode != ModeClosed || got.BlockAll {
 		t.Fatalf("after midnight, before sleeping = %+v", got)
 	}
 	// No known wake: nothing is locked on missing evidence.
-	if got := Evaluate(config, 1, Facts{}, at(9, 0)); got.Mode != ModeLeisure {
+	if got := Evaluate(config, 1, Facts{}, at(9, 0)); got.Mode != ModeClosed || got.BlockAll {
 		t.Fatalf("no wake known = %+v", got)
 	}
 	locked := Evaluate(config, 1, Facts{WakeAt: &wake}, at(8, 30))
@@ -154,14 +162,14 @@ func TestPlanGateFromWakeLocksEverythingUntilPlanned(t *testing.T) {
 	}
 	// The timeline changes at the wake time.
 	segments := Timeline(config, 1, Facts{WakeAt: &wake}, at(8, 0), at(9, 0))
-	if len(segments) != 2 || segments[0].Decision.Mode != ModeLeisure || segments[1].Decision.Mode != ModePlanGate || !segments[1].From.Equal(wake) {
+	if len(segments) != 2 || segments[0].Decision.Mode != ModeClosed || segments[1].Decision.Mode != ModePlanGate || !segments[1].From.Equal(wake) {
 		t.Fatalf("timeline = %+v", segments)
 	}
 	// Switched on at 10:30 on a day already begun without a plan: nothing
 	// locks until the next waking.
 	since := at(10, 30)
 	config.PlanGate.Since = &since
-	if got := Evaluate(config, 1, Facts{WakeAt: &wake}, at(10, 31)); got.Mode != ModeLeisure || got.BlockAll {
+	if got := Evaluate(config, 1, Facts{WakeAt: &wake}, at(10, 31)); got.Mode != ModeClosed || got.BlockAll {
 		t.Fatalf("switched on after waking = %+v", got)
 	}
 	tomorrow := wake.AddDate(0, 0, 1)

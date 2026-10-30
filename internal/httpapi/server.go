@@ -99,6 +99,7 @@ func New(repository store.Repository, config Config) (*Server, error) {
 	server.mux.HandleFunc("GET /v1/policy/suggestions", server.policySuggestions)
 	server.mux.HandleFunc("/v1/openings", server.openings)
 	server.mux.HandleFunc("POST /v1/openings/{id}/end", server.endOpening)
+	server.mux.HandleFunc("POST /v1/openings/{id}/confirm", server.confirmOpening)
 	server.mux.HandleFunc("PUT /v1/openings/rule", server.openingRule)
 	server.mux.HandleFunc("/v1/morning", server.morning)
 	server.mux.HandleFunc("POST /v1/morning/code", server.newMorningCode)
