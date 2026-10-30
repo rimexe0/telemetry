@@ -2,7 +2,19 @@
 
 package desktop
 
+/*
+#include <libproc.h>
+#include <stdlib.h>
+
+static int td_pid_path(int pid, char *buffer, int size) {
+	return proc_pidpath(pid, buffer, (uint32_t)size);
+}
+*/
+import "C"
+
 import (
+	"unsafe"
+
 	"fmt"
 	"net"
 	"os"
@@ -33,11 +45,11 @@ func AppOfConnection(remote string) (string, error) {
 		if !strings.HasPrefix(line, "p") || err != nil || pid == self {
 			continue
 		}
-		path, err := exec.Command("/bin/ps", "-o", "comm=", "-p", strconv.Itoa(pid)).Output()
-		if err != nil {
+		path := pidPath(pid)
+		if path == "" {
 			continue
 		}
-		app, _, found := strings.Cut(strings.TrimSpace(string(path)), ".app/")
+		app, _, found := strings.Cut(path, ".app/")
 		if !found {
 			continue
 		}
@@ -53,4 +65,14 @@ func AppOfConnection(remote string) (string, error) {
 		return strings.TrimSpace(string(id)), nil
 	}
 	return "", fmt.Errorf("no app holds the connection from port %s", port)
+}
+
+// pidPath is the executable of a process, or empty when it cannot be read.
+func pidPath(pid int) string {
+	buffer := (*C.char)(C.malloc(C.PROC_PIDPATHINFO_MAXSIZE))
+	defer C.free(unsafe.Pointer(buffer))
+	if C.td_pid_path(C.int(pid), buffer, C.PROC_PIDPATHINFO_MAXSIZE) <= 0 {
+		return ""
+	}
+	return C.GoString(buffer)
 }

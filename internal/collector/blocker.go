@@ -93,6 +93,19 @@ func (b *Blocker) Status() map[string]any {
 	}
 	status["blocking"] = b.blocking
 	status["block_screen"] = desktop.BlockScreenSupported()
+	// Which browsers' extensions checked in, for telling why one is hidden.
+	extensions := map[string]any{}
+	for bundle, seen := range b.extensions.seen {
+		entry := map[string]any{"last_check_in": seen.UTC()}
+		if incognito, said := b.extensions.incognito[bundle]; said {
+			entry["private_windows"] = incognito
+		}
+		extensions[bundle] = entry
+	}
+	status["extensions"] = extensions
+	if b.extensions.lastError != "" {
+		status["extension_check_in_error"] = b.extensions.lastError
+	}
 	return status
 }
 

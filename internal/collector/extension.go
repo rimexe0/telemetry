@@ -63,6 +63,7 @@ type extensionState struct {
 	ports     map[string]string    // remote address → bundle ID
 	since     map[int]time.Time    // browser process → first seen in front
 	titles    map[int]string       // browser process → last window title that was not empty
+	lastError string               // why the last check-in's app could not be found
 	opened    map[string]time.Time // bundle ID → last time its Extensions page was opened
 }
 
@@ -87,6 +88,9 @@ func (b *Blocker) ExtensionCheckIn(remote string, incognito *bool) {
 		}
 		var err error
 		if bundle, err = find(remote); err != nil {
+			b.mu.Lock()
+			b.extensions.lastError = err.Error()
+			b.mu.Unlock()
 			return
 		}
 	}

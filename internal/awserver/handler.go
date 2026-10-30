@@ -67,8 +67,11 @@ func (h Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			return
 		}
 	}
+	// Chromium can leave out the Origin of an extension's request to an
+	// address it has permission for, so every request to these two counts;
+	// the blocker works out from the connection which app made it.
 	if request.URL.Path == "/api/telemetry/status" && request.Method == http.MethodGet {
-		if h.CheckIn != nil && origin != "" {
+		if h.CheckIn != nil {
 			var incognito *bool
 			if value := request.URL.Query().Get("incognito"); value != "" {
 				allowed := value == "1"
@@ -86,7 +89,7 @@ func (h Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	if request.URL.Path == "/api/telemetry/site" && request.Method == http.MethodGet {
 		host := strings.ToLower(strings.TrimSpace(request.URL.Query().Get("host")))
 		decision := SiteDecision{Host: host}
-		if h.CheckIn != nil && origin != "" {
+		if h.CheckIn != nil {
 			h.CheckIn(request.RemoteAddr, nil)
 		}
 		if h.Site != nil && host != "" {
