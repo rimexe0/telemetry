@@ -16,7 +16,9 @@ class DeliveryConfig(context: Context) {
     var serverUrl: String
         get() {
             val saved = preferences.getString(KEY_SERVER_URL, null).orEmpty()
-            if (saved.trimEnd('/') in setOf("http://100.64.0.2:18080", "https://old-server.example.ts.net:8443")) {
+            // Earlier server addresses: Fedora, then Datalix before its Tailscale
+            // name changed from vps1 to datalix (2026-10).
+            if (saved.trimEnd('/') in setOf("http://100.64.0.2:18080", "https://old-server.example.ts.net:8443", "https://server.example.ts.net:8443")) {
                 val destination = "https://server.example.ts.net:8443"
                 check(preferences.edit().putString(KEY_SERVER_URL, destination).commit())
                 return destination
