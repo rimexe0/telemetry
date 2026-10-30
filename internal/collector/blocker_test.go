@@ -214,7 +214,7 @@ func TestBrowserWithoutAWorkingExtensionIsHiddenWhileSitesAreBlocked(t *testing.
 	}
 	// Its Extensions page stays usable.
 	page := helium
-	page.Title = "Extensions"
+	page.Title = "Extensions - Helium - You"
 	if blocker.hideBrowser(ctx, host, page, decision, start.Add(62*time.Second)) {
 		t.Fatal("the Extensions page was hidden")
 	}
@@ -246,5 +246,23 @@ func TestBrowserWithoutAWorkingExtensionIsHiddenWhileSitesAreBlocked(t *testing.
 	notes := desktop.Window{App: "Notes", BundleID: "com.apple.Notes", PID: 42}
 	if blocker.hideBrowser(ctx, host, notes, decision, start.Add(time.Hour)) {
 		t.Fatal("a non-browser was hidden")
+	}
+}
+
+func TestExtensionsPageIsRecognisedByItsTitle(t *testing.T) {
+	for title, want := range map[string]bool{
+		"Extensions":                true,
+		"Extensions - Helium - You": true,
+		"Extensions - Part of group work - Helium - You": true,
+		"chrome://extensions":                            true,
+		"chrome://extensions/?id=abc":                    true,
+		"Uzantılar - Helium - You":                       true,
+		"Extensions - YouTube - Helium - You":            false,
+		"Extensions for VS Code - Helium - You":          false,
+		"GitHub - Helium - You":                          false,
+	} {
+		if got := extensionsPage(title, "Helium"); got != want {
+			t.Errorf("%q: %v, want %v", title, got, want)
+		}
 	}
 }

@@ -24,11 +24,34 @@ var (
 		"org.mozilla.firefox": "Firefox", "app.zen-browser.zen": "Zen", "com.kagi.kagimacOS": "Orion",
 		"com.duckduckgo.macos.browser": "DuckDuckGo",
 	}
-	// extensionsPageTitles are the Extensions page's window title in the
-	// owner's languages; that page stays usable so the extension can be
-	// switched back on.
-	extensionsPageTitles = map[string]bool{"Extensions": true, "Uzantılar": true}
+	// extensionsPageTitles are the Extensions page's tab title in the owner's
+	// languages; that page stays usable so the extension can be switched
+	// back on.
+	extensionsPageTitles = []string{"Extensions", "Uzantılar"}
 )
+
+// extensionsPage reports whether a browser window shows its Extensions page.
+// Chromium browsers put the tab title first and then their own parts, such
+// as "Extensions - Helium - You" or "Extensions - Part of group work -
+// Helium - You"; while loading the title is the address. A web page whose
+// title only starts with "Extensions" is followed by its site's name instead
+// and does not count.
+func extensionsPage(title, browser string) bool {
+	title = strings.TrimSpace(title)
+	if strings.HasPrefix(title, "chrome://extensions") {
+		return true
+	}
+	for _, page := range extensionsPageTitles {
+		rest, found := strings.CutPrefix(title, page)
+		if !found {
+			continue
+		}
+		if rest == "" || strings.HasPrefix(rest, " - "+browser) || strings.HasPrefix(rest, " - Part of group ") || strings.HasPrefix(rest, " - Audio playing") {
+			return true
+		}
+	}
+	return false
+}
 
 // extensionState is what the blocker knows about each browser's extension.
 // It is guarded by the blocker's mutex.
@@ -87,7 +110,7 @@ func (b *Blocker) hideBrowser(ctx context.Context, host Host, window desktop.Win
 	if !canRun {
 		name = otherBrowsers[window.BundleID]
 	}
-	if limit == 0 || name == "" || extensionsPageTitles[strings.TrimSpace(window.Title)] {
+	if limit == 0 || name == "" || extensionsPage(window.Title, name) {
 		return false
 	}
 	b.mu.Lock()
