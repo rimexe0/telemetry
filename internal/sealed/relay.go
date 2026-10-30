@@ -105,9 +105,23 @@ func (r *Relay) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	r.answer(writer, opened, AnswerHead{Status: recorder.status, ContentType: recorder.header.Get("Content-Type")}, recorder.body.Bytes())
 }
 
+// pairingPath is starting a pairing or asking how one stands, so a phone
+// pairs without Tailscale. Approving stays with the owner's signed-in panel.
+func pairingPath(path string) bool {
+	const sessions = "/v1/pairing/sessions"
+	if path == sessions {
+		return true
+	}
+	id, ok := strings.CutPrefix(path, sessions+"/")
+	return ok && id != "" && !strings.Contains(id, "/")
+}
+
 func reachable(path string) bool {
 	if strings.Contains(path, "..") {
 		return false
+	}
+	if pairingPath(path) {
+		return true
 	}
 	for _, prefix := range allowed {
 		if path == prefix || (strings.HasSuffix(prefix, "/") && strings.HasPrefix(path, prefix)) {

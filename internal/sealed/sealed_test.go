@@ -141,3 +141,20 @@ func TestRelayLimitsRequestsPerAddress(t *testing.T) {
 		t.Fatal("the limit refills")
 	}
 }
+
+func TestRelayCarriesPairingStartAndPollOnly(t *testing.T) {
+	for path, want := range map[string]bool{
+		"/v1/pairing/sessions":                true,
+		"/v1/pairing/sessions/abc123":         true,
+		"/v1/pairing/sessions/abc123/approve": false,
+		"/v1/pairing/sessions/abc123/details": false,
+		"/v1/pairing/sessions/":               false,
+		"/v1/devices":                         false,
+		"/v1/device/now":                      true,
+		"/v1/pairing/sessions/../../v1/plans": false,
+	} {
+		if got := reachable(path); got != want {
+			t.Errorf("%s: reachable = %v, want %v", path, got, want)
+		}
+	}
+}

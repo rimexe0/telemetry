@@ -10,15 +10,17 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
+// Earlier server addresses: Fedora, then Datalix before its Tailscale name
+// changed from vps1 to datalix (2026-10).
+internal val RETIRED_SERVERS = setOf("http://100.64.0.2:18080", "https://old-server.example.ts.net:8443", "https://server.example.ts.net:8443")
+
 class DeliveryConfig(context: Context) {
     private val preferences = context.applicationContext.getSharedPreferences(NAME, Context.MODE_PRIVATE)
 
     var serverUrl: String
         get() {
             val saved = preferences.getString(KEY_SERVER_URL, null).orEmpty()
-            // Earlier server addresses: Fedora, then Datalix before its Tailscale
-            // name changed from vps1 to datalix (2026-10).
-            if (saved.trimEnd('/') in setOf("http://100.64.0.2:18080", "https://old-server.example.ts.net:8443", "https://server.example.ts.net:8443")) {
+            if (saved.trimEnd('/') in RETIRED_SERVERS) {
                 val destination = "https://server.example.ts.net:8443"
                 check(preferences.edit().putString(KEY_SERVER_URL, destination).commit())
                 return destination
@@ -51,8 +53,12 @@ class DeliveryConfig(context: Context) {
     fun newPairingSecret(server: String): String {
         val existing = pairingSecret()
         if (existing != null) {
-            require(pairingServer() == server) { "Finish pending pairing before changing servers" }
-            return existing
+            val pending = pairingServer()
+            // A pairing the server never answered, or one for an address that
+            // no longer exists, can only be started again.
+            if (pending == server) return existing
+            require(pairingId == null || pending?.trimEnd('/') in RETIRED_SERVERS) { "Finish pending pairing before changing servers" }
+            clearPairing()
         }
         check(preferences.edit().putString(KEY_PAIRING_SERVER, server).commit())
         val bytes = ByteArray(32)

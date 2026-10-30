@@ -26,8 +26,10 @@ class PairingException(
 /**
  * Small client for the Clerk-assisted pairing handshake.
  *
- * The pairing secret is generated and retained by DeliveryConfig. It is sent
- * only over the tailnet connection and is never included in UI status text.
+ * Requests go sealed through the relay first, so pairing needs no Tailscale,
+ * and over the tailnet connection when the relay cannot be reached. The
+ * pairing secret is generated and retained by DeliveryConfig, travels only
+ * sealed or over the tailnet, and is never included in UI status text.
  * The panel proves the owner's Clerk identity; this client only polls for the
  * resulting device-scoped ingest credential.
  */
@@ -35,21 +37,19 @@ class TelemetryPairingClient(
     private val serverUrl: String,
     private val deviceId: String,
     private val deviceName: String,
+    private val sealed: SealedChannel? = SealedChannel.configured(),
 ) {
     init {
         val u = URL(serverUrl)
         require(u.protocol == "https" && u.userInfo == null && u.query == null && u.ref == null && (u.path.isEmpty() || u.path == "/")) { "Pairing requires a private HTTPS origin" }
     }
     fun start(secret: String): PairingStart {
-        val connection = open("/v1/pairing/sessions", "POST")
-        connection.setRequestProperty("Content-Type", "application/json")
-        connection.doOutput = true
         val body = JSONObject()
             .put("device_id", deviceId)
             .put("device_name", deviceName)
             .put("credential_hash", MessageDigest.getInstance("SHA-256").digest(secret.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) })
-        connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
-        val payload = response(connection, setOf(HttpURLConnection.HTTP_OK, HttpURLConnection.HTTP_CREATED, HttpURLConnection.HTTP_ACCEPTED))
+        val payload = send("POST", "/v1/pairing/sessions", mapOf("Content-Type" to "application/json"), body.toString().toByteArray(Charsets.UTF_8),
+            setOf(HttpURLConnection.HTTP_OK, HttpURLConnection.HTTP_CREATED, HttpURLConnection.HTTP_ACCEPTED))
         val id = required(payload, "pairing_id", "id")
         val panelUrl = optional(payload, "panel_url", "pairing_url")
             ?: Uri.parse(serverUrl.trimEnd('/') + "/panel/")
@@ -65,9 +65,8 @@ class TelemetryPairingClient(
     }
 
     fun poll(pairingId: String, secret: String): PairingStatus {
-        val connection = open("/v1/pairing/sessions/${Uri.encode(pairingId)}", "GET")
-        connection.setRequestProperty("Authorization", "Bearer $secret")
-        val payload = response(connection, setOf(HttpURLConnection.HTTP_OK))
+        val payload = send("GET", "/v1/pairing/sessions/${Uri.encode(pairingId)}", mapOf("Authorization" to "Bearer $secret"), null,
+            setOf(HttpURLConnection.HTTP_OK))
         val state = when (optional(payload, "status", "state")?.lowercase()) {
             "approved" -> PairingStatus.State.APPROVED
             "denied", "rejected", "revoked" -> PairingStatus.State.DENIED
@@ -79,6 +78,25 @@ class TelemetryPairingClient(
             state = state,
             deviceId = optional(payload, "device_id"),
         )
+    }
+
+    /** One request: sealed through the relay, else directly. */
+    private fun send(method: String, path: String, headers: Map<String, String>, body: ByteArray?, accepted: Set<Int>): JSONObject {
+        sealed?.let { channel ->
+            val answer = try {
+                channel.exchange(method, path, headers + ("Accept" to "application/json"), body, 15_000, 30_000)
+            } catch (_: java.io.IOException) {
+                null
+            }
+            if (answer != null) return payload(answer.status, answer.body, accepted)
+        }
+        val connection = open(path, method)
+        headers.forEach { (name, value) -> connection.setRequestProperty(name, value) }
+        if (body != null) {
+            connection.doOutput = true
+            connection.outputStream.use { it.write(body) }
+        }
+        return response(connection, accepted)
     }
 
     private fun open(path: String, method: String): HttpURLConnection {
@@ -105,6 +123,10 @@ class TelemetryPairingClient(
             out.toByteArray()
         } ?: ByteArray(0)
         connection.disconnect()
+        return payload(status, bytes, accepted)
+    }
+
+    private fun payload(status: Int, bytes: ByteArray, accepted: Set<Int>): JSONObject {
         require(bytes.size <= 65536) { "Pairing response too large" }
         val text = bytes.toString(Charsets.UTF_8)
         if (status !in accepted) {

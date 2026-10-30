@@ -66,7 +66,7 @@ class PairingFlow(
                 poll(serverUrl, start.id, secret)
             } catch (error: Exception) {
                 if (error is kotlinx.coroutines.CancellationException) throw error
-                onStatus("Could not reach the server. Is Tailscale on? Queued records stay on this phone.")
+                onStatus("Could not reach the server. Check the phone's internet connection. Queued records stay on this phone.")
             }
         }
     }
@@ -77,7 +77,13 @@ class PairingFlow(
         val pairingId = config.pairingId ?: return
         val secret = config.pairingSecret() ?: return
         if (job?.isActive == true) return
-        poll(config.pairingServer() ?: return, pairingId, secret, resumed = true)
+        val server = config.pairingServer() ?: return
+        // A pairing with an address that no longer exists never completes.
+        if (server.trimEnd('/') in RETIRED_SERVERS) {
+            config.clearPairing()
+            return
+        }
+        poll(server, pairingId, secret, resumed = true)
     }
 
     private fun client(serverUrl: String) = TelemetryPairingClient(
