@@ -1,0 +1,76 @@
+# Tests every push to main and publishes the Linux server, collector and panel
+# as a signed release. Linux machines install releases themselves with
+# deploy/linux/telemetry-update.sh. The phone and the Mac build locally: the
+# phone app carries a proprietary SDK and the Mac app a local signing identity.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      TAG: r${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Test
+        run: |
+          go vet ./...
+          go test ./...
+      - name: Test and build the panel
+        working-directory: web
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm check
+          pnpm test
+          pnpm build
+
+      - name: Build
+        run: |
+          mkdir dist
+          export CGO_ENABLED=0 GOOS=linux GOARCH=amd64
+          go build -trimpath -o dist/telemetryd ./cmd/telemetryd
+          go build -trimpath -o dist/telemetry-places ./cmd/telemetry-places
+          go build -trimpath -ldflags "-X main.collectorVersion=telemetry-desktop/$TAG" -o dist/telemetry-desktop ./cmd/telemetry-desktop
+          tar -C web -czf dist/panel.tar.gz build
+          ls internal/store/migrations > dist/migrations.txt
+          cp deploy/linux/telemetry-update.sh dist/
+          echo "$TAG $GITHUB_SHA" > dist/release.txt
+          (cd dist && sha256sum -- * > SHA256SUMS)
+
+      - name: Sign
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          key="$RUNNER_TEMP/release-key"
+          install -m 600 /dev/null "$key"
+          printf '%s\n' "$RELEASE_SIGNING_KEY" > "$key"
+          ssh-keygen -Y sign -q -f "$key" -n telemetry-release dist/SHA256SUMS
+          ssh-keygen -Y verify -f deploy/release-signers -I telemetry-release -n telemetry-release -s dist/SHA256SUMS.sig < dist/SHA256SUMS
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "$TAG" --notes "$(git log -1 --format=%s)"

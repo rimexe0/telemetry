@@ -1,0 +1,11 @@
+# Installs the newest signed Telemetry release for one target (server or
+# collector); see telemetry-update.sh. Install as a systemd user unit with
+# the script at ~/.local/bin/telemetry-update.
+[Unit]
+Description=Install the newest Telemetry release (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/telemetry-update %i

@@ -29,7 +29,8 @@ import (
 	"github.com/rimexe0/telemetry/internal/sealed"
 )
 
-const collectorVersion = "telemetry-desktop/0.2.0"
+// collectorVersion is replaced with the release name in released builds.
+var collectorVersion = "telemetry-desktop/0.2.0"
 
 // The macOS block screen needs the app loop on the main thread.
 func init() { runtime.LockOSThread() }
