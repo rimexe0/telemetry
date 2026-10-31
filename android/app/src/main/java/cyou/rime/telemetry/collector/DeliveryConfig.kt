@@ -12,7 +12,7 @@ import javax.crypto.spec.GCMParameterSpec
 
 // Earlier server addresses: Fedora, then Datalix before its Tailscale name
 // changed from vps1 to datalix (2026-10).
-internal val RETIRED_SERVERS = setOf("http://100.64.0.2:18080", "https://old-server.example.ts.net:8443", "https://server.example.ts.net:8443")
+internal val RETIRED_SERVERS = setOf("http://100.64.0.2:18080", "https://old-server.example.ts.net:8443")
 
 class DeliveryConfig(context: Context) {
     private val preferences = context.applicationContext.getSharedPreferences(NAME, Context.MODE_PRIVATE)
@@ -21,7 +21,7 @@ class DeliveryConfig(context: Context) {
         get() {
             val saved = preferences.getString(KEY_SERVER_URL, null).orEmpty()
             if (saved.trimEnd('/') in RETIRED_SERVERS) {
-                val destination = "https://server.example.ts.net:8443"
+                val destination = BuildConfig.TELEMETRY_SERVER_URL
                 check(preferences.edit().putString(KEY_SERVER_URL, destination).commit())
                 return destination
             }

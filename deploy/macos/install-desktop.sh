@@ -24,9 +24,15 @@ rm -rf "$app"
 mv "$staging" "$app"
 rmdir "${staging:h}"
 
+# This machine's relay address and key, kept out of the repository.
+[[ -f deploy/macos/local.env ]] && source deploy/macos/local.env
+wanted="$(mktemp)"
+sed -e "s#https://relay.example.com#${TELEMETRY_RELAY:-https://relay.example.com}#" \
+  ${TELEMETRY_RELAY_KEY:+-e "s#<string>BDQA[^<]*</string>#<string>$TELEMETRY_RELAY_KEY</string>#"} \
+  deploy/macos/$label.plist > "$wanted"
 plist="$HOME/Library/LaunchAgents/$label.plist"
-if ! cmp -s deploy/macos/$label.plist "$plist"; then
-  cp deploy/macos/$label.plist "$plist"
+if ! cmp -s "$wanted" "$plist"; then
+  cp "$wanted" "$plist"
   launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
   # bootout returns before the job is gone.
   while launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; do sleep 0.5; done

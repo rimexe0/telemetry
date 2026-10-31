@@ -1,9 +1,17 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
 val samsungHealthSdk: File = rootProject.file("private/samsung-health-data-api-1.1.0.aar")
+
+// Addresses come from -P, gradle.properties or android/local.properties.
+val localProperties = Properties().also { properties ->
+    rootProject.file("local.properties").takeIf { it.exists() }?.reader()?.use { properties.load(it) }
+}
+fun setting(name: String): String? = (project.findProperty(name) ?: localProperties.getProperty(name))?.toString()
 
 android {
     namespace = "cyou.rime.telemetry.collector"
@@ -21,7 +29,7 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
-        val telemetryServerUrl = project.findProperty("telemetryServerUrl")?.toString()
+        val telemetryServerUrl = setting("telemetryServerUrl")
             ?.trim()
             ?.trimEnd('/')
             ?.takeIf { it.isNotBlank() }
@@ -30,9 +38,9 @@ android {
         // Device requests go sealed through this relay (a Cloudflare Tunnel to
         // the server's sealed door), so the phone does not need Tailscale. The
         // key is the server's public key from its log line "Sealed device requests".
-        val telemetryRelayUrl = project.findProperty("telemetryRelayUrl")?.toString()?.trim()?.trimEnd('/')
+        val telemetryRelayUrl = setting("telemetryRelayUrl")?.trim()?.trimEnd('/')
             ?: "https://relay.example.com"
-        val telemetryRelayKey = project.findProperty("telemetryRelayKey")?.toString()?.trim()
+        val telemetryRelayKey = setting("telemetryRelayKey")?.trim()
             ?: "BDQAImuIn7FQicgxZZT4ekXWleG0QJlUflNjYQnBUTU7m39PHHlg0TP3d08OeB1xffb1WIrv05kvkL38Zwa8mZk="
         buildConfigField("String", "TELEMETRY_RELAY_URL", "\"$telemetryRelayUrl\"")
         buildConfigField("String", "TELEMETRY_RELAY_KEY", "\"$telemetryRelayKey\"")

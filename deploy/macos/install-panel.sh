@@ -26,4 +26,9 @@ if [[ -d "$app" ]]; then
   mv "$app" "$work/Telemetry.previous.app"
 fi
 mv "$staging" "$app"
+# This machine's panel address, kept out of the repository.
+[[ -f deploy/macos/local.env ]] && source deploy/macos/local.env
+if [[ -n "${TELEMETRY_SERVER:-}" ]]; then
+  defaults write cyou.rime.telemetry.panel PanelAddress "$TELEMETRY_SERVER/panel/"
+fi
 echo "installed $app"

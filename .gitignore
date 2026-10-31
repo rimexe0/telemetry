@@ -7,6 +7,7 @@ web/.svelte-kit/
 web/build/
 android/.gradle/
 android/local.properties
+deploy/macos/local.env
 # Samsung's proprietary Health Data SDK; not redistributable.
 android/private/
 android/**/build/
