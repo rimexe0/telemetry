@@ -176,6 +176,10 @@ func (s *Server) confirmOpening(writer http.ResponseWriter, request *http.Reques
 // schedule, so a looser one waits for the next day and the change is logged
 // and can be reverted.
 func (s *Server) scheduleRule(writer http.ResponseWriter, request *http.Request, change store.ScheduleChange, note string) {
+	if request.URL.Query().Get("preview") == "1" {
+		s.previewRule(writer, request, change)
+		return
+	}
 	_, config, err := s.repository.ApplyBlockingSchedule(request.Context(), change, note)
 	if errors.Is(err, store.ErrSettingsLocked) {
 		writeError(writer, http.StatusLocked, "settings_locked", err.Error())

@@ -258,6 +258,7 @@ func testServer(t *testing.T, repository *fakeRepository) *Server {
 }
 
 type fakeRepository struct {
+	preview      policy.Config
 	pin          string
 	lockState    store.SettingsLockState
 	morningCode  string
@@ -869,4 +870,8 @@ func (f *fakeRepository) UnlockSettings(_ context.Context, pin string) (time.Tim
 	until := time.Now().Add(15 * time.Minute)
 	f.lockState.Locked, f.lockState.UnlockedUntil = false, &until
 	return until, nil
+}
+
+func (f *fakeRepository) PreviewBlockingSchedule(context.Context, store.ScheduleChange) (policy.Config, error) {
+	return f.preview, nil
 }

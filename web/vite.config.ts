@@ -297,6 +297,11 @@ function fixtureAPI(): Plugin {
           return;
         }
         const path = (request.url ?? '/').split('?')[0];
+        // Fixture previews never wait a day.
+        if ((request.url ?? '').includes('preview=1')) {
+          send(200, { waits_until: {} });
+          return;
+        }
         if (path.startsWith('/execution') || path.startsWith('/plans') || path.startsWith('/activities') || path.startsWith('/activity') || path.startsWith('/policy') || path.startsWith('/context-rules') || path.startsWith('/openings') || path.startsWith('/morning') || path.startsWith('/lock') || path === '/planning/settings') {
           let raw = '';
           request.on('data', chunk => raw += chunk);

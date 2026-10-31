@@ -191,6 +191,47 @@ func (c Config) WithBedtime(next Bedtime, now time.Time) Config {
 	return c
 }
 
+// BedtimeTookEffect reports whether bedtime held at any moment from since to
+// now: it was in its hours at since, or its start came round after since.
+func BedtimeTookEffect(rule Bedtime, timezone string, since, now time.Time) bool {
+	if !rule.Enabled {
+		return false
+	}
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		location = time.UTC
+	}
+	if _, in := bedtimeEnd(rule, location, since); in {
+		return true
+	}
+	for day := since.In(location).AddDate(0, 0, -1); !day.After(now.In(location)); day = day.AddDate(0, 0, 1) {
+		start, err := time.ParseInLocation("2006-01-02 15:04", day.Format("2006-01-02")+" "+rule.Start, location)
+		if err == nil && start.After(since) && !start.After(now) {
+			return true
+		}
+	}
+	return false
+}
+
+// CorrectionGrace is how long after a rule changes a change back still
+// counts as fixing a mistake rather than loosening.
+const CorrectionGrace = 10 * time.Minute
+
+// Correcting reports whether a change to the named rule is a correction
+// that applies at once even though it asks less: the rule in force changed
+// within CorrectionGrace, or, for bedtime, it has not yet held since it
+// changed (owner request 2026-10-31).
+func (c Config) Correcting(name string, now time.Time) bool {
+	changed, ok := c.RuleChanged[name]
+	if !ok {
+		return false
+	}
+	if now.Sub(changed) < CorrectionGrace {
+		return true
+	}
+	return name == "bedtime" && !BedtimeTookEffect(c.BedtimeAt(now), c.Timezone, changed, now)
+}
+
 func bedtimeEnd(rule Bedtime, location *time.Location, at time.Time) (time.Time, bool) {
 	if !rule.Enabled {
 		return time.Time{}, false

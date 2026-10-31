@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { getLock, saveLock, setPin, unlockWithPin, type Bedtime, type ExtensionRule, type LockResponse } from './api';
-  import { formatWindows, parseWindows } from './lock';
+  import { getLock, previewLock, saveLock, setPin, unlockWithPin, type Bedtime, type ExtensionRule, type LockResponse, type SettingsLock } from './api';
+  import { formatWindows, parseWindows, saveWarning } from './lock';
 
   /** Which setting this card shows; each loads the same settings. */
   export let part: 'lock' | 'bedtime' | 'extension' = 'lock';
@@ -18,6 +18,10 @@
   let currentPin = '';
   let newPin = '';
   let enteredPin = '';
+  // A save that needs a second look: a very long bedtime, or one that only
+  // starts on a later day.
+  let confirmMessage = '';
+  let confirmRun: (() => Promise<string>) | null = null;
 
   void load();
 
@@ -51,20 +55,33 @@
 
   const time = (at?: string) => (at ? new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : '');
 
-  const saveRule = () => act(async () => {
+  type Input = { lock?: SettingsLock; bedtime?: Bedtime; extension?: ExtensionRule };
+  // Asks the server first whether the change would wait a day, and asks the
+  // owner to confirm when it would or when bedtime is very long.
+  const guardedSave = (input: Input, key: 'lock' | 'bedtime' | 'extension') => act(async () => {
+    const preview = await previewLock(input);
+    const run = async () => { await saveLock(input); return preview.waits_until[key] ? `Saved. It starts on ${preview.waits_until[key]}.` : 'Saved.'; };
+    const message = saveWarning(preview.waits_until[key], input.bedtime);
+    if (message) {
+      confirmMessage = message;
+      confirmRun = run;
+      return '';
+    }
+    return run();
+  });
+  const confirmSave = () => act(async () => {
+    const run = confirmRun;
+    confirmMessage = '';
+    confirmRun = null;
+    return run ? run() : '';
+  });
+  const saveRule = () => {
     const windows = parseWindows(lockTimes), pinWindows = parseWindows(pinTimes);
-    if (!windows || !pinWindows) throw new Error('Write times as 09:00-18:00, separated by commas.');
-    const saved = await saveLock({ lock: { enabled, windows, pin_windows: pinWindows, unlock_minutes: unlockMinutes } });
-    return saved.lock_next_from ? `Saved. It asks less, so it starts on ${saved.lock_next_from}.` : 'Saved.';
-  });
-  const saveBedtime = () => act(async () => {
-    const saved = await saveLock({ bedtime });
-    return saved.bedtime_next_from ? `Saved. It asks less, so it starts on ${saved.bedtime_next_from}.` : 'Saved.';
-  });
-  const saveExtension = () => act(async () => {
-    const saved = await saveLock({ extension });
-    return saved.extension_next_from ? `Saved. It asks less, so it starts on ${saved.extension_next_from}.` : 'Saved.';
-  });
+    if (!windows || !pinWindows) { error = 'Write times as 09:00-18:00, separated by commas.'; return; }
+    return guardedSave({ lock: { enabled, windows, pin_windows: pinWindows, unlock_minutes: unlockMinutes } }, 'lock');
+  };
+  const saveBedtime = () => guardedSave({ bedtime }, 'bedtime');
+  const saveExtension = () => guardedSave({ extension }, 'extension');
   const savePin = () => act(async () => {
     await setPin(currentPin, newPin);
     currentPin = newPin = '';
@@ -132,6 +149,13 @@
     <button disabled={busy}>Save</button>
   </form>
   {/if}
+  {#if confirmMessage}
+    <div class="confirm" role="alertdialog" aria-label="Confirm change">
+      <p>{confirmMessage} Save anyway?</p>
+      <button disabled={busy} on:click={confirmSave}>Save anyway</button>
+      <button class="quiet-button" disabled={busy} on:click={() => { confirmMessage = ''; confirmRun = null; }}>Cancel</button>
+    </div>
+  {/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if notice}<p class="muted small" role="status">{notice}</p>{/if}
 </section>
@@ -143,6 +167,8 @@
   .row input[type='number'] { width: 4.5em; }
   .row input[type='password'] { width: 8em; }
   .times { width: 14em; }
+  .confirm { align-items: center; border: 1px solid var(--fg); display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; padding: 8px; }
+  .confirm p { flex: 1 1 100%; font-size: .85rem; margin: 0; }
   .muted { color: var(--muted); }
   .small { font-size: .78rem; }
 </style>

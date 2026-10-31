@@ -44,7 +44,12 @@ func (s *Server) settingsLock(writer http.ResponseWriter, request *http.Request)
 			writeError(writer, http.StatusBadRequest, "invalid_json", "request body must contain lock, bedtime or extension")
 			return
 		}
-		_, _, err := s.repository.ApplyBlockingSchedule(request.Context(), store.ScheduleChange{SettingsLock: input.Lock, Bedtime: input.Bedtime, Extension: input.Extension}, "Settings lock, bedtime or browser extension rule set in the panel")
+		change := store.ScheduleChange{SettingsLock: input.Lock, Bedtime: input.Bedtime, Extension: input.Extension}
+		if request.URL.Query().Get("preview") == "1" {
+			s.previewRule(writer, request, change)
+			return
+		}
+		_, _, err := s.repository.ApplyBlockingSchedule(request.Context(), change, "Settings lock, bedtime or browser extension rule set in the panel")
 		switch {
 		case errors.Is(err, store.ErrSettingsLocked):
 			writeError(writer, http.StatusLocked, "settings_locked", err.Error())
@@ -92,6 +97,35 @@ func (s *Server) settingsLock(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 	writeJSON(writer, http.StatusOK, response)
+}
+
+// previewRule says, without saving, which of the changed rules would only
+// start on a later day, so the owner knows before saving.
+func (s *Server) previewRule(writer http.ResponseWriter, request *http.Request, change store.ScheduleChange) {
+	config, err := s.repository.PreviewBlockingSchedule(request.Context(), change)
+	switch {
+	case errors.Is(err, store.ErrSettingsLocked):
+		writeError(writer, http.StatusLocked, "settings_locked", err.Error())
+		return
+	case errors.Is(err, store.ErrInvalidAgentChange):
+		writeError(writer, http.StatusBadRequest, "invalid_rule", err.Error())
+		return
+	case err != nil:
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
+	waits := map[string]string{}
+	add := func(asked bool, name, from string) {
+		if asked && from != "" {
+			waits[name] = from
+		}
+	}
+	add(change.SettingsLock != nil, "lock", config.SettingsLockNextFrom)
+	add(change.Bedtime != nil, "bedtime", config.BedtimeNextFrom)
+	add(change.Extension != nil, "extension", config.ExtensionNextFrom)
+	add(change.OpeningRule != nil, "opening_rule", config.OpeningRuleNextFrom)
+	add(change.Morning != nil, "morning", config.MorningNextFrom)
+	writeJSON(writer, http.StatusOK, map[string]any{"waits_until": waits})
 }
 
 func (s *Server) settingsPin(writer http.ResponseWriter, request *http.Request) {

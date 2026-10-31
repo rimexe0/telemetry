@@ -108,6 +108,10 @@ type Config struct {
 	Extension         ExtensionRule  `json:"extension,omitempty"`
 	ExtensionNext     *ExtensionRule `json:"extension_next,omitempty"`
 	ExtensionNextFrom string         `json:"extension_next_from,omitempty"`
+	// RuleChanged is when each rule last changed in force, by name
+	// (outside, opening_rule, morning, settings_lock, bedtime, extension),
+	// so a quick correction is not mistaken for loosening.
+	RuleChanged map[string]time.Time `json:"rule_changed,omitempty"`
 }
 
 // NormalizeAddress reduces a URL or address to host and path without scheme

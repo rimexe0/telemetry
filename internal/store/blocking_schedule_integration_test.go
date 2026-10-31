@@ -196,3 +196,20 @@ func TestPostgresSettingsLockRefusesLooseningUntilThePin(t *testing.T) {
 		t.Fatalf("after the PIN = %+v, %v", config.ClosedByDefault, err)
 	}
 }
+
+func TestPostgresCorrectingAJustSavedBedtimeAppliesAtOnce(t *testing.T) {
+	ctx, database := openCleanIntegration(t)
+	now := time.Now().UTC()
+	strict := policy.Bedtime{Enabled: true, Start: now.Add(2 * time.Hour).In(time.FixedZone("TR", 3*3600)).Format("15:04"), End: now.Add(20 * time.Hour).In(time.FixedZone("TR", 3*3600)).Format("15:04")}
+	if _, _, err := database.ApplyBlockingSchedule(ctx, ScheduleChange{Bedtime: &strict}, "mistake"); err != nil {
+		t.Fatal(err)
+	}
+	off := policy.Bedtime{}
+	preview, err := database.PreviewBlockingSchedule(ctx, ScheduleChange{Bedtime: &off})
+	if err != nil || preview.BedtimeNextFrom != "" {
+		t.Fatalf("a correction would wait: %+v, %v", preview.BedtimeNext, err)
+	}
+	if _, config, err := database.ApplyBlockingSchedule(ctx, ScheduleChange{Bedtime: &off}, "fix"); err != nil || config.BedtimeAt(now).Enabled {
+		t.Fatalf("correction = %+v, %v", config.Bedtime, err)
+	}
+}

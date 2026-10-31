@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { getMorning, newMorningCode, saveMorningRule, type MorningRule, type MorningState } from './api';
+  import { getMorning, newMorningCode, previewMorningRule, saveMorningRule, type MorningRule, type MorningState } from './api';
+  import { saveWarning } from './lock';
 
   let state: MorningState | null = null;
   let draft: MorningRule = { enabled: false, from_wake: true, until: '' };
@@ -8,6 +9,8 @@
   let error = '';
   let notice = '';
   let code: { address: string; image: string } | null = null;
+  let confirmMessage = '';
+  let confirmRun: (() => Promise<void>) | null = null;
 
   void load();
 
@@ -37,9 +40,21 @@
   const save = () => act(async () => {
     const rule: MorningRule = { enabled: draft.enabled, until: draft.until, lock_all: draft.lock_all,
       from_wake: start === 'wake', from: start === 'time' ? draft.from : '' };
-    const saved = await saveMorningRule(rule);
-    notice = saved.morning_next_from ? `Saved. It asks less, so it starts on ${saved.morning_next_from}.` : 'Saved.';
-    await load();
+    const preview = await previewMorningRule(rule);
+    const run = async () => {
+      await saveMorningRule(rule);
+      notice = preview.waits_until.morning ? `Saved. It starts on ${preview.waits_until.morning}.` : 'Saved.';
+      await load();
+    };
+    const message = saveWarning(preview.waits_until.morning);
+    if (message) { confirmMessage = message; confirmRun = run; return; }
+    await run();
+  });
+  const confirmSave = () => act(async () => {
+    const run = confirmRun;
+    confirmMessage = '';
+    confirmRun = null;
+    if (run) await run();
   });
 
   const make = () => act(async () => {
@@ -57,6 +72,13 @@
     {#if state?.code_made} Current code made {new Date(state.code_made).toLocaleDateString()}.{:else} No code printed yet.{/if}
   </p>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
+  {#if confirmMessage}
+    <div class="confirm" role="alertdialog" aria-label="Confirm change">
+      <p>{confirmMessage} Save anyway?</p>
+      <button disabled={busy} on:click={confirmSave}>Save anyway</button>
+      <button class="quiet-button" disabled={busy} on:click={() => { confirmMessage = ''; confirmRun = null; }}>Cancel</button>
+    </div>
+  {/if}
   {#if notice}<p class="muted small" role="status">{notice}</p>{/if}
   {#if state?.next}<p class="muted small">From {state.next_from}: {state.next.enabled ? `until ${state.next.until}` : 'off'}.</p>{/if}
 
@@ -90,6 +112,8 @@
   .row { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0; font-size: .85rem; }
   .sticker { align-items: center; display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
   .sticker img { image-rendering: pixelated; max-width: 260px; width: 100%; }
+  .confirm { align-items: center; border: 1px solid var(--fg); display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; padding: 8px; }
+  .confirm p { flex: 1 1 100%; font-size: .85rem; margin: 0; }
   .muted { color: var(--muted); }
   .small { font-size: .78rem; }
   @media print {

@@ -113,6 +113,7 @@ type Repository interface {
 	AddPlanBlock(context.Context, time.Time, PlanBlockSpec, string) (AgentChange, Plan, error)
 	ApplyFollowUpChanges(context.Context, []FollowUpChange, string) (AgentChange, []FollowUp, error)
 	ApplyBlockingSchedule(context.Context, ScheduleChange, string) (AgentChange, policy.Config, error)
+	PreviewBlockingSchedule(context.Context, ScheduleChange) (policy.Config, error)
 	OpenNow(context.Context, Opening, string) (AgentChange, Opening, error)
 	ActiveOpenings(context.Context, time.Time) ([]Opening, error)
 	OpeningsSince(context.Context, time.Time) (int, error)

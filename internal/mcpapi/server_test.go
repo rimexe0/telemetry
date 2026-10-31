@@ -437,3 +437,7 @@ func (fakeRepository) SetSettingsPin(context.Context, string, string) error { re
 func (fakeRepository) UnlockSettings(context.Context, string) (time.Time, error) {
 	return time.Time{}, nil
 }
+
+func (fakeRepository) PreviewBlockingSchedule(context.Context, store.ScheduleChange) (policy.Config, error) {
+	return policy.Config{}, nil
+}

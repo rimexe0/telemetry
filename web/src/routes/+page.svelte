@@ -896,7 +896,7 @@
         onrefresh={refreshPlan} onchangeday={(day) => { selectedDay = day; void refresh(); }} onsave={handleSavePlan} onsetstate={handleBlockState}
         oncreateactivity={handleCreateActivity} onupdateactivity={handleUpdateActivity} />
     {:else if view === 'rules'}
-      <RulesView {activities} {planningSettings} onupdatesettings={handleUpdatePlanningSettings} />
+      <RulesView {activities} {planningSettings} onupdatesettings={handleUpdatePlanningSettings} onleave={() => { view = 'now'; void refresh(); }} />
     {:else if view === 'devices'}
       <section class="devices" aria-labelledby="devices-heading">
         <div class="section-title"><h2 id="devices-heading">Devices</h2><button class="quiet-button" on:click={refreshDevices} disabled={devicesLoading}>{devicesLoading ? 'Refreshing…' : 'Refresh'}</button></div>

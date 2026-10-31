@@ -1,7 +1,13 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { confirmOpening, createOpening, endOpening, getOpenings, saveOpeningRule, type OpeningRule, type OpeningsState } from './api';
+  import { confirmOpening, createOpening, endOpening, getLock, getOpenings, previewOpeningRule, saveOpeningRule, type OpeningRule, type OpeningsState } from './api';
   import { confirmPrompt, confirmText, longestOpening, openingStatus, yesSpot } from './openings';
+  import { saveWarning } from './lock';
+
+  let confirmMessage = '';
+  let confirmRun: (() => Promise<void>) | null = null;
+  // The rule is a setting like the others: hidden while the settings lock holds.
+  let rulesLocked = false;
 
   let state: OpeningsState | null = null;
   let now = new Date();
@@ -36,6 +42,8 @@
   async function load() {
     try {
       state = await getOpenings();
+      rulesLocked = await getLock().then(lock => lock.lock.enabled && lock.state.locked).catch(() => false);
+      if (rulesLocked) editing = false;
     } catch (cause) {
       error = cause instanceof Error ? cause.message : 'Unable to load openings.';
     }
@@ -63,11 +71,25 @@
     purpose = '';
   });
 
+  // Asks the owner to confirm when the change would only start on a later day.
   const saveRule = () => act(async () => {
-    const saved = await saveOpeningRule({ wait_minutes: draft.wait_minutes ?? 0, max_minutes: draft.max_minutes ?? 0, per_day: draft.per_day ?? 0,
-      confirmations: draft.confirmations ?? 0, confirm_seconds: draft.confirm_seconds ?? 0 });
-    editing = false;
-    notice = saved.opening_rule_next_from ? `Saved. It asks less, so it starts on ${saved.opening_rule_next_from}.` : 'Saved.';
+    const rule = { wait_minutes: draft.wait_minutes ?? 0, max_minutes: draft.max_minutes ?? 0, per_day: draft.per_day ?? 0,
+      confirmations: draft.confirmations ?? 0, confirm_seconds: draft.confirm_seconds ?? 0 };
+    const preview = await previewOpeningRule(rule);
+    const run = async () => {
+      await saveOpeningRule(rule);
+      editing = false;
+      notice = preview.waits_until.opening_rule ? `Saved. It starts on ${preview.waits_until.opening_rule}.` : 'Saved.';
+    };
+    const message = saveWarning(preview.waits_until.opening_rule);
+    if (message) { confirmMessage = message; confirmRun = run; return; }
+    await run();
+  });
+  const confirmSave = () => act(async () => {
+    const run = confirmRun;
+    confirmMessage = '';
+    confirmRun = null;
+    if (run) await run();
   });
 </script>
 
@@ -78,10 +100,17 @@
       {[rule.wait_minutes ? `${rule.wait_minutes} min wait` : '', rule.max_minutes ? `at most ${rule.max_minutes} min` : '',
         rule.per_day ? `${state?.used_today ?? 0} of ${rule.per_day} today` : `${state?.used_today ?? 0} today`].filter(Boolean).join(' · ')}
     </span>
-    <button class="quiet-button" disabled={busy} on:click={() => { editing = !editing; draft = { ...rule }; }}>Rule</button>
+    {#if !rulesLocked}<button class="quiet-button" disabled={busy} on:click={() => { editing = !editing; draft = { ...rule }; }}>Rule</button>{/if}
     {#if !asking}<button disabled={busy || usedUp || !state} on:click={() => { asking = true; confirming = false; }}>Open something</button>{/if}
   </div>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
+  {#if confirmMessage}
+    <div class="confirm" role="alertdialog" aria-label="Confirm change">
+      <p>{confirmMessage} Save anyway?</p>
+      <button disabled={busy} on:click={confirmSave}>Save anyway</button>
+      <button class="quiet-button" disabled={busy} on:click={() => { confirmMessage = ''; confirmRun = null; }}>Cancel</button>
+    </div>
+  {/if}
   {#if notice}<p class="muted small" role="status">{notice}</p>{/if}
   {#if state?.next}<p class="muted small">From {state.next_from}: {state.next.wait_minutes ?? 0} min wait, at most {state.next.max_minutes || 'any'} min, {state.next.per_day || 'any number'} a day.</p>{/if}
 
@@ -169,6 +198,8 @@
   .confirm-page h2 { margin: 8px 0; }
   .confirm-page .back { margin-top: 12px; }
   .confirm-page .yes { position: absolute; transform: translate(-50%, -50%); }
+  .confirm { align-items: center; border: 1px solid var(--fg); display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; padding: 8px; }
+  .confirm p { flex: 1 1 100%; font-size: .85rem; margin: 0; }
   .muted { color: var(--muted); }
   .small { font-size: .78rem; }
 </style>

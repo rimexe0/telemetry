@@ -824,3 +824,18 @@ export async function unlockWithPin(pin: string): Promise<string> {
   });
   return result.unlocked_until;
 }
+
+/** Which changed rules would only start on a later day, without saving. */
+export type RulePreview = { waits_until: Record<string, string> };
+
+export async function previewLock(input: { lock?: SettingsLock; bedtime?: Bedtime; extension?: ExtensionRule }): Promise<RulePreview> {
+  return request<RulePreview>('/v1/lock?preview=1', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+}
+
+export async function previewOpeningRule(rule: OpeningRule): Promise<RulePreview> {
+  return request<RulePreview>('/v1/openings/rule?preview=1', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rule) });
+}
+
+export async function previewMorningRule(rule: MorningRule): Promise<RulePreview> {
+  return request<RulePreview>('/v1/morning?preview=1', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rule) });
+}

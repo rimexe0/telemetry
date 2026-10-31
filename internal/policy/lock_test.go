@@ -113,3 +113,46 @@ func TestExtensionRuleOnlyWhileSitesAreBlocked(t *testing.T) {
 		t.Fatal("looser")
 	}
 }
+
+func TestCorrectingARuleBeforeItTakesEffectAppliesAtOnce(t *testing.T) {
+	location, _ := time.LoadLocation("Europe/Istanbul")
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 31, hour, minute, 0, 0, location) }
+	config := outsideConfig(OutsideRule{})
+	// A 20-hour bedtime saved at 09:42 by mistake.
+	mistake := Bedtime{Enabled: true, Start: "12:00", End: "08:00"}
+	config.Bedtime = mistake
+	config.RuleChanged = map[string]time.Time{"bedtime": at(9, 42)}
+	fixed := Bedtime{Enabled: true, Start: "00:00", End: "08:00"}
+	if !mistake.Looser(fixed) {
+		t.Fatal("the fix asks less")
+	}
+	if !config.Correcting("bedtime", at(9, 57)) {
+		t.Fatal("a fix before the bedtime ever started must apply at once")
+	}
+	if config.Correcting("bedtime", at(12, 30)) {
+		t.Fatal("once it has held, asking less waits like any loosening")
+	}
+	// Other rules get only the ten minutes.
+	config.RuleChanged["opening_rule"] = at(9, 0)
+	if !config.Correcting("opening_rule", at(9, 9)) || config.Correcting("opening_rule", at(9, 11)) {
+		t.Fatal("ten minutes to correct other rules")
+	}
+	if config.Correcting("morning", at(9, 0)) {
+		t.Fatal("a rule never changed is not being corrected")
+	}
+}
+
+func TestBedtimeTookEffect(t *testing.T) {
+	location, _ := time.LoadLocation("Europe/Istanbul")
+	at := func(day, hour int) time.Time { return time.Date(2026, 10, day, hour, 0, 0, 0, location) }
+	rule := Bedtime{Enabled: true, Start: "23:00", End: "07:00"}
+	if BedtimeTookEffect(rule, "Europe/Istanbul", at(31, 10), at(31, 22)) {
+		t.Fatal("not yet started")
+	}
+	if !BedtimeTookEffect(rule, "Europe/Istanbul", at(31, 10), at(31, 23)) {
+		t.Fatal("started at 23:00")
+	}
+	if !BedtimeTookEffect(rule, "Europe/Istanbul", at(31, 2), at(31, 3)) {
+		t.Fatal("set while already in its hours")
+	}
+}

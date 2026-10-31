@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -129,6 +131,12 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 			return ScheduleChange{}, config, 0, fmt.Errorf("%w: set the PIN in the panel before turning the settings lock on", ErrInvalidAgentChange)
 		}
 	}
+	// The rules in force before this change, to tell which ones it changes.
+	before := map[string]any{
+		"outside": config.OutsideAt(now), "opening_rule": config.OpeningRuleAt(now), "morning": config.MorningAt(now),
+		"settings_lock": config.SettingsLockAt(now), "bedtime": config.BedtimeAt(now), "extension": config.ExtensionRuleAt(now),
+	}
+	correcting := func(name string) bool { return config.Correcting(name, now) }
 	closed, times, addresses := config.ClosedByDefault, append([]policy.Window{}, config.DistractionTimes...), append([]string{}, config.OpenAddresses...)
 	locked := config.PlanGate.FromWake
 	outside := config.OutsideAt(now)
@@ -188,25 +196,36 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 		extension = *change.Extension
 	}
 	config = config.WithExtensionRule(extension, now)
-	if immediate {
-		if change.Extension != nil {
-			config.Extension, config.ExtensionNext, config.ExtensionNextFrom = *change.Extension, nil, ""
-		}
-		// Unlocked with the PIN: what was asked applies today.
-		if change.Outside != nil {
-			config.Outside, config.OutsideNext, config.OutsideNextFrom = *change.Outside, nil, ""
-		}
-		if change.OpeningRule != nil {
-			config.OpeningRule, config.OpeningRuleNext, config.OpeningRuleNextFrom = *change.OpeningRule, nil, ""
-		}
-		if change.Morning != nil {
-			config.Morning, config.MorningNext, config.MorningNextFrom = *change.Morning, nil, ""
-		}
-		if change.SettingsLock != nil {
-			config.SettingsLock, config.SettingsLockNext, config.SettingsLockNextFrom = *change.SettingsLock, nil, ""
-		}
-		if change.Bedtime != nil {
-			config.Bedtime, config.BedtimeNext, config.BedtimeNextFrom = *change.Bedtime, nil, ""
+	// Unlocked with the PIN, or correcting a rule that only just changed or
+	// has not yet taken effect: what was asked applies today.
+	if change.Extension != nil && (immediate || correcting("extension")) {
+		config.Extension, config.ExtensionNext, config.ExtensionNextFrom = *change.Extension, nil, ""
+	}
+	if change.Outside != nil && (immediate || correcting("outside")) {
+		config.Outside, config.OutsideNext, config.OutsideNextFrom = *change.Outside, nil, ""
+	}
+	if change.OpeningRule != nil && (immediate || correcting("opening_rule")) {
+		config.OpeningRule, config.OpeningRuleNext, config.OpeningRuleNextFrom = *change.OpeningRule, nil, ""
+	}
+	if change.Morning != nil && (immediate || correcting("morning")) {
+		config.Morning, config.MorningNext, config.MorningNextFrom = *change.Morning, nil, ""
+	}
+	if change.SettingsLock != nil && (immediate || correcting("settings_lock")) {
+		config.SettingsLock, config.SettingsLockNext, config.SettingsLockNextFrom = *change.SettingsLock, nil, ""
+	}
+	if change.Bedtime != nil && (immediate || correcting("bedtime")) {
+		config.Bedtime, config.BedtimeNext, config.BedtimeNextFrom = *change.Bedtime, nil, ""
+	}
+	after := map[string]any{
+		"outside": config.OutsideAt(now), "opening_rule": config.OpeningRuleAt(now), "morning": config.MorningAt(now),
+		"settings_lock": config.SettingsLockAt(now), "bedtime": config.BedtimeAt(now), "extension": config.ExtensionRuleAt(now),
+	}
+	for name := range before {
+		if !reflect.DeepEqual(before[name], after[name]) {
+			changed := map[string]time.Time{}
+			maps.Copy(changed, config.RuleChanged)
+			changed[name] = now
+			config.RuleChanged = changed
 		}
 	}
 	if change.LockUntilPlanned != nil {
@@ -261,6 +280,18 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 	var version int64
 	err = tx.QueryRow(ctx, `INSERT INTO policy_versions (config, note) VALUES ($1::jsonb, $2) RETURNING id`, string(encoded), note).Scan(&version)
 	return previous, config, version, err
+}
+
+// PreviewBlockingSchedule returns the config a change would give, without
+// saving it, so the owner can see before saving whether it waits a day.
+func (p *Postgres) PreviewBlockingSchedule(ctx context.Context, change ScheduleChange) (policy.Config, error) {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return policy.Config{}, err
+	}
+	defer tx.Rollback(ctx)
+	_, config, _, err := applyScheduleTx(ctx, tx, change, "preview")
+	return config, err
 }
 
 // ApplyBlockingSchedule changes when distractions are closed and logs it.
