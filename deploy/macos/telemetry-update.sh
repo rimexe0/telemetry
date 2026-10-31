@@ -27,6 +27,7 @@ tag=$(jq -r .tag_name <<<"$release")
 [[ "$tag" == "$(cat "$refused" 2>/dev/null)" ]] && exit 0
 
 files=(telemetry-desktop-macos.zip telemetry-panel-macos.zip telemetry-update-macos.sh release.txt)
+self="${0:A}"
 work="$root/updates/$tag"
 mkdir -p "$work"
 cd "$work"
@@ -40,6 +41,13 @@ for name in $files; do
   grep -q " $name\$" SHA256SUMS || { log "$name is not in the signed list"; exit 1; }
 done
 grep -E " (${(j:|:)files})\$" SHA256SUMS | shasum -a 256 -c --quiet -
+# A newer updater runs first, so fixes to it reach the Mac even when the old
+# one could not install a release.
+if ! cmp -s telemetry-update-macos.sh "$self" && zsh -n telemetry-update-macos.sh; then
+  install -m 755 telemetry-update-macos.sh "$self.new"
+  mv -f "$self.new" "$self"
+  exec /bin/zsh "$self"
+fi
 log "installing $(cat release.txt)"
 
 rm -rf new && mkdir new
@@ -54,6 +62,17 @@ if [[ "$(requirement "new/Telemetry Desktop.app")" != "$(requirement "$desktop")
 fi
 
 job="gui/$(id -u)/$label"
+# launchd ties a loaded job to its program's code signature and will not
+# start a replaced app until the job is loaded again. The guard runs the same
+# app.
+reload() {
+  local name
+  for name in $label com.rime.telemetry.guard; do
+    launchctl bootout "gui/$(id -u)/$name" 2>/dev/null || true
+    while launchctl print "gui/$(id -u)/$name" >/dev/null 2>&1; do sleep 0.5; done
+    launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/$name.plist"
+  done
+}
 pid() { launchctl print "$job" 2>/dev/null | awk '$1 == "pid" {print $3; exit}'; }
 # Healthy means running with the same process for half a minute.
 healthy() {
@@ -68,12 +87,12 @@ healthy() {
 rm -rf "before" && mkdir before
 mv "$desktop" "before/"
 mv "new/Telemetry Desktop.app" "$desktop"
-launchctl kickstart -k "$job" || true
+reload || true
 if ! healthy; then
   log "$tag did not keep running; putting the previous collector back"
   mv "$desktop" "new/Telemetry Desktop.failed.app"
   mv "before/Telemetry Desktop.app" "$desktop"
-  launchctl kickstart -k "$job" || true
+  reload
   echo "$tag" > "$refused"
   exit 1
 fi
@@ -84,13 +103,6 @@ mv "new/Telemetry.app" "$panel"
 
 echo "$tag" > "$installed"
 log "$tag installed"
-
-# The updater updates itself last, once the release has proven healthy.
-self="${0:A}"
-if ! cmp -s telemetry-update-macos.sh "$self" && zsh -n telemetry-update-macos.sh; then
-  install -m 755 telemetry-update-macos.sh "$self.new"
-  mv -f "$self.new" "$self"
-fi
 
 # Keep the last three downloads, with their saved previous versions.
 downloads=("$root"/updates/r*(Nn/))
