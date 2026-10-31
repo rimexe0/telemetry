@@ -77,3 +77,31 @@ export const fixedOverlaps = (blocks: PlanBlock[]): [PlanBlock, PlanBlock][] => 
 
 export const draftKey = (block: Omit<PlanBlock, 'id' | 'state' | 'state_note' | 'position'>) =>
   `${block.activity_id ?? ''}|${block.title}|${block.start_time}|${block.duration_minutes}|${block.fixed ? 1 : 0}`;
+
+/** The day `offset` days from `day`, both as YYYY-MM-DD. */
+export const shiftDay = (day: string, offset: number) => {
+  const date = new Date(`${day}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + offset);
+  return date.toISOString().slice(0, 10);
+};
+
+/** "Sat 31 Oct", the way the plan header names a day. */
+export const dayLabel = (day: string) =>
+  new Date(`${day}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+
+/**
+ * The one action a block shows by its title; the rest sit under "More".
+ * Starting comes first for a block not yet begun, finishing for one under way.
+ */
+export const primaryAction = (state: PlanBlock['state']): { state: PlanBlock['state']; label: string; ret?: boolean } | null => {
+  switch (state) {
+    case 'planned': return { state: 'active', label: 'Start' };
+    case 'active': return { state: 'done', label: 'Done' };
+    case 'done': return null;
+    default: return { state: 'active', label: 'Return to it', ret: true };
+  }
+};
+
+/** Whether a block is under way at `now`. */
+export const blockNow = (block: PlanBlock, now: number) =>
+  Date.parse(block.start_time) <= now && now < Date.parse(blockEnd(block));

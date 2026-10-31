@@ -50,3 +50,26 @@ describe('planning helpers', () => {
     expect(stateLabel.switched).toBe('Switched');
   });
 });
+
+import { blockNow, dayLabel, primaryAction, shiftDay } from './plan';
+
+describe('plan page helpers', () => {
+  it('moves between days across months', () => {
+    expect(shiftDay('2026-10-31', 1)).toBe('2026-11-01');
+    expect(shiftDay('2026-11-01', -1)).toBe('2026-10-31');
+    expect(dayLabel('2026-10-31')).toBe('Sat 31 Oct');
+  });
+
+  it('offers one main action by state', () => {
+    expect(primaryAction('planned')).toEqual({ state: 'active', label: 'Start' });
+    expect(primaryAction('active')).toEqual({ state: 'done', label: 'Done' });
+    expect(primaryAction('done')).toBeNull();
+    expect(primaryAction('switched')).toEqual({ state: 'active', label: 'Return to it', ret: true });
+  });
+
+  it('knows the block under way', () => {
+    const block = { id: 1, title: 'x', start_time: '2026-10-31T09:00:00+03:00', duration_minutes: 60, fixed: false, state: 'planned' as const, state_note: '', position: 0 };
+    expect(blockNow(block, Date.parse('2026-10-31T09:30:00+03:00'))).toBe(true);
+    expect(blockNow(block, Date.parse('2026-10-31T10:00:00+03:00'))).toBe(false);
+  });
+});

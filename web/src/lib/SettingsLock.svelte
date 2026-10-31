@@ -2,6 +2,9 @@
   import { getLock, saveLock, setPin, unlockWithPin, type Bedtime, type ExtensionRule, type LockResponse } from './api';
   import { formatWindows, parseWindows } from './lock';
 
+  /** Which setting this card shows; each loads the same settings. */
+  export let part: 'lock' | 'bedtime' | 'extension' = 'lock';
+
   let data: LockResponse | null = null;
   let busy = false;
   let error = '';
@@ -74,7 +77,8 @@
   });
 </script>
 
-<section class="lock" aria-labelledby="lock-heading">
+<section class="lock" aria-labelledby="{part}-heading">
+  {#if part === 'lock'}
   <h3 id="lock-heading">Settings lock</h3>
   <p class="muted small">
     {#if !data}Loading…
@@ -83,8 +87,6 @@
     {:else if data.lock.enabled}On, not holding now.{:else}Off.{/if}
     {#if data?.lock.enabled} PIN {data.state.pin_open ? 'accepted now' : `accepted ${formatWindows(data.lock.pin_windows) || 'any time'}`}.{/if}
   </p>
-  {#if error}<p class="error" role="alert">{error}</p>{/if}
-  {#if notice}<p class="muted small" role="status">{notice}</p>{/if}
   {#if data?.lock_next}<p class="muted small">From {data.lock_next_from}: {data.lock_next.enabled ? formatWindows(data.lock_next.windows) || 'always' : 'off'}.</p>{/if}
 
   {#if data?.lock.enabled && data.state.pin_set}
@@ -109,28 +111,34 @@
     <button disabled={busy || !newPin}>{data?.state.pin_set ? 'Change PIN' : 'Set PIN'}</button>
     <span class="muted small">Let the person who holds it type it.</span>
   </form>
-
-  <h4>Bedtime</h4>
+  <p class="muted small">Times as 09:00-18:00, separated by commas. Empty locked times means always.</p>
+  {:else if part === 'bedtime'}
+  <h3 id="bedtime-heading">Bedtime</h3>
+  <p class="muted small">{bedtime.enabled ? `On, ${bedtime.start}–${bedtime.end}.` : 'Off.'} Screens lock when used; nothing is closed, so agents keep running.</p>
+  {#if data?.bedtime_next}<p class="muted small">From {data.bedtime_next_from}: {data.bedtime_next.enabled ? `${data.bedtime_next.start}–${data.bedtime_next.end}` : 'off'}.</p>{/if}
   <form class="row" on:submit|preventDefault={saveBedtime}>
     <label><input type="checkbox" bind:checked={bedtime.enabled} /> On</label>
     <label>From <input type="time" bind:value={bedtime.start} /></label>
     <label>to <input type="time" bind:value={bedtime.end} /></label>
     <button disabled={busy}>Save</button>
-    <span class="muted small">Screens lock when used; nothing is closed.</span>
   </form>
-
-  <h4>Browser extension</h4>
+  {:else}
+  <h3 id="extension-heading">Browser extension</h3>
+  <p class="muted small">{extension.enabled ? `On: a browser without a running extension is hidden after ${extension.quiet_seconds} s while sites are blocked.` : 'Off.'} Hidden, never quit; its Extensions page stays usable.</p>
+  {#if data?.extension_next}<p class="muted small">From {data.extension_next_from}: {data.extension_next.enabled ? `${data.extension_next.quiet_seconds} s` : 'off'}.</p>{/if}
   <form class="row" on:submit|preventDefault={saveExtension}>
     <label><input type="checkbox" bind:checked={extension.enabled} /> Hide a browser without it</label>
     <label>after <input type="number" min="30" max="3600" bind:value={extension.quiet_seconds} /> s</label>
     <button disabled={busy}>Save</button>
-    <span class="muted small">Only while sites are blocked; the browser is hidden, never quit, and its Extensions page stays open.</span>
   </form>
+  {/if}
+  {#if error}<p class="error" role="alert">{error}</p>{/if}
+  {#if notice}<p class="muted small" role="status">{notice}</p>{/if}
 </section>
 
 <style>
   .lock { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 10px; }
-  h3, h4 { margin: 6px 0; }
+  h3 { margin: 6px 0; }
   .row { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0; font-size: .85rem; }
   .row input[type='number'] { width: 4.5em; }
   .row input[type='password'] { width: 8em; }

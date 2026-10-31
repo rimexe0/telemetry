@@ -7,12 +7,8 @@
   import CollectionStatus from '$lib/CollectionStatus.svelte';
   import PlanView from '$lib/PlanView.svelte';
   import ExecutionNow from '$lib/ExecutionNow.svelte';
-  import ReplanReview from '$lib/ReplanReview.svelte';
-  import ContextRules from '$lib/ContextRules.svelte';
-  import BlockedApps from '$lib/BlockedApps.svelte';
   import Openings from '$lib/Openings.svelte';
-  import MorningCode from '$lib/MorningCode.svelte';
-  import SettingsLock from '$lib/SettingsLock.svelte';
+  import RulesView from '$lib/RulesView.svelte';
   import ActivityView from '$lib/ActivityView.svelte';
   import { performNowAction, type NowAction, type NowSnapshot, type NowView } from '$lib/execution';
   import { dayKey, dayStart } from '$lib/health';
@@ -72,7 +68,7 @@
 
   const fixtureMode = import.meta.env.VITE_TELEMETRY_FIXTURE === '1';
   const snapshotMode = import.meta.env.VITE_TELEMETRY_SNAPSHOT === '1';
-  let view: 'now' | 'activity' | 'day' | 'plan' | 'health' | 'collection' | 'devices' = 'now';
+  let view: 'now' | 'activity' | 'day' | 'plan' | 'rules' | 'health' | 'collection' | 'devices' = 'now';
   let selectedDay = dayKey(Date.now());
   let dayObservations: Observation[] = [];
   let dayLoading = false;
@@ -113,7 +109,7 @@
   let authenticated = false;
   let checkingSession = true;
   let loading = false;
-  let loadingView: 'now' | 'activity' | 'day' | 'plan' | 'health' | 'collection' | 'devices' | undefined;
+  let loadingView: 'now' | 'activity' | 'day' | 'plan' | 'rules' | 'health' | 'collection' | 'devices' | undefined;
   let refreshQueued = false;
   let refreshQueuedForceDay = false;
   let error = '';
@@ -570,7 +566,7 @@
         sources = await listSources();
         if (requestedView === 'health') await refreshHealth();
         else if (requestedView === 'devices') await refreshDevices();
-        else if (requestedView === 'plan') await refreshPlan();
+        else if (requestedView === 'plan' || requestedView === 'rules') await refreshPlan();
         else await refreshDay(forceDay);
       }
       if (selectedObservation) selectedObservation = (requestedView === 'health' ? healthObservations : requestedView === 'day' ? dayObservations : [...observations, ...(collectionStatus?.devices.flatMap(d => d.resource_history) ?? [])]).find(event => event.source_record_key === selectedObservation?.source_record_key && event.source_instance_key === selectedObservation?.source_instance_key);
@@ -850,6 +846,7 @@
       <button class:active={view === 'activity'} aria-pressed={view === 'activity'} on:click={() => { view = 'activity'; }}>Activity</button>
       <button class:active={view === 'day'} aria-pressed={view === 'day'} on:click={() => { view = 'day'; void refresh(); }}>Day</button>
       <button class:active={view === 'plan'} aria-pressed={view === 'plan'} on:click={() => { view = 'plan'; void refresh(); }}>Plan</button>
+      <button class:active={view === 'rules'} aria-pressed={view === 'rules'} on:click={() => { view = 'rules'; void refresh(); }}>Rules</button>
       <button class:active={view === 'health'} aria-pressed={view === 'health'} on:click={() => { view = 'health'; void refresh(); }}>Health</button>
       <button class:active={view === 'collection'} aria-pressed={view === 'collection'} on:click={() => { view = 'collection'; void refresh(); }}>Sources</button>
       <button class:active={view === 'devices'} aria-pressed={view === 'devices'} on:click={() => { view = 'devices'; void refresh(); }}>Devices</button>
@@ -892,16 +889,13 @@
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       <HealthHistory observations={healthObservations} loading={healthLoading} error={healthError} oninspect={(o) => selectedObservation = o} />
     {:else if view === 'plan'}
-      <PlanView day={selectedDay} {activities} {plan} activitiesError={activitiesError} planError={planError}
-        {planVersions} {planningSettings} assessments={planAssessments} {planEvidenceLoading} {planEvidenceError}
+      <PlanView day={selectedDay} today={dayKey(Date.now())} {activities} {plan} {activitiesLoading} {planLoading} activitiesError={activitiesError} planError={planError}
+        {planVersions} assessments={planAssessments} {planEvidenceLoading} {planEvidenceError}
         {currentAlignment} currentAlignmentError={currentAlignmentError}
-        onrefresh={refreshPlan} onsave={handleSavePlan} onsetstate={handleBlockState}
-        oncreateactivity={handleCreateActivity} onupdateactivity={handleUpdateActivity} onupdatesettings={handleUpdatePlanningSettings} />
-      <ReplanReview day={selectedDay} {plan} onchanged={refreshPlan} />
-      <ContextRules {activities} />
-      <BlockedApps />
-      <MorningCode />
-      <SettingsLock />
+        onrefresh={refreshPlan} onchangeday={(day) => { selectedDay = day; void refresh(); }} onsave={handleSavePlan} onsetstate={handleBlockState}
+        oncreateactivity={handleCreateActivity} onupdateactivity={handleUpdateActivity} />
+    {:else if view === 'rules'}
+      <RulesView {activities} {planningSettings} onupdatesettings={handleUpdatePlanningSettings} />
     {:else if view === 'devices'}
       <section class="devices" aria-labelledby="devices-heading">
         <div class="section-title"><h2 id="devices-heading">Devices</h2><button class="quiet-button" on:click={refreshDevices} disabled={devicesLoading}>{devicesLoading ? 'Refreshing…' : 'Refresh'}</button></div>

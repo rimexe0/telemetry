@@ -10,7 +10,8 @@
   let loadedFor = '';
   let error = '';
   let busy = false;
-  let open = false;
+  /** The form is opened from the plan header's "Something changed". */
+  export let open = false;
   let reason = '';
   let start = '';
   let end = '';
@@ -59,12 +60,8 @@
   }
 </script>
 
-{#if plan}
-  <section class="replan" aria-labelledby="replan-heading">
-    <div class="head">
-      <h3 id="replan-heading">Replan after a disruption</h3>
-      <button class="quiet-button" on:click={() => open = !open}>{open ? 'Cancel' : 'Something changed'}</button>
-    </div>
+{#if plan && (open || pending.length || error)}
+  <section class="replan" aria-label="Replan after a disruption">
     {#if open}
       <form on:submit|preventDefault={prepare}>
         <label>What changed? <input bind:value={reason} maxlength="500" required placeholder="e.g. appointment ran late" /></label>
@@ -72,6 +69,7 @@
         <label>until <input type="time" bind:value={end} /></label>
         <label>Available until <input type="time" bind:value={availableUntil} required /></label>
         <button type="submit" disabled={busy}>Prepare proposal</button>
+        <button type="button" class="quiet-button" on:click={() => open = false}>Cancel</button>
       </form>
       <p class="muted small">Fixed and finished blocks stay where they are. Unfinished work moves later in its current order; anything that does not fit is parked, not shortened. Nothing changes until you accept.</p>
     {/if}
@@ -96,10 +94,8 @@
 {/if}
 
 <style>
-  .replan { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 10px; }
-  .head { align-items: center; display: flex; justify-content: space-between; }
-  .head h3 { margin: 0; }
-  form { align-items: end; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .replan { border: 1px solid var(--line); margin: 10px 0; padding: 10px; }
+  form { align-items: end; display: flex; flex-wrap: wrap; gap: 6px; }
   form label { color: var(--muted); display: flex; flex-direction: column; font-size: .75rem; gap: 2px; }
   form label:first-child { flex: 1; min-width: 200px; }
   .proposal { background: var(--soft); margin-top: 10px; padding: 8px; }
