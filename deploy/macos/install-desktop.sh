@@ -49,4 +49,16 @@ if ! cmp -s deploy/macos/$guard.plist "$guard_plist"; then
   while launchctl print "gui/$(id -u)/$guard" >/dev/null 2>&1; do sleep 0.5; done
   launchctl bootstrap "gui/$(id -u)" "$guard_plist"
 fi
+# The updater installs signed GitHub releases from now on.
+mkdir -p "$root/bin"
+install -m 755 deploy/macos/telemetry-update.sh "$root/bin/telemetry-update"
+install -m 644 deploy/release-signers "$root/release-signers"
+updater="com.rime.telemetry.update"
+updater_plist="$HOME/Library/LaunchAgents/$updater.plist"
+if ! cmp -s deploy/macos/$updater.plist "$updater_plist"; then
+  cp deploy/macos/$updater.plist "$updater_plist"
+  launchctl bootout "gui/$(id -u)/$updater" 2>/dev/null || true
+  while launchctl print "gui/$(id -u)/$updater" >/dev/null 2>&1; do sleep 0.5; done
+  launchctl bootstrap "gui/$(id -u)" "$updater_plist"
+fi
 echo "installed $(codesign -dr - "$app" 2>&1 | tail -1)"
