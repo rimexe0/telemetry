@@ -273,3 +273,52 @@ func TestExtensionsPageIsRecognisedByItsTitle(t *testing.T) {
 		}
 	}
 }
+
+func TestWindDownGrayscaleOnlyUndoesWhatItTurnedOn(t *testing.T) {
+	q, err := queue.Open(filepath.Join(t.TempDir(), "q.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Close()
+	host := Host{Queue: q, DeviceID: "mac"}
+	screen := false
+	blocker := &Blocker{GetGrayscale: func() (bool, error) { return screen, nil }, SetGrayscale: func(on bool) error { screen = on; return nil }}
+	now := time.Now().UTC()
+	load := func(gray bool) {
+		body, _ := json.Marshal(map[string]any{"timeline": []policy.Segment{{From: now.Add(-time.Minute), To: now.Add(time.Hour), Decision: policy.Decision{Mode: policy.ModeClosed, Grayscale: gray}}}})
+		if err := blocker.load(body, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := context.Background()
+	load(true)
+	blocker.grayscale(ctx, host, now)
+	if !screen {
+		t.Fatal("not gray in the wind-down")
+	}
+	load(false)
+	blocker.grayscale(ctx, host, now)
+	if screen {
+		t.Fatal("still gray after the wind-down")
+	}
+	// The owner's own grayscale stays on.
+	screen = true
+	load(true)
+	blocker.grayscale(ctx, host, now)
+	load(false)
+	blocker.grayscale(ctx, host, now)
+	if !screen {
+		t.Fatal("turned off the owner's own grayscale")
+	}
+	// A restart remembers that it turned the filter on.
+	screen = false
+	load(true)
+	blocker.grayscale(ctx, host, now)
+	restarted := &Blocker{GetGrayscale: blocker.GetGrayscale, SetGrayscale: blocker.SetGrayscale}
+	body, _ := json.Marshal(map[string]any{"timeline": []policy.Segment{{From: now.Add(-time.Minute), To: now.Add(time.Hour), Decision: policy.Decision{Mode: policy.ModeClosed}}}})
+	_ = restarted.load(body, now)
+	restarted.grayscale(ctx, host, now)
+	if screen {
+		t.Fatal("a restart left the screen gray")
+	}
+}

@@ -156,3 +156,38 @@ func TestBedtimeTookEffect(t *testing.T) {
 		t.Fatal("set while already in its hours")
 	}
 }
+
+func TestWindDownTurnsScreensGrayBeforeBedtime(t *testing.T) {
+	location, _ := time.LoadLocation("Europe/Istanbul")
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 31, hour, minute, 0, 0, location) }
+	config := outsideConfig(OutsideRule{})
+	config.Bedtime = Bedtime{Enabled: true, Start: "00:00", End: "08:00", WindDownMinutes: 60}
+	if err := config.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	facts := Facts{PlanExists: true}
+	if Evaluate(config, 1, facts, at(22, 59)).Grayscale {
+		t.Fatal("gray before the wind-down")
+	}
+	windDown := Evaluate(config, 1, facts, at(23, 0))
+	if !windDown.Grayscale || windDown.Mode == ModeBedtime || windDown.LockScreen {
+		t.Fatalf("wind-down only grays the screen: %+v", windDown)
+	}
+	if bed := Evaluate(config, 1, facts, at(3, 0)); !bed.Grayscale || bed.Mode != ModeBedtime {
+		t.Fatalf("bedtime stays gray: %+v", bed)
+	}
+	if Evaluate(config, 1, facts, at(8, 0)).Grayscale {
+		t.Fatal("gray after bedtime")
+	}
+	emergency := Facts{PlanExists: true, Emergency: &Emergency{StartedAt: at(23, 10), Until: at(23, 20)}}
+	if Evaluate(config, 1, emergency, at(23, 15)).Grayscale {
+		t.Fatal("gray during an emergency unlock")
+	}
+	segments := Timeline(config, 1, facts, at(22, 0), at(23, 30))
+	if len(segments) != 2 || !segments[1].From.Equal(at(23, 0).UTC()) || !segments[1].Decision.Grayscale {
+		t.Fatalf("timeline: %+v", segments)
+	}
+	if !(Bedtime{Enabled: true, Start: "00:00", End: "08:00", WindDownMinutes: 60}).Looser(Bedtime{Enabled: true, Start: "00:00", End: "08:00", WindDownMinutes: 30}) {
+		t.Fatal("a shorter wind-down asks less")
+	}
+}

@@ -41,6 +41,8 @@ class TelemetryAccessibilityService : AccessibilityService() {
         val pkg = event.packageName?.toString().orEmpty()
         if (pkg.isBlank() || pkg == "com.android.systemui") return
         val decision = currentDecision()
+        // The wind-down turns the screen gray on time, at the next app switch.
+        runCatching { Grayscale.reconcile(this, decision) }
         if (!BlockPolicy.shouldBlock(decision, pkg, systemSafe)) {
             // Keyboards, popups and toasts are not full screen; the blocked app
             // is still underneath them.

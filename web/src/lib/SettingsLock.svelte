@@ -131,12 +131,13 @@
   <p class="muted small">Times as 09:00-18:00, separated by commas. Empty locked times means always.</p>
   {:else if part === 'bedtime'}
   <h3 id="bedtime-heading">Bedtime</h3>
-  <p class="muted small">{bedtime.enabled ? `On, ${bedtime.start}–${bedtime.end}.` : 'Off.'} Screens lock when used; nothing is closed, so agents keep running.</p>
+  <p class="muted small">{bedtime.enabled ? `On, ${bedtime.start}–${bedtime.end}${bedtime.wind_down_minutes ? `, screens gray from ${bedtime.wind_down_minutes} min before` : ''}.` : 'Off.'} Screens lock when used; nothing is closed, so agents keep running.</p>
   {#if data?.bedtime_next}<p class="muted small">From {data.bedtime_next_from}: {data.bedtime_next.enabled ? `${data.bedtime_next.start}–${data.bedtime_next.end}` : 'off'}.</p>{/if}
   <form class="row" on:submit|preventDefault={saveBedtime}>
     <label><input type="checkbox" bind:checked={bedtime.enabled} /> On</label>
     <label>From <input type="time" bind:value={bedtime.start} /></label>
     <label>to <input type="time" bind:value={bedtime.end} /></label>
+    <label>gray from <input type="number" min="0" max="180" bind:value={bedtime.wind_down_minutes} /> min before</label>
     <button disabled={busy}>Save</button>
   </form>
   {:else}

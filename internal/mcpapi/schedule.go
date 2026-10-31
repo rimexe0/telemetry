@@ -85,6 +85,8 @@ type BedtimeIO struct {
 	Enabled bool   `json:"enabled"`
 	Start   string `json:"start,omitempty" jsonschema:"local HH:MM"`
 	End     string `json:"end,omitempty" jsonschema:"local HH:MM; at or before start means past midnight"`
+	// WindDownMinutes turns screens grayscale before bedtime.
+	WindDownMinutes int `json:"wind_down_minutes,omitempty" jsonschema:"minutes before bedtime the screens turn grayscale, 0 through 180"`
 }
 
 type ExtensionIO struct {
@@ -276,7 +278,7 @@ func scheduleOutput(ctx context.Context, repository store.Repository, config pol
 	}
 	output.SettingsLock.Locked = output.SettingsLock.State.Locked
 	bedtime := config.BedtimeAt(now)
-	output.Bedtime = BedtimeIO{Enabled: bedtime.Enabled, Start: bedtime.Start, End: bedtime.End}
+	output.Bedtime = BedtimeIO{Enabled: bedtime.Enabled, Start: bedtime.Start, End: bedtime.End, WindDownMinutes: bedtime.WindDownMinutes}
 	output.Extension = ExtensionIO(config.ExtensionRuleAt(now))
 	rule := config.OutsideAt(now)
 	output.Outside = OutsideOutput{Rule: outsideIO(rule), Notes: outsideNotes}
@@ -333,7 +335,7 @@ func addScheduleTools(server *mcp.Server, repository store.Repository, now func(
 			change.Extension = (*policy.ExtensionRule)(extension)
 		}
 		if bedtime := input.Bedtime; bedtime != nil {
-			change.Bedtime = &policy.Bedtime{Enabled: bedtime.Enabled, Start: bedtime.Start, End: bedtime.End}
+			change.Bedtime = &policy.Bedtime{Enabled: bedtime.Enabled, Start: bedtime.Start, End: bedtime.End, WindDownMinutes: bedtime.WindDownMinutes}
 		}
 		if rule := input.Morning; rule != nil {
 			change.Morning = &policy.MorningRule{Enabled: rule.Enabled, FromWake: rule.FromWake, From: rule.From, Until: rule.Until, LockAll: rule.LockAll}

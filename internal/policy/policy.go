@@ -234,10 +234,12 @@ type Decision struct {
 	LockScreen bool `json:"lock_screen,omitempty"`
 	// RequireExtensionSeconds asks desktops to hide a browser whose
 	// Telemetry extension has been quiet this long; zero asks nothing.
-	RequireExtensionSeconds int      `json:"require_extension_seconds,omitempty"`
-	BlockedGroups           []string `json:"blocked_groups"`
-	Blocked                 Targets  `json:"blocked"`
-	AlwaysAllowed           Targets  `json:"always_allowed"`
+	RequireExtensionSeconds int `json:"require_extension_seconds,omitempty"`
+	// Grayscale asks devices to turn their screens grayscale (wind-down).
+	Grayscale     bool     `json:"grayscale,omitempty"`
+	BlockedGroups []string `json:"blocked_groups"`
+	Blocked       Targets  `json:"blocked"`
+	AlwaysAllowed Targets  `json:"always_allowed"`
 	// OpenAddresses are pages that stay open although their site is blocked.
 	OpenAddresses []string `json:"open_addresses,omitempty"`
 	Basis         []string `json:"basis"`
@@ -375,7 +377,7 @@ func (f Facts) Validate() error {
 // Evaluate returns the decision at one instant: the decision the plan and
 // the schedule give, with the owner's current openings lifted from it.
 func Evaluate(config Config, version int64, facts Facts, at time.Time) Decision {
-	return withExtension(config, evaluateOpened(config, version, facts, at), at)
+	return withGrayscale(config, withExtension(config, evaluateOpened(config, version, facts, at), at), at)
 }
 
 func evaluateOpened(config Config, version int64, facts Facts, at time.Time) Decision {

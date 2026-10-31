@@ -43,8 +43,16 @@ type Blocker struct {
 	// OpenExtensions opens a browser's Extensions page; AppOfConnection
 	// finds the app behind an extension's request. Both default to the
 	// desktop package.
-	OpenExtensions  func(bundleID string) error
-	Hide            func(title, reason string, pid int)
+	OpenExtensions func(bundleID string) error
+	Hide           func(title, reason string, pid int)
+	// GetGrayscale and SetGrayscale read and set the screen's grayscale
+	// filter; both default to the desktop package.
+	GetGrayscale func() (bool, error)
+	SetGrayscale func(bool) error
+	// grayscaleOwned is true while the blocker has the filter on; it only
+	// turns off what it turned on.
+	grayscaleOwned  bool
+	grayscaleLoaded bool
 	AppOfConnection func(remote string) (string, error)
 	extensions      extensionState
 
@@ -139,6 +147,7 @@ func (b *Blocker) Run(ctx context.Context, host Host) error {
 		case <-refresh.C:
 			b.refresh(ctx, host)
 		case <-sample.C:
+			b.grayscale(ctx, host, time.Now())
 			if b.lockScreen(ctx, host, platform, time.Now()) {
 				continue
 			}

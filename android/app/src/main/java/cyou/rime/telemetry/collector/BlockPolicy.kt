@@ -12,6 +12,8 @@ data class BlockDecision(
     val blockAll: Boolean,
     val blocked: Set<String>,
     val alwaysAllowed: Set<String>,
+    /** The wind-down before bedtime: the screen turns grayscale. */
+    val grayscale: Boolean = false,
 ) {
     val active: Boolean get() = blockAll || blocked.isNotEmpty()
 }
@@ -48,6 +50,7 @@ object BlockPolicy {
         blockAll = decision.optBoolean("block_all"),
         blocked = strings(decision.optJSONObject("blocked")?.optJSONArray("android_packages")),
         alwaysAllowed = strings(decision.optJSONObject("always_allowed")?.optJSONArray("android_packages")),
+        grayscale = decision.optBoolean("grayscale"),
     )
 
     /**

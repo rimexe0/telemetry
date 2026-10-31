@@ -138,11 +138,17 @@ type Bedtime struct {
 	Enabled bool   `json:"enabled"`
 	Start   string `json:"start,omitempty"`
 	End     string `json:"end,omitempty"`
+	// WindDownMinutes before bedtime the screens turn grayscale, so the
+	// evening winds down without alerts (owner request 2026-10-31).
+	WindDownMinutes int `json:"wind_down_minutes,omitempty"`
 }
 
 func (b Bedtime) Normalize() error {
 	if b.Enabled && (!clockPattern.MatchString(b.Start) || !clockPattern.MatchString(b.End) || b.Start == b.End) {
 		return fmt.Errorf("%w: bedtime needs a start and a different end as HH:MM", ErrInvalidConfig)
+	}
+	if b.WindDownMinutes < 0 || b.WindDownMinutes > 180 {
+		return fmt.Errorf("%w: bedtime.wind_down_minutes must be between 0 and 180", ErrInvalidConfig)
 	}
 	return nil
 }
@@ -153,7 +159,7 @@ func (b Bedtime) Looser(next Bedtime) bool {
 	if !b.Enabled {
 		return false
 	}
-	if !next.Enabled {
+	if !next.Enabled || next.WindDownMinutes < b.WindDownMinutes {
 		return true
 	}
 	covered := minutesOf(next)
@@ -230,6 +236,40 @@ func (c Config) Correcting(name string, now time.Time) bool {
 		return true
 	}
 	return name == "bedtime" && !BedtimeTookEffect(c.BedtimeAt(now), c.Timezone, changed, now)
+}
+
+// windingDown reports whether at falls within the wind-down before a
+// bedtime start.
+func windingDown(rule Bedtime, location *time.Location, at time.Time) bool {
+	if !rule.Enabled || rule.WindDownMinutes == 0 {
+		return false
+	}
+	local := at.In(location)
+	for offset := 0; offset <= 1; offset++ {
+		day := local.AddDate(0, 0, offset).Format("2006-01-02")
+		start, err := time.ParseInLocation("2006-01-02 15:04", day+" "+rule.Start, location)
+		if err == nil && at.Before(start) && !at.Before(start.Add(-time.Duration(rule.WindDownMinutes)*time.Minute)) {
+			return true
+		}
+	}
+	return false
+}
+
+// withGrayscale asks devices to turn their screens grayscale during the
+// wind-down and bedtime; never during an emergency unlock.
+func withGrayscale(config Config, decision Decision, at time.Time) Decision {
+	if decision.Mode == ModeEmergency {
+		return decision
+	}
+	location, err := time.LoadLocation(config.Timezone)
+	if err != nil {
+		location = time.UTC
+	}
+	rule := config.BedtimeAt(at)
+	if _, in := bedtimeEnd(rule, location, at); in && rule.WindDownMinutes > 0 || windingDown(rule, location, at) {
+		decision.Grayscale = true
+	}
+	return decision
 }
 
 func bedtimeEnd(rule Bedtime, location *time.Location, at time.Time) (time.Time, bool) {

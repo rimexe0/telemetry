@@ -795,7 +795,7 @@ export async function newMorningCode(): Promise<{ address: string; image: string
 
 export type Window = { start: string; end: string };
 export type SettingsLock = { enabled: boolean; windows?: Window[]; pin_windows?: Window[]; unlock_minutes?: number };
-export type Bedtime = { enabled: boolean; start?: string; end?: string };
+export type Bedtime = { enabled: boolean; start?: string; end?: string; wind_down_minutes?: number };
 export type ExtensionRule = { enabled: boolean; quiet_seconds?: number };
 export type LockState = { locked: boolean; until?: string; unlocked_until?: string; pin_set: boolean; pin_open: boolean; tries_left: number };
 export type LockResponse = {

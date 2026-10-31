@@ -91,13 +91,18 @@ func Timeline(config Config, version int64, facts Facts, from, to time.Time) []S
 			}
 		}
 		for _, rule := range []Bedtime{config.Bedtime, derefBedtime(config.BedtimeNext)} {
-			for day := from.In(location).AddDate(0, 0, -1); !day.After(to); day = day.AddDate(0, 0, 1) {
+			// A wind-down before a midnight bedtime starts the day before it.
+			for day := from.In(location).AddDate(0, 0, -1); !day.After(to.AddDate(0, 0, 1)); day = day.AddDate(0, 0, 1) {
 				for _, clock := range []string{rule.Start, rule.End} {
 					if clock == "" {
 						continue
 					}
 					if t, err := time.ParseInLocation("2006-01-02 15:04", day.Format("2006-01-02")+" "+clock, location); err == nil {
 						add(t)
+						// The wind-down starts before bedtime.
+						if clock == rule.Start && rule.WindDownMinutes > 0 {
+							add(t.Add(-time.Duration(rule.WindDownMinutes) * time.Minute))
+						}
 					}
 				}
 			}
