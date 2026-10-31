@@ -37,6 +37,8 @@ jobs:
 
       - name: Test
         run: |
+          # The Mac launchd scripts are zsh and have tests.
+          sudo apt-get install -y -q zsh
           go vet ./...
           go test ./...
       - name: Test and build the panel
