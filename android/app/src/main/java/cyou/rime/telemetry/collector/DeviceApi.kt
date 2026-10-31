@@ -22,7 +22,7 @@ object DeviceApi {
         val token = config.token() ?: return null
         val path = "/v1/device/now?places=1&timeout=50&wait=" + java.net.URLEncoder.encode(fingerprint, "UTF-8")
         val headers = mapOf("Authorization" to "Bearer $token", "X-Telemetry-Device-ID" to DeviceIdentity.get(context), "Accept" to "application/json")
-        SealedChannel.configured()?.let { channel ->
+        SealedChannel.configured(context)?.let { channel ->
             val answer = try {
                 channel.exchange("GET", path, headers, null, 10_000, 75_000)
             } catch (_: java.io.IOException) {
@@ -56,7 +56,7 @@ object DeviceApi {
         val token = config.token() ?: return null
         // Through the sealed relay first; the direct address (Tailscale) only
         // when the relay cannot be reached.
-        SealedChannel.configured()?.let { channel ->
+        SealedChannel.configured(context)?.let { channel ->
             val headers = mutableMapOf(
                 "Authorization" to "Bearer $token",
                 "X-Telemetry-Device-ID" to DeviceIdentity.get(context),

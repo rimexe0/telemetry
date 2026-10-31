@@ -90,6 +90,7 @@ class PairingFlow(
         serverUrl = serverUrl,
         deviceId = DeviceIdentity.get(context.applicationContext),
         deviceName = deviceDisplayName(),
+        sealed = SealedChannel.configured(context),
     )
 
     // A resumed request that has expired is cleared quietly; it is not news.

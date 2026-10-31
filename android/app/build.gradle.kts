@@ -11,6 +11,8 @@ val samsungHealthSdk: File = rootProject.file("private/samsung-health-data-api-1
 val localProperties = Properties().also { properties ->
     rootProject.file("local.properties").takeIf { it.exists() }?.reader()?.use { properties.load(it) }
 }
+val commitCount: Int = providers.exec { commandLine("git", "rev-list", "--count", "HEAD") }
+    .standardOutput.asText.get().trim().toInt()
 fun setting(name: String): String? = (project.findProperty(name) ?: localProperties.getProperty(name))?.toString()
 
 android {
@@ -27,21 +29,23 @@ android {
         // Samsung's Health Data SDK needs Android 10.
         minSdk = if (samsungHealthSdk.exists()) 29 else 28
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        // Every commit on main raises the version, so each release installs
+        // over the last one.
+        versionCode = commitCount
+        versionName = "0.1.$commitCount"
         val telemetryServerUrl = setting("telemetryServerUrl")
             ?.trim()
             ?.trimEnd('/')
             ?.takeIf { it.isNotBlank() }
-            ?: "https://server.example.ts.net:8443"
+            ?: ""
         buildConfigField("String", "TELEMETRY_SERVER_URL", "\"$telemetryServerUrl\"")
         // Device requests go sealed through this relay (a Cloudflare Tunnel to
         // the server's sealed door), so the phone does not need Tailscale. The
         // key is the server's public key from its log line "Sealed device requests".
         val telemetryRelayUrl = setting("telemetryRelayUrl")?.trim()?.trimEnd('/')
-            ?: "https://relay.example.com"
+            ?: ""
         val telemetryRelayKey = setting("telemetryRelayKey")?.trim()
-            ?: "BDQAImuIn7FQicgxZZT4ekXWleG0QJlUflNjYQnBUTU7m39PHHlg0TP3d08OeB1xffb1WIrv05kvkL38Zwa8mZk="
+            ?: ""
         buildConfigField("String", "TELEMETRY_RELAY_URL", "\"$telemetryRelayUrl\"")
         buildConfigField("String", "TELEMETRY_RELAY_KEY", "\"$telemetryRelayKey\"")
     }

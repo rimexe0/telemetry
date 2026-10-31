@@ -134,10 +134,11 @@ class SealedChannel(private val relayUrl: String, serverKey: String) {
         private const val NONCE_SIZE = 12
         private const val INFO = "telemetry sealed v1"
 
-        /** The channel this build was made with, or null when it has none. */
-        fun configured(): SealedChannel? {
-            val url = BuildConfig.TELEMETRY_RELAY_URL
-            val key = BuildConfig.TELEMETRY_RELAY_KEY
+        /** The channel saved on this phone, or null when it has none. */
+        fun configured(context: android.content.Context): SealedChannel? {
+            val config = DeliveryConfig(context)
+            val url = config.relayUrl
+            val key = config.relayKey
             if (url.isBlank() || key.isBlank()) return null
             return runCatching { SealedChannel(url, key) }.getOrNull()
         }

@@ -112,6 +112,8 @@ class SettingsActivity : ComponentActivity() {
     private var pairingStatus by mutableStateOf("")
     private var serverUrl by mutableStateOf("")
     private var serverToken by mutableStateOf("")
+    private var relayUrl by mutableStateOf("")
+    private var relayKey by mutableStateOf("")
     private var limits by mutableStateOf(listOf<String>())
     private var advancedOpen by mutableStateOf(false)
     private var statusOpen by mutableStateOf(false)
@@ -154,6 +156,8 @@ class SettingsActivity : ComponentActivity() {
 
         val deliveryConfig = DeliveryConfig(this)
         serverUrl = deliveryConfig.serverUrl
+        relayUrl = deliveryConfig.relayUrl
+        relayKey = deliveryConfig.relayKey
         freshnessStatus = CollectionRuntime.latest(this)
         captureNotifications = PolicyStore(this).captureNotifications
         suspendEnabled = AppSuspender.enabled(this)
@@ -261,6 +265,9 @@ class SettingsActivity : ComponentActivity() {
                         Field("Telemetry server URL", serverUrl) { serverUrl = it }
                         Field("Device-scoped ingest token", serverToken, secret = true) { serverToken = it }
                         Item("Save manual server setup", onClick = ::saveDeliveryProvisioning)
+                        Field("Relay URL", relayUrl) { relayUrl = it }
+                        Field("Relay key (from the server log)", relayKey) { relayKey = it }
+                        Item("Save relay", onClick = ::saveRelay)
                     }
                 }
             }
@@ -572,6 +579,19 @@ class SettingsActivity : ComponentActivity() {
         serverToken = ""
         paired = true
         notice("Delivery provisioning saved; token fingerprint ${config.tokenFingerprint()}…; background drain is scheduled.")
+    }
+
+    private fun saveRelay() {
+        val url = relayUrl.trim()
+        val key = relayKey.trim()
+        if (url.isNotBlank() && runCatching { SealedChannel(url, key) }.isFailure) {
+            notice("The relay URL or key is not valid.")
+            return
+        }
+        val config = DeliveryConfig(this)
+        config.relayUrl = url
+        config.relayKey = key
+        notice(if (url.isBlank()) "Relay cleared; requests go directly to the server." else "Relay saved.")
     }
 
     private val pairingFlow by lazy {

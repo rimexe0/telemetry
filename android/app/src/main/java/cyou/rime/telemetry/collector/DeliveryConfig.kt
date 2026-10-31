@@ -25,9 +25,29 @@ class DeliveryConfig(context: Context) {
                 check(preferences.edit().putString(KEY_SERVER_URL, destination).commit())
                 return destination
             }
-            return saved.ifBlank { BuildConfig.TELEMETRY_SERVER_URL }
+            return saved.ifBlank { adopt(KEY_SERVER_URL, BuildConfig.TELEMETRY_SERVER_URL) }
         }
         set(value) = preferences.edit().putString(KEY_SERVER_URL, value.trim().trimEnd('/')).apply()
+
+    /**
+     * The relay that carries sealed device requests, and the server's public
+     * key for it. Saved on the phone, so a build without built-in addresses
+     * (the public release) keeps using what an earlier build or the setup
+     * screen saved.
+     */
+    var relayUrl: String
+        get() = preferences.getString(KEY_RELAY_URL, null).orEmpty().ifBlank { adopt(KEY_RELAY_URL, BuildConfig.TELEMETRY_RELAY_URL) }
+        set(value) = preferences.edit().putString(KEY_RELAY_URL, value.trim().trimEnd('/')).apply()
+
+    var relayKey: String
+        get() = preferences.getString(KEY_RELAY_KEY, null).orEmpty().ifBlank { adopt(KEY_RELAY_KEY, BuildConfig.TELEMETRY_RELAY_KEY) }
+        set(value) = preferences.edit().putString(KEY_RELAY_KEY, value.trim()).apply()
+
+    /** Saves a value this build was made with, so later builds keep it. */
+    private fun adopt(key: String, builtIn: String): String {
+        if (builtIn.isNotBlank()) check(preferences.edit().putString(key, builtIn).commit())
+        return builtIn
+    }
 
     var pairingId: String?
         get() = preferences.getString(KEY_PAIRING_ID, null)
@@ -146,6 +166,8 @@ class DeliveryConfig(context: Context) {
     private companion object {
         const val NAME = "telemetry-delivery"
         const val KEY_SERVER_URL = "server_url"
+        const val KEY_RELAY_URL = "relay_url"
+        const val KEY_RELAY_KEY = "relay_key"
         const val KEY_TOKEN = "token_ciphertext"
         const val KEY_IV = "token_iv"
         const val KEY_PAIRING_SERVER = "pairing_server"

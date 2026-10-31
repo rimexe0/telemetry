@@ -47,7 +47,7 @@ class TelemetryDeliveryClient(
     private val deviceId: String,
     private val serverUrl: String,
     private val token: String,
-    private val sealed: SealedChannel? = SealedChannel.configured(),
+    private val sealed: SealedChannel?,
 ) {
     /**
      * Keeps the existing one-batch API for the manual action and old worker.

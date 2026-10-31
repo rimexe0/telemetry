@@ -184,7 +184,7 @@ object CollectionRuntime {
         // the allowance; it cannot reset it and trigger unlimited retries.
         if (snapshot.networkMetered) check(prefs.edit().putLong("metered_used", used + limit).commit())
         return try {
-            val result = TelemetryDeliveryClient(queue, DeviceIdentity.get(context), config.serverUrl, token)
+            val result = TelemetryDeliveryClient(queue, DeviceIdentity.get(context), config.serverUrl, token, SealedChannel.configured(context))
                 .drainBounded(maxBatches = if (budget.constrainedReason == null) 10 else 1,
                     maxBytes = limit, maxMillis = 20_000L)
             attemptedBytes = result.bodyBytes

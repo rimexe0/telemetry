@@ -37,7 +37,7 @@ class TelemetryPairingClient(
     private val serverUrl: String,
     private val deviceId: String,
     private val deviceName: String,
-    private val sealed: SealedChannel? = SealedChannel.configured(),
+    private val sealed: SealedChannel?,
 ) {
     init {
         val u = URL(serverUrl)
