@@ -91,7 +91,9 @@ jobs:
           printf '%s' "$ANDROID_DEBUG_KEYSTORE" | base64 -d > ~/.android/debug.keystore
       - name: Test and build
         working-directory: android
-        run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
+        # The project keeps Gradle small for the owner's machines; GitHub's
+        # runner needs more to merge the app's dependencies.
+        run: gradle --no-daemon -Dorg.gradle.jvmargs=-Xmx4g :app:testDebugUnitTest :app:assembleDebug
       - run: |
           mkdir dist
           cp android/app/build/outputs/apk/debug/app-debug.apk dist/telemetry-phone.apk
