@@ -328,7 +328,7 @@
   h4 { font-size: .78rem; letter-spacing: .04em; margin: 0; text-transform: uppercase; }
   .health-controls { align-items: center; display: flex; flex-wrap: wrap; gap: 6px; }
   .health-controls label { color: var(--muted); font-size: .68rem; }
-  select { background: var(--panel); border: 1px solid var(--fg); border-radius: 0; color: var(--fg); font: inherit; font-size: .72rem; padding: 6px 7px; }
+  select { font-size: .72rem; }
   .health-status, .health-error { border-left: 3px solid var(--fg); font-size: .76rem; margin: 12px 0 0; padding: 8px 10px; }
   .health-error { background: var(--soft); }
   .health-empty { align-items: baseline; background: var(--panel); border: 1px solid var(--fg); display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; padding: 14px; }

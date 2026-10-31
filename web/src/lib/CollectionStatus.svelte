@@ -152,7 +152,7 @@
   p { margin: 6px 0; }
   .health-heading p, .explanation, small, .receipt { color: var(--muted); font-size: .76rem; line-height: 1.5; }
   label { display: grid; gap: 4px; font-size: .7rem; }
-  select { max-width: 250px; background: var(--panel); color: var(--fg); border: 1px solid var(--line); padding: 8px; }
+  select { max-width: 250px; }
   .collection-summary { display: flex; flex-wrap: wrap; gap: 12px 24px; border-block: 1px solid var(--line); margin: 14px 0 8px; padding: 12px 0; font-size: .8rem; }
   .collection-summary strong { font-size: 1.2rem; margin-right: 4px; }
   .checked { margin-left: auto; color: var(--muted); align-self: center; }

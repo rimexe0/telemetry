@@ -1,4 +1,5 @@
 <script lang="ts">
+  import '$lib/controls.css';
   import { onDestroy, onMount } from 'svelte';
   import TimeSeries from '$lib/TimeSeries.svelte';
   import HealthHistory from '$lib/HealthHistory.svelte';
@@ -1034,7 +1035,6 @@
   .device-row.revoked { opacity: .55; }
   form { display: grid; gap: 8px; margin-top: 16px; }
   label { font-size: .8rem; font-weight: 700; }
-  input { border: 1px solid var(--fg); border-radius: 0; padding: 9px 10px; background: var(--panel); color: var(--fg); }
   button { border: 1px solid var(--fg); border-radius: 0; background: var(--fg); color: var(--panel); cursor: pointer; padding: 8px 11px; }
   button:hover, button:focus-visible, .active, .chosen { background: var(--panel); color: var(--fg); outline: 2px solid var(--fg); outline-offset: 2px; }
   button:disabled { cursor: wait; opacity: .55; }

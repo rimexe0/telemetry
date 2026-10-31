@@ -1,0 +1,80 @@
+/* One look for every form control in the panel: square, thin-bordered and in
+   the panel's colours instead of the browser's own. :where() keeps these at
+   zero specificity, so a component's own sizes still apply. */
+:where(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']), select, textarea) {
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 0;
+  box-sizing: border-box;
+  color: var(--fg);
+  font: inherit;
+  font-size: .82rem;
+  min-height: 30px;
+  padding: 5px 8px;
+}
+:where(input, select, textarea):hover:not(:disabled) { border-color: var(--muted); }
+:where(input, select, textarea):focus-visible { border-color: var(--fg); outline: 2px solid var(--fg); outline-offset: 1px; }
+:where(input, select, textarea):disabled { cursor: not-allowed; opacity: .5; }
+:where(input, textarea)::placeholder { color: var(--muted); opacity: 1; }
+:where(textarea) { line-height: 1.4; resize: vertical; }
+
+/* A drawn arrow in the text colour, so it follows the theme. */
+:where(select) {
+  background-image: linear-gradient(45deg, transparent 50%, var(--fg) 50%), linear-gradient(135deg, var(--fg) 50%, transparent 50%);
+  background-position: calc(100% - 14px) 52%, calc(100% - 9px) 52%;
+  background-repeat: no-repeat;
+  background-size: 5px 5px;
+  cursor: pointer;
+  padding-right: 28px;
+}
+:where(select) option { background: var(--panel); color: var(--fg); }
+
+/* Numbers without the spinner arrows. */
+:where(input[type='number']) { -moz-appearance: textfield; }
+:where(input[type='number'])::-webkit-inner-spin-button,
+:where(input[type='number'])::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+/* Time and date pickers keep their picker, toned down. */
+:where(input[type='time'], input[type='date'])::-webkit-calendar-picker-indicator { cursor: pointer; opacity: .55; }
+:where(input[type='time'], input[type='date'])::-webkit-calendar-picker-indicator:hover { opacity: 1; }
+:where(input[type='time'], input[type='date'])::-webkit-datetime-edit-fields-wrapper { padding: 0; }
+
+/* Square checkboxes that fill when ticked. */
+:where(input[type='checkbox']) {
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--panel);
+  border: 1px solid var(--fg);
+  border-radius: 0;
+  cursor: pointer;
+  display: inline-grid;
+  flex: none;
+  height: 15px;
+  margin: 0;
+  place-content: center;
+  vertical-align: -2px;
+  width: 15px;
+}
+:where(input[type='checkbox'])::before { background: var(--fg); content: ''; height: 9px; transform: scale(0); transition: transform 80ms; width: 9px; }
+:where(input[type='checkbox']):checked::before { transform: scale(1); }
+:where(input[type='checkbox']):focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+:where(input[type='checkbox']):disabled { cursor: not-allowed; opacity: .45; }
+
+/* Buttons inside the views match the page's own: solid for the main action,
+   outlined for quiet ones, the same height as the fields beside them. */
+:where(button) {
+  background: var(--fg);
+  border: 1px solid var(--fg);
+  border-radius: 0;
+  color: var(--panel);
+  cursor: pointer;
+  font: inherit;
+  font-size: .82rem;
+  min-height: 30px;
+  padding: 5px 11px;
+}
+:where(button.quiet-button) { background: var(--panel); color: var(--fg); white-space: nowrap; }
+:where(button):hover:not(:disabled), :where(button):focus-visible { background: var(--panel); color: var(--fg); outline: 2px solid var(--fg); outline-offset: 2px; }
+:where(button):disabled { cursor: not-allowed; opacity: .5; }

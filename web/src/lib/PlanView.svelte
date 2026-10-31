@@ -471,7 +471,7 @@
   .empty p { color: var(--muted); margin: 0 0 10px; }
 
   .editor { display: flex; flex-direction: column; gap: 6px; }
-  .draft-head, .draft-row { align-items: start; display: grid; gap: 8px; grid-template-columns: 96px minmax(0, 1fr) 70px 34px; }
+  .draft-head, .draft-row { align-items: start; display: grid; gap: 8px; grid-template-columns: 116px minmax(0, 1fr) 70px 34px; }
   .draft-head { color: var(--muted); font-size: .72rem; }
   .what { display: flex; flex-direction: column; gap: 4px; }
   .flags { color: var(--muted); display: flex; font-size: .75rem; gap: 10px; }
