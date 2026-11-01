@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.rime.telemetry.watchdog</string>
+  <!-- Runs as the system every minute and starts the owner's collector
+       again when it was unloaded or launchd cannot start it; see guard.go.
+       install-watchdog.sh fills in the owner's uid and home. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Library/PrivilegedHelperTools/telemetry-watchdog</string>
+    <string>guard</string>
+    <string>-uid</string>
+    <string>__UID__</string>
+    <string>-plist</string>
+    <string>__HOME__/Library/LaunchAgents/com.rime.telemetry.desktop.plist</string>
+    <string>-restore</string>
+    <string>/Library/Application Support/Telemetry/com.rime.telemetry.desktop.plist</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>60</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Library/Logs/telemetry-watchdog.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Library/Logs/telemetry-watchdog.log</string>
+</dict>
+</plist>

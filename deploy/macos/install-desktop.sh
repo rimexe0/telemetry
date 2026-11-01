@@ -37,7 +37,8 @@ cmp -s "$wanted" "$plist" || cp "$wanted" "$plist"
 launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
 # bootout returns before the job is gone.
 while launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; do sleep 0.5; done
-launchctl bootstrap "gui/$(id -u)" "$plist"
+# The system watchdog may have loaded it again in the meantime.
+launchctl bootstrap "gui/$(id -u)" "$plist" || launchctl print "gui/$(id -u)/$label" >/dev/null
 # The guard starts the collector again within a minute if it is unloaded.
 guard="com.rime.telemetry.guard"
 guard_plist="$HOME/Library/LaunchAgents/$guard.plist"
@@ -45,7 +46,7 @@ cmp -s deploy/macos/$guard.plist "$guard_plist" || cp deploy/macos/$guard.plist 
 # It runs the same app, so it is reloaded for the same reason.
 launchctl bootout "gui/$(id -u)/$guard" 2>/dev/null || true
 while launchctl print "gui/$(id -u)/$guard" >/dev/null 2>&1; do sleep 0.5; done
-launchctl bootstrap "gui/$(id -u)" "$guard_plist"
+launchctl bootstrap "gui/$(id -u)" "$guard_plist" || launchctl print "gui/$(id -u)/$guard" >/dev/null
 # The updater installs signed GitHub releases from now on.
 mkdir -p "$root/bin"
 install -m 755 deploy/macos/telemetry-update.sh "$root/bin/telemetry-update"

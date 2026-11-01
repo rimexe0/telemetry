@@ -70,7 +70,8 @@ reload() {
   for name in $label com.rime.telemetry.guard; do
     launchctl bootout "gui/$(id -u)/$name" 2>/dev/null || true
     while launchctl print "gui/$(id -u)/$name" >/dev/null 2>&1; do sleep 0.5; done
-    launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/$name.plist"
+    # The system watchdog may have loaded it again in the meantime.
+    launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/$name.plist" || launchctl print "gui/$(id -u)/$name" >/dev/null
   done
 }
 pid() { launchctl print "$job" 2>/dev/null | awk '$1 == "pid" {print $3; exit}'; }
