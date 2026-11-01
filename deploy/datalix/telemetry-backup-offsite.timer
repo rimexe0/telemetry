@@ -1,9 +1,12 @@
 [Unit]
-Description=Daily Telemetry offsite PostgreSQL snapshot replication
+Description=Hourly Telemetry offsite PostgreSQL snapshot replication
 
+# Every hour: the offsite machine (the CachyOS desktop) is often off, so a
+# copy that cannot reach it tries again the next hour. The newest snapshot
+# is checked each run; snapshots already copied are not sent again.
 [Timer]
-OnCalendar=*-*-* 03:45:00
-RandomizedDelaySec=15m
+OnCalendar=hourly
+RandomizedDelaySec=10m
 Persistent=true
 Unit=telemetry-backup-offsite.service
 
