@@ -50,7 +50,49 @@ func (p *Postgres) CollectionEvidence(ctx context.Context) (silence.Evidence, er
 		}
 		evidence.Desktops = append(evidence.Desktops, status)
 	}
-	return evidence, rows.Err()
+	if err := rows.Err(); err != nil {
+		return evidence, err
+	}
+	rows.Close()
+	return evidence, p.holdAnnouncedSleep(ctx, evidence.Desktops)
+}
+
+// holdAnnouncedSleep keeps a computer asleep from its "sleeping"
+// announcement until it announces waking or starting. A sleeping Mac wakes
+// in the dark for maintenance without telling apps, and the collector's
+// minute status then would otherwise make the silence that follows look like
+// a stopped collector, and the Tailscale ping during those wakes like one
+// stopped while the computer is on.
+func (p *Postgres) holdAnnouncedSleep(ctx context.Context, desktops []silence.DesktopStatus) error {
+	rows, err := p.pool.Query(ctx, `
+		SELECT DISTINCT ON (o.source_instance_key) si.device_id, r.projection->>'state'
+		FROM observations o
+		JOIN observation_revisions r ON r.id = o.effective_revision_id
+		JOIN source_instances si ON si.source_instance_key = o.source_instance_key
+		WHERE o.source_instance_key LIKE 'telemetry-desktop:%:collector' AND o.kind = 'telemetry.collector_status'
+			AND r.projection->>'state' IN ('sleeping', 'awake', 'started', 'stopping')
+		ORDER BY o.source_instance_key, o.occurred_at DESC`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	announced := map[string]string{}
+	for rows.Next() {
+		var device, state string
+		if err := rows.Scan(&device, &state); err != nil {
+			return err
+		}
+		announced[device] = state
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for i := range desktops {
+		if announced[desktops[i].DeviceID] == "sleeping" && desktops[i].State == "running" {
+			desktops[i].State = "sleeping"
+		}
+	}
+	return nil
 }
 
 // desktopStatus reads a collector status record. Version 0.1 records kept

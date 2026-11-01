@@ -245,7 +245,12 @@ func run(arguments []string) error {
 	}
 	// Announce sleep before it happens so the silence that follows is not
 	// mistaken for a stopped collector.
+	asleep := &sleepState{}
+	if platform, err := desktop.NewPlatform(); err == nil {
+		asleep.idle = platform.IdleTime
+	}
 	if err := desktop.WatchPower(func(sleeping bool) {
+		asleep.set(sleeping, time.Now())
 		state := stateAwake
 		if sleeping {
 			state = stateSleeping
@@ -279,7 +284,7 @@ func run(arguments []string) error {
 				}
 				return err
 			case <-statusTicker.C:
-				if err := status.report(ctx, stateRunning, false); err != nil {
+				if err := status.report(ctx, asleep.state(time.Now()), false); err != nil {
 					log.Printf("status: %v", err)
 				}
 			case <-ticker.C:
