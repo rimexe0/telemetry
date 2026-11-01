@@ -75,6 +75,9 @@ type AgentTurn struct {
 	Root      string
 	Requested time.Time
 	Ended     *time.Time
+	// ByAgent is set when another agent, not the owner, sent the message
+	// that started the turn (known for T3 turns read through its MCP server).
+	ByAgent bool
 }
 
 // AgentTurns reads the coding agents' turns from every collector machine,
@@ -143,7 +146,8 @@ func AgentTurns(coding []Record) []AgentTurn {
 			continue
 		}
 		project := projects[record.Source+"\x00"+thread[1]]
-		turn := AgentTurn{Tool: "t3", ThreadID: record.Source + "\x00" + payload.ThreadID, Thread: thread[0], Project: project[0], Root: project[1], Requested: at.UTC()}
+		turn := AgentTurn{Tool: "t3", ThreadID: record.Source + "\x00" + payload.ThreadID, Thread: thread[0], Project: project[0], Root: project[1], Requested: at.UTC(),
+			ByAgent: payload.RequestedBy == "agent"}
 		if payload.State != "running" {
 			ended := turn.Requested
 			if completed, err := time.Parse(time.RFC3339Nano, payload.CompletedAt); err == nil {
@@ -162,6 +166,9 @@ func AgentTurns(coding []Record) []AgentTurn {
 func ThreadMessages(coding []Record) []ThreadMessage {
 	messages := []ThreadMessage{}
 	for _, turn := range AgentTurns(coding) {
+		if turn.ByAgent {
+			continue
+		}
 		messages = append(messages, ThreadMessage{Tool: turn.Tool, At: turn.Requested, Thread: turn.Thread, Project: turn.Project, Root: turn.Root})
 	}
 	return messages

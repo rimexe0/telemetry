@@ -190,21 +190,6 @@ func (t *T3Open) poll(ctx context.Context, host Host, now time.Time) (string, er
 	}
 }
 
-// t3Origin reads where the local T3 server listens.
-func t3Origin(dir string) (string, error) {
-	data, err := os.ReadFile(filepath.Join(dir, "server-runtime.json"))
-	if err != nil {
-		return "", err
-	}
-	var runtime struct {
-		Port int `json:"port"`
-	}
-	if err := json.Unmarshal(data, &runtime); err != nil || runtime.Port == 0 {
-		return "", fmt.Errorf("T3 server-runtime.json has no port")
-	}
-	return "http://127.0.0.1:" + strconv.Itoa(runtime.Port), nil
-}
-
 // T3Lease is one T3 client as its server describes it.
 type T3Lease struct {
 	ClientID   string `json:"clientId"`

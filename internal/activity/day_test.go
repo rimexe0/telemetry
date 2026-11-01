@@ -1,6 +1,7 @@
 package activity
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -367,5 +368,25 @@ func TestAgentTimeWaitingAndReturnsAreMeasuredPerTask(t *testing.T) {
 		Claims: []Claim{{Context: "Obsidian", Start: at(15, 12)}}, From: at(0, 0), To: at(15, 30)})
 	if off.State != KindOther || off.Context != "Obsidian" || off.LearnContext != "Obsidian" || !off.Excused {
 		t.Fatalf("excused one-off = %+v", off)
+	}
+}
+
+func TestThreadMessagesLeaveOutTurnsAnAgentStarted(t *testing.T) {
+	at := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
+	source := "t3:mac-1:env"
+	coding := []Record{
+		{Source: source, Kind: "t3.project", Start: at, Payload: json.RawMessage(`{"project_id":"p1","title":"Telemetry","workspace_root":"/code/telemetry"}`)},
+		{Source: source, Kind: "t3.thread", Start: at, Payload: json.RawMessage(`{"thread_id":"t1","project_id":"p1","title":"Fix sleep"}`)},
+		{Source: source, Kind: "t3.turn", Start: at, Payload: json.RawMessage(`{"thread_id":"t1","state":"completed","requested_at":"2026-11-01T09:00:00Z","completed_at":"2026-11-01T09:05:00Z","requested_by":"user"}`)},
+		{Source: source, Kind: "t3.turn", Start: at, Payload: json.RawMessage(`{"thread_id":"t1","state":"completed","requested_at":"2026-11-01T09:10:00Z","completed_at":"2026-11-01T09:15:00Z","requested_by":"agent"}`)},
+		// Read from T3's database: the sender is unknown, so it counts.
+		{Source: source, Kind: "t3.turn", Start: at, Payload: json.RawMessage(`{"thread_id":"t1","state":"completed","requested_at":"2026-11-01T09:20:00Z","completed_at":"2026-11-01T09:25:00Z"}`)},
+	}
+	messages := ThreadMessages(coding)
+	if len(messages) != 2 || !messages[0].At.Equal(at) || messages[1].At.Minute() != 20 {
+		t.Fatalf("messages = %+v", messages)
+	}
+	if turns := AgentTurns(coding); len(turns) != 3 || !turns[1].ByAgent {
+		t.Fatalf("agent turns still count as agent work: %+v", turns)
 	}
 }

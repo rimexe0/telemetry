@@ -25,10 +25,20 @@ import (
 // T3 Code moved its state to statev2.sqlite (orchestration v2) in October
 // 2026: threads and agent runs live in new tables there, and state.sqlite
 // stops changing. The newer database is read when it exists.
+//
+// With an MCP credential in MCPTokenFile, it reads T3 through T3's MCP
+// server instead (see t3MCP): the interface T3 supports for outside tools,
+// which also tells the owner's messages from agents'.
 type T3 struct {
 	// Dir is T3's userdata directory, normally ~/.t3/userdata.
 	Dir      string
 	Interval time.Duration
+	// MCPTokenFile holds a read-only T3 MCP credential; without it the
+	// database is read.
+	MCPTokenFile string
+
+	mcp    *t3MCP
+	source string
 
 	health Health
 	// queued is the digest last queued per record, so unchanged rows are
@@ -84,6 +94,7 @@ func (t *T3) Status() map[string]any {
 	status["dir"] = t.Dir
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	status["source"] = t.source
 	if !t.checked.IsZero() {
 		status["rows"] = t.counts
 	}
@@ -91,6 +102,9 @@ func (t *T3) Status() map[string]any {
 }
 
 func (t *T3) collect(ctx context.Context, host Host, now time.Time) error {
+	if token, err := os.ReadFile(t.MCPTokenFile); t.MCPTokenFile != "" && err == nil {
+		return t.collectMCP(ctx, host, now, strings.TrimSpace(string(token)))
+	}
 	var database t3Database
 	var path string
 	for _, candidate := range t3Databases {
@@ -123,6 +137,36 @@ func (t *T3) collect(ctx context.Context, host Host, now time.Time) error {
 		}
 		rows = append(rows, found...)
 	}
+	return t.record(ctx, host, now, instance, database.version, "database", rows)
+}
+
+// collectMCP reads T3 through its MCP server. A T3 that is not running has
+// nothing new to say, which is not a failure.
+func (t *T3) collectMCP(ctx context.Context, host Host, now time.Time, token string) error {
+	environment, err := os.ReadFile(filepath.Join(t.Dir, "environment-id"))
+	if err != nil {
+		return fmt.Errorf("T3 environment id: %w", err)
+	}
+	instance := "t3:" + host.DeviceID + ":" + strings.TrimSpace(string(environment))
+	origin, err := t3Origin(t.Dir)
+	if err != nil {
+		return nil
+	}
+	if t.mcp == nil || t.mcp.origin != origin || t.mcp.token != token {
+		t.mcp = newT3MCP(origin, token)
+	}
+	rows, err := t.mcp.read(ctx)
+	if errors.Is(err, errT3NotRunning) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read T3 through its MCP server: %w", err)
+	}
+	return t.record(ctx, host, now, instance, t3SchemaVersionMCP, "mcp", rows)
+}
+
+// record queues the rows that changed since they were last queued.
+func (t *T3) record(ctx context.Context, host Host, now time.Time, instance, version, source string, rows []t3Row) error {
 	counts := map[string]int{}
 	for _, row := range rows {
 		payload, err := json.Marshal(row.payload)
@@ -138,7 +182,7 @@ func (t *T3) collect(ctx context.Context, host Host, now time.Time) error {
 			OccurredAt:          row.occurred,
 			EndedAt:             row.ended,
 			CollectedAt:         now,
-			SourceSchemaVersion: database.version,
+			SourceSchemaVersion: version,
 			OriginalPayload:     payload,
 		}
 		if err := observation.Normalize(); err != nil {
@@ -154,7 +198,7 @@ func (t *T3) collect(ctx context.Context, host Host, now time.Time) error {
 		t.queued[row.key] = observation.RevisionDigest
 	}
 	t.mu.Lock()
-	t.counts, t.checked = counts, now
+	t.counts, t.checked, t.source = counts, now, source
 	t.mu.Unlock()
 	return nil
 }

@@ -53,6 +53,9 @@ type t3Turn struct {
 	RequestedAt string `json:"requested_at"`
 	StartedAt   string `json:"started_at"`
 	CompletedAt string `json:"completed_at"`
+	// RequestedBy is "user" or "agent" for turns read through T3's MCP
+	// server; empty when unknown, as in records read from its database.
+	RequestedBy string `json:"requested_by"`
 }
 
 // CodingThreads lists threads with messages or agent work in [from, to), or
@@ -113,7 +116,8 @@ func CodingThreads(records []Record, from, to time.Time) []CodingThread {
 		if turn.State == "running" {
 			thread.RunningNow = true
 		}
-		if !requested.Before(from) && requested.Before(to) {
+		// A turn another agent started is not a message from the owner.
+		if !requested.Before(from) && requested.Before(to) && turn.RequestedBy != "agent" {
 			thread.MessagesSent++
 			if thread.FirstMessageAt == nil || requested.Before(*thread.FirstMessageAt) {
 				at := requested.UTC()

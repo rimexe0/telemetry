@@ -100,12 +100,13 @@ func login(arguments []string) {
 // defaultModules are the modules this system can run.
 func defaultModules() string {
 	if runtime.GOOS == "darwin" {
-		return "window,activitywatch-api,t3,t3-open,blocker,tracker"
+		// t3-open is left out: T3 Code removed the request it used (2026-10-28).
+		return "window,activitywatch-api,t3,blocker,tracker"
 	}
 	return "activitywatch-api,t3"
 }
 
-func buildModules(names, listen, t3Dir, t3Token, notices string, distractionsOnly bool, credentials *collector.Credentials) ([]collector.Module, error) {
+func buildModules(names, listen, t3Dir, t3Token, t3MCPToken, notices string, distractionsOnly bool, credentials *collector.Credentials) ([]collector.Module, error) {
 	modules := []collector.Module{}
 	seen := map[string]bool{}
 	var blocker *collector.Blocker
@@ -124,7 +125,7 @@ func buildModules(names, listen, t3Dir, t3Token, notices string, distractionsOnl
 			api = &collector.ActivityWatchAPI{Listen: listen, Version: collectorVersion}
 			modules = append(modules, api)
 		case "t3":
-			modules = append(modules, &collector.T3{Dir: t3Dir})
+			modules = append(modules, &collector.T3{Dir: t3Dir, MCPTokenFile: t3MCPToken})
 		case "t3-open":
 			modules = append(modules, &collector.T3Open{Dir: t3Dir, TokenFile: t3Token})
 		case "blocker":
@@ -158,6 +159,7 @@ func run(arguments []string) error {
 	home, _ := os.UserHomeDir()
 	t3Dir := flags.String("t3-dir", filepath.Join(home, ".t3", "userdata"), "T3 Code userdata directory for the t3 module")
 	t3Token := flags.String("t3-token-file", "", "T3 session token for the t3-open module, from `t3 auth session issue` (default: t3-session-token beside -config or -queue)")
+	t3MCPToken := flags.String("t3-mcp-token-file", "", "read-only T3 MCP credential for the t3 module, from `t3 auth session issue --subject mcp-client --scope orchestration:read`; without it T3's database is read (default: t3-mcp-token beside -config or -queue)")
 	queuePath := flags.String("queue", "", "SQLite queue path (required)")
 	deviceID := flags.String("device", "", "Telemetry device ID")
 	configPath := flags.String("config", "", "paired device configuration")
@@ -202,14 +204,17 @@ func run(arguments []string) error {
 	if client != nil && client.DeviceID != "" {
 		credentials = &collector.Credentials{BaseURL: client.BaseURL, DeviceID: client.DeviceID, Secret: client.Token}
 	}
+	beside := *configPath
+	if beside == "" {
+		beside = *queuePath
+	}
 	if *t3Token == "" {
-		beside := *configPath
-		if beside == "" {
-			beside = *queuePath
-		}
 		*t3Token = filepath.Join(filepath.Dir(beside), "t3-session-token")
 	}
-	modules, err := buildModules(*moduleNames, *listen, *t3Dir, *t3Token, *notices, *distractionsOnly, credentials)
+	if *t3MCPToken == "" {
+		*t3MCPToken = filepath.Join(filepath.Dir(beside), "t3-mcp-token")
+	}
+	modules, err := buildModules(*moduleNames, *listen, *t3Dir, *t3Token, *t3MCPToken, *notices, *distractionsOnly, credentials)
 	if err != nil {
 		return err
 	}
