@@ -30,6 +30,7 @@ func runSilenceChecker(ctx context.Context, repository store.Repository) {
 			evidence.ServerFreeBytes = &free
 		}
 		now := time.Now().UTC()
+		evidence.Desktops = withoutRetired(evidence.Desktops, os.Getenv("TELEMETRY_RETIRED_DEVICES"))
 		askMachines(checkCtx, evidence.Desktops, now)
 		opened, err := repository.SyncCollectionIncidents(checkCtx, silence.Evaluate(evidence, now), now)
 		if err != nil {
@@ -50,6 +51,25 @@ func runSilenceChecker(ctx context.Context, repository store.Repository) {
 		case <-ticker.C:
 		}
 	}
+}
+
+// withoutRetired leaves out the machines named in TELEMETRY_RETIRED_DEVICES
+// (device IDs separated by spaces or commas): ones that no longer exist, so
+// their silence is not a collection problem. A machine is only retired by
+// naming it; going quiet for long never retires one, since a device the owner
+// switched off for a week must still show.
+func withoutRetired(desktops []silence.DesktopStatus, retired string) []silence.DesktopStatus {
+	names := map[string]bool{}
+	for _, name := range strings.Fields(strings.ReplaceAll(retired, ",", " ")) {
+		names[name] = true
+	}
+	kept := desktops[:0:0]
+	for _, desktop := range desktops {
+		if !names[desktop.DeviceID] {
+			kept = append(kept, desktop)
+		}
+	}
+	return kept
 }
 
 // tailscaleNames maps desktop device IDs to their Tailscale names, from
