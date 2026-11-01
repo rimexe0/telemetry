@@ -20,8 +20,12 @@ refused="$root/.release-failed"
 
 log() { echo "$(date -u +%FT%TZ) telemetry-update: $*"; }
 
-release=$(curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$repo/releases/latest")
-tag=$(jq -r .tag_name <<<"$release")
+# The latest release's release.txt names it. Download links are not counted
+# against GitHub's API limit of 60 requests an hour per address, which other
+# programs on the same machine also use; the file is checked against the
+# signed list below like every other.
+tag=$(curl -fsSL "https://github.com/$repo/releases/latest/download/release.txt" | awk '{print $1}')
+[[ "$tag" =~ ^r[0-9]+$ ]] || { log "the latest release has no usable name: $tag"; exit 1; }
 [[ "$tag" == "$(cat "$installed" 2>/dev/null)" ]] && exit 0
 # A release that failed here once is not retried; the next one is.
 [[ "$tag" == "$(cat "$refused" 2>/dev/null)" ]] && exit 0
@@ -32,9 +36,7 @@ work="$root/updates/$tag"
 mkdir -p "$work"
 cd "$work"
 for name in SHA256SUMS SHA256SUMS.sig $files; do
-  url=$(jq -r --arg name "$name" '.assets[] | select(.name == $name) | .browser_download_url' <<<"$release")
-  [[ -n "$url" ]] || { log "$tag has no $name"; exit 1; }
-  curl -fsSL -o "$name" "$url"
+  curl -fsSL -o "$name" "https://github.com/$repo/releases/download/$tag/$name" || { log "$tag has no $name"; exit 1; }
 done
 ssh-keygen -Y verify -f "$signers" -I telemetry-release -n telemetry-release -s SHA256SUMS.sig < SHA256SUMS >/dev/null
 for name in $files; do
