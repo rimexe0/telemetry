@@ -10,7 +10,8 @@ Type=oneshot
 WorkingDirectory=%h/telemetry
 EnvironmentFile=-%h/.config/telemetry/offsite-backup.env
 ExecStart=%h/telemetry/deploy/datalix/replicate-backups.sh
-TimeoutStartSec=15min
+# Four snapshots of about 220 MB take about ten minutes over Tailscale.
+TimeoutStartSec=45min
 Nice=10
 IOSchedulingClass=idle
 NoNewPrivileges=true
