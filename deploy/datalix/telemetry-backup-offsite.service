@@ -1,6 +1,7 @@
 [Unit]
 Description=Replicate Telemetry PostgreSQL snapshots to the reviewed offsite target
-Requires=telemetry-backup.service
+# It only copies the snapshots telemetry-backup.timer takes; requiring the
+# snapshot job here would take a new snapshot on every hourly try.
 Wants=network-online.target
 After=network-online.target telemetry-backup.service
 
