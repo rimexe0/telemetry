@@ -107,6 +107,7 @@ type Repository interface {
 	AndroidAppUsage(context.Context, time.Time, int) ([]AppUsageSuggestion, error)
 	ActivityRecords(context.Context, time.Time, time.Time) ([]activity.Record, map[string]time.Time, error)
 	CodingRecords(context.Context, time.Time) ([]activity.Record, error)
+	HealthRecords(ctx context.Context, from, to time.Time) ([]activity.Record, error)
 	CollectionEvidence(context.Context) (silence.Evidence, error)
 	ApplyTaskChanges(context.Context, []TaskChange, string) (AgentChange, []Activity, error)
 	ApplyDayPlan(context.Context, time.Time, PlanInput, string) (AgentChange, Plan, error)

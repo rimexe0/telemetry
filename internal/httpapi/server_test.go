@@ -785,6 +785,10 @@ func (f *fakeRepository) ListCollectionIncidents(context.Context, time.Time, int
 	return []store.CollectionIncident{}, nil
 }
 
+func (f *fakeRepository) HealthRecords(context.Context, time.Time, time.Time) ([]activity.Record, error) {
+	return nil, nil
+}
+
 func (f *fakeRepository) CodingRecords(context.Context, time.Time) ([]activity.Record, error) {
 	return nil, nil
 }

@@ -116,6 +116,34 @@ func (p *Postgres) CodingRecords(ctx context.Context, from time.Time) ([]activit
 	return records, rows.Err()
 }
 
+// HealthRecords returns the sleep, steps and heart-rate records that began
+// in [from, to), as activity.HealthDays reads them.
+func (p *Postgres) HealthRecords(ctx context.Context, from, to time.Time) ([]activity.Record, error) {
+	rows, err := p.pool.Query(ctx, `
+		SELECT o.source_instance_key, si.device_id, o.kind, o.occurred_at, o.ended_at, r.projection
+		FROM observations o
+		JOIN observation_revisions r ON r.id = o.effective_revision_id
+		JOIN source_instances si ON si.source_instance_key = o.source_instance_key
+		WHERE o.kind = ANY($1) AND o.occurred_at >= $2 AND o.occurred_at < $3
+		LIMIT $4`, activity.HealthKinds, from, to, maxActivityRecord+1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	records := []activity.Record{}
+	for rows.Next() {
+		var record activity.Record
+		if err := rows.Scan(&record.Source, &record.Device, &record.Kind, &record.Start, &record.End, &record.Payload); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	if len(records) > maxActivityRecord {
+		return nil, ErrActivityRangeTooLarge
+	}
+	return records, rows.Err()
+}
+
 // PlannedBlocks gives a plan's blocks in the shape a plan review needs.
 func PlannedBlocks(plan *Plan) []activity.PlannedBlock {
 	blocks := []activity.PlannedBlock{}

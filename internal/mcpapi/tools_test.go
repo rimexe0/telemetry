@@ -54,6 +54,7 @@ func connect(t *testing.T, repository store.Repository, now time.Time) *mcp.Clie
 	server := mcp.NewServer(&mcp.Implementation{Name: "telemetry-test", Version: "0"}, nil)
 	addActivityTools(server, repository, func() time.Time { return now })
 	addChangeTools(server, repository)
+	addAnalysisTools(server, repository, func() time.Time { return now })
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	ctx := context.Background()
 	if _, err := server.Connect(ctx, serverTransport, nil); err != nil {
