@@ -131,7 +131,7 @@ func Run(ctx context.Context, store *awserver.Store, platform Platform, options 
 	afk := &afkWatcher{store: store, platform: platform, options: options}
 	// Asking once per start shows the operating system's permission prompt.
 	titles := platform.CanReadTitles(true)
-	if !titles {
+	if !titles && ReadsWindows {
 		options.Logf("window titles are not readable yet; grant Accessibility access to telemetry-desktop")
 	}
 	var lastError string

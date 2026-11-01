@@ -64,6 +64,9 @@ type DesktopStatus struct {
 type WindowStatus struct {
 	TitlesReadable bool
 	LastWindowAt   *time.Time
+	// NotRead is set when the collector does not read the focused window on
+	// its system (Linux for now), so missing titles and samples are expected.
+	NotRead bool
 }
 
 type ModuleStatus struct {
@@ -139,7 +142,7 @@ func evaluateDesktop(status DesktopStatus, now time.Time) []Finding {
 		// "started" and "awake" are sent before the modules have run, so
 		// they say nothing about module health yet.
 	default:
-		if window := status.Window; window != nil {
+		if window := status.Window; window != nil && !window.NotRead {
 			if !window.TitlesReadable {
 				add(KindTitlesUnreadable, status.At, map[string]any{
 					"message": "The collector on " + status.Name + " cannot read window titles. Accessibility access for Telemetry Desktop is missing.",

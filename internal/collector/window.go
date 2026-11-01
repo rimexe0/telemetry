@@ -24,7 +24,7 @@ func (w *Window) Run(ctx context.Context, host Host) error {
 
 func (w *Window) Status() map[string]any {
 	snapshot := w.health.Snapshot()
-	status := map[string]any{"titles_readable": snapshot.TitlesReadable}
+	status := map[string]any{"titles_readable": snapshot.TitlesReadable, "reads_windows": desktop.ReadsWindows}
 	if snapshot.LastWindowAt != nil {
 		status["last_window_sample_at"] = *snapshot.LastWindowAt
 	}

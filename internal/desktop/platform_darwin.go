@@ -141,6 +141,10 @@ type darwin struct{}
 // NewPlatform returns the macOS implementation.
 func NewPlatform() (Platform, error) { return darwin{}, nil }
 
+// ReadsWindows reports whether this system's collector records the focused
+// window and its title.
+const ReadsWindows = true
+
 func (darwin) ActiveWindow() (Window, bool, error) {
 	result := C.td_active()
 	defer C.free(unsafe.Pointer(result.app))

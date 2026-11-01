@@ -40,6 +40,10 @@ type linux struct {
 	openError error
 }
 
+// ReadsWindows reports whether this system's collector records the focused
+// window and its title.
+const ReadsWindows = false
+
 // NewPlatform returns the Linux implementation and starts watching the
 // physical input devices, rescanning for ones plugged in later.
 func NewPlatform() (Platform, error) {

@@ -65,6 +65,11 @@ func TestRunningCollectorThatCannotSeeIsReported(t *testing.T) {
 	if len(healthy) != 0 {
 		t.Fatalf("healthy collector: %v", healthy)
 	}
+	// A Linux collector does not read windows at all; that is not a problem.
+	linux := Evaluate(Evidence{Desktops: []DesktopStatus{mac("running", 1, &WindowStatus{NotRead: true})}}, now)
+	if len(linux) != 0 {
+		t.Fatalf("collector that does not read windows: %v", linux)
+	}
 }
 
 func TestFailingModuleIsReportedAfterAWhile(t *testing.T) {

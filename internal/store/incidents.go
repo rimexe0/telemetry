@@ -101,6 +101,7 @@ func desktopStatus(device string, at time.Time, payload []byte) (silence.Desktop
 	type window struct {
 		TitlesReadable bool       `json:"titles_readable"`
 		LastWindowAt   *time.Time `json:"last_window_sample_at"`
+		ReadsWindows   *bool      `json:"reads_windows"`
 	}
 	var record struct {
 		State    string                     `json:"state"`
@@ -133,7 +134,8 @@ func desktopStatus(device string, at time.Time, payload []byte) (silence.Desktop
 			if err := json.Unmarshal(raw, &fields); err != nil {
 				return status, err
 			}
-			status.Window = &silence.WindowStatus{TitlesReadable: fields.TitlesReadable, LastWindowAt: fields.LastWindowAt}
+			status.Window = &silence.WindowStatus{TitlesReadable: fields.TitlesReadable, LastWindowAt: fields.LastWindowAt,
+				NotRead: fields.ReadsWindows != nil && !*fields.ReadsWindows}
 		}
 	}
 	return status, nil

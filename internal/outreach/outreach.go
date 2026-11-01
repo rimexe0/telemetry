@@ -249,15 +249,15 @@ var Problems = map[string]Problem{
 	"module_failing:t3":      {Grace: CollectionGrace, Message: t3Broke("T3 Code's database")},
 	"module_failing:t3-open": {Grace: CollectionGrace, Message: t3Broke("which project T3 Code has open")},
 	"module_failing:blocker": {Grace: time.Hour, Message: func(device, since string, detail map[string]any) string {
-		return "The Mac has not been able to get blocking decisions from the server since " + since + ", so blocking there may not follow today's rules.\nError: " +
+		return "Telemetry on " + device + " has not been able to get blocking decisions from the server since " + since + ", so blocking there may not follow today's rules.\nError: " +
 			detailText(detail, "error")
 	}},
 	"titles_unreadable": {Grace: CollectionGrace, Message: func(device, since string, _ map[string]any) string {
-		return "Telemetry on the Mac cannot read window titles since " + since + ": its Accessibility permission is off. " +
+		return "Telemetry on " + device + " cannot read window titles since " + since + ": its Accessibility permission is off. " +
 			"Turn on Telemetry Desktop in System Settings → Privacy & Security → Accessibility."
 	}},
 	"window_sampling_stopped": {Grace: CollectionGrace, Message: func(device, since string, _ map[string]any) string {
-		return "Telemetry on the Mac is running but has not recorded which window is in front since " + since + ". Restarting the Mac app should fix it."
+		return "Telemetry on " + device + " is running but has not recorded which window is in front since " + since + ". Restarting Telemetry there should fix it."
 	}},
 	"silent": {Grace: CollectionGrace, Message: func(device, since string, _ map[string]any) string {
 		return "Your phone has sent nothing to Telemetry since " + since + " while you were using the Mac, so tracking and blocking on the phone are probably not running. " +

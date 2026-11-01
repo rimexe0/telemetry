@@ -7,6 +7,10 @@ import (
 	"runtime"
 )
 
+// ReadsWindows reports whether this system's collector records the focused
+// window and its title.
+const ReadsWindows = false
+
 // NewPlatform reports that this system has no sampling layer yet. Linux
 // (Hyprland IPC, KWin, Wayland idle-notify) is planned; the rest of the
 // collector already builds and runs there.
