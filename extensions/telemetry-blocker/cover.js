@@ -5,6 +5,8 @@
 // looked at; a page that had already loaded is left as it was.
 (() => {
   if (window.top !== window) return;
+  // After an extension update, a new copy of this script takes over the page.
+  document.dispatchEvent(new Event("telemetry-cover-replaced"));
   let cover = null;
   let stopped = false;
   let mediaTimer = null;
@@ -84,9 +86,16 @@
   // Sites such as YouTube change page without loading one; ask again then,
   // because one page of a closed site may be open while the next is not.
   let address = location.href;
-  setInterval(() => {
+  const addressTimer = setInterval(() => {
     if (location.href === address) return;
     address = location.href;
     check();
   }, 1000);
+  document.addEventListener("telemetry-cover-replaced", () => {
+    guard?.disconnect();
+    clearInterval(mediaTimer);
+    clearInterval(addressTimer);
+    cover?.remove();
+    cover = guard = mediaTimer = null;
+  });
 })();

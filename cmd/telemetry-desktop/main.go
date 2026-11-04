@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -106,7 +107,23 @@ func defaultModules() string {
 	return "activitywatch-api,t3"
 }
 
-func buildModules(names, listen, t3Dir, t3Token, t3MCPToken, notices string, distractionsOnly bool, credentials *collector.Credentials) ([]collector.Module, error) {
+// keptExtensionVersion reads the version of the browser extension the updater
+// keeps beside the collector's config, empty when none is kept.
+func keptExtensionVersion(dir string) string {
+	data, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		return ""
+	}
+	var manifest struct {
+		Version string `json:"version"`
+	}
+	if json.Unmarshal(data, &manifest) != nil {
+		return ""
+	}
+	return manifest.Version
+}
+
+func buildModules(names, listen, t3Dir, t3Token, t3MCPToken, extensionDir, notices string, distractionsOnly bool, credentials *collector.Credentials) ([]collector.Module, error) {
 	modules := []collector.Module{}
 	seen := map[string]bool{}
 	var blocker *collector.Blocker
@@ -141,6 +158,8 @@ func buildModules(names, listen, t3Dir, t3Token, t3MCPToken, notices string, dis
 	// The browser extension asks the local API; the blocker answers.
 	if api != nil && blocker != nil {
 		api.Site, api.Browser, api.CheckIn = blocker.SiteDecision, blocker.BrowserStatus, blocker.ExtensionCheckIn
+		api.Changes = blocker.Changes
+		api.ExtensionVersion = func() string { return keptExtensionVersion(extensionDir) }
 	}
 	// The tracker reads the answers the blocker already fetches.
 	if tracker != nil && blocker != nil {
@@ -214,7 +233,7 @@ func run(arguments []string) error {
 	if *t3MCPToken == "" {
 		*t3MCPToken = filepath.Join(filepath.Dir(beside), "t3-mcp-token")
 	}
-	modules, err := buildModules(*moduleNames, *listen, *t3Dir, *t3Token, *t3MCPToken, *notices, *distractionsOnly, credentials)
+	modules, err := buildModules(*moduleNames, *listen, *t3Dir, *t3Token, *t3MCPToken, filepath.Join(filepath.Dir(beside), "extension"), *notices, *distractionsOnly, credentials)
 	if err != nil {
 		return err
 	}

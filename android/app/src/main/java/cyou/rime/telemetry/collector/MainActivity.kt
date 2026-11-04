@@ -116,6 +116,7 @@ class MainActivity : ComponentActivity() {
         showCached()
         showFollowUps()
         DayModel.today(Instant.now()).let { today -> DayCache.read(this, today)?.let { days[today] = it } }
+        if (savedInstanceState == null) SetupLink.apply(this, intent)
         if (savedInstanceState == null && SetupActivity.needsSetup(this)) openSetup()
         CollectionStarter.ensureRunning(this)
 

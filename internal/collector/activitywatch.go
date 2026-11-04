@@ -21,6 +21,10 @@ type ActivityWatchAPI struct {
 	Browser func() awserver.BrowserStatus
 	// CheckIn hears the extension's requests when the blocker runs.
 	CheckIn func(remote string, incognito *bool)
+	// Changes tells the extension when the decision in force changes.
+	Changes func() <-chan struct{}
+	// ExtensionVersion names the extension version kept for browsers to load.
+	ExtensionVersion func() string
 }
 
 func (*ActivityWatchAPI) Name() string { return "activitywatch-api" }
@@ -38,7 +42,7 @@ func (a *ActivityWatchAPI) Run(ctx context.Context, host Host) error {
 		return fmt.Errorf("listen %s (is aw-server still running?): %w", a.Listen, err)
 	}
 	server := &http.Server{
-		Handler:           awserver.Handler{Store: host.Store, Hostname: host.Hostname, Version: a.Version, Site: a.Site, Status: a.Browser, CheckIn: a.CheckIn},
+		Handler:           awserver.Handler{Store: host.Store, Hostname: host.Hostname, Version: a.Version, Site: a.Site, Status: a.Browser, CheckIn: a.CheckIn, Changes: a.Changes, ExtensionVersion: a.ExtensionVersion},
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 	}

@@ -63,6 +63,10 @@ jobs:
           ls internal/store/migrations > dist/migrations.txt
           cp deploy/linux/telemetry-update.sh dist/
           cp deploy/macos/telemetry-update.sh dist/telemetry-update-macos.sh
+          cp deploy/macos/install-mac.sh deploy/macos/install-phone.sh deploy/linux/install-linux.sh dist/
+          tar -C extensions/telemetry-blocker -czf dist/telemetry-extension.tar.gz manifest.json background.js cover.js popup.html popup.js
+          tar -C deploy/macos -czf dist/telemetry-macos-jobs.tar.gz com.rime.telemetry.desktop.plist com.rime.telemetry.guard.plist com.rime.telemetry.update.plist com.rime.telemetry.watchdog.plist install-watchdog.sh
+          tar -C deploy/linux -czf dist/telemetry-linux-jobs.tar.gz telemetry-update@.service telemetry-update@.timer
       - uses: actions/upload-artifact@v4
         with:
           name: linux

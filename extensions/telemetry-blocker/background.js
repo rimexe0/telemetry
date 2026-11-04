@@ -3,6 +3,7 @@
 // offline too. If it cannot be reached, nothing is blocked.
 const COLLECTOR = "http://127.0.0.1:5600/api/telemetry/site?host=";
 const STATUS = "http://127.0.0.1:5600/api/telemetry/status";
+const EVENTS = "ws://127.0.0.1:5600/api/telemetry/events";
 
 // The status request is also this browser checking in: the collector hides
 // a browser whose extension stays quiet while sites are blocked. It says
@@ -65,12 +66,64 @@ async function badge() {
   }
 }
 
-// Every 30 seconds, the shortest alarm Chrome allows.
+// The collector says at once when the decision in force changes, so open tabs
+// follow within a second or two. Sending every 20 seconds keeps this service
+// worker alive while the connection is open.
+let events = null;
+function listen() {
+  if (events) return;
+  const socket = new WebSocket(EVENTS);
+  events = socket;
+  let keepAlive = null;
+  socket.onopen = () => {
+    keepAlive = setInterval(() => socket.send("ping"), 20000);
+    badge();
+    refreshTabs();
+  };
+  socket.onmessage = (event) => {
+    const message = JSON.parse(event.data);
+    if (message.type === "hello") updateIfNeeded(message.extension_version);
+    if (message.type === "changed") {
+      badge();
+      refreshTabs();
+    }
+  };
+  socket.onclose = () => {
+    clearInterval(keepAlive);
+    events = null;
+    setTimeout(listen, 5000);
+  };
+}
+
+// The updater keeps the newest extension in the folder this one loads from,
+// and the collector names its version. Reloading takes it into use. It reloads
+// once per version, so a copy loaded from another folder does not keep trying.
+async function updateIfNeeded(wanted) {
+  if (!wanted || wanted === chrome.runtime.getManifest().version) return;
+  const { reloadedFor } = await chrome.storage.local.get("reloadedFor");
+  if (reloadedFor === wanted) return;
+  await chrome.storage.local.set({ reloadedFor: wanted });
+  chrome.runtime.reload();
+}
+
+// Pages open during an update keep the old cover script, which can no longer
+// hear this one; a new one takes over from it.
+chrome.runtime.onInstalled.addListener(async (details) => {
+  if (details.reason !== "update") return;
+  for (const tab of await chrome.tabs.query({ url: ["http://*/*", "https://*/*"], discarded: false })) {
+    chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["cover.js"] }).catch(() => {});
+  }
+});
+
+// The backup, and the check-in: every 30 seconds, the shortest alarm Chrome
+// allows.
 chrome.alarms.create("recheck", { periodInMinutes: 0.5 });
 chrome.alarms.onAlarm.addListener(() => {
+  listen();
   badge();
   refreshTabs();
 });
 chrome.runtime.onStartup.addListener(badge);
+listen();
 badge();
 refreshTabs();

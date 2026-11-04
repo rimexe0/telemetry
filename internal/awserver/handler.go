@@ -1,6 +1,7 @@
 package awserver
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -9,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/coder/websocket"
 )
 
 const maxBody = 1 << 20
@@ -29,6 +32,12 @@ type Handler struct {
 	// the connection's remote address, and whether the extension may run in
 	// private windows when it said so.
 	CheckIn func(remote string, incognito *bool)
+	// Changes, when set, gives a channel closed at the next change of the
+	// decision in force; the extension hears of it through /api/telemetry/events.
+	Changes func() <-chan struct{}
+	// ExtensionVersion, when set, names the extension version kept for this
+	// browser to load, so an older one can reload itself.
+	ExtensionVersion func() string
 }
 
 // BrowserStatus is what the extension shows in its popup.
@@ -86,6 +95,10 @@ func (h Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		writeJSON(writer, http.StatusOK, status)
 		return
 	}
+	if request.URL.Path == "/api/telemetry/events" && request.Method == http.MethodGet {
+		h.events(writer, request)
+		return
+	}
 	if request.URL.Path == "/api/telemetry/site" && request.Method == http.MethodGet {
 		host := strings.ToLower(strings.TrimSpace(request.URL.Query().Get("host")))
 		decision := SiteDecision{Host: host}
@@ -118,6 +131,81 @@ func (h Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		h.bucket(writer, request, id, parts[2:])
 	default:
 		writeError(writer, http.StatusNotFound, "not supported by the Telemetry desktop collector")
+	}
+}
+
+// events keeps a WebSocket open to the extension: a hello naming the kept
+// extension version, then "changed" at every change of the decision in force,
+// so open tabs follow it at once instead of at the extension's 30-second
+// alarm. Only extensions may connect. What the extension sends keeps its
+// service worker alive and counts as a check-in.
+func (h Handler) events(writer http.ResponseWriter, request *http.Request) {
+	if !extensionOrigin(request.Header.Get("Origin")) {
+		writeError(writer, http.StatusForbidden, "origin not allowed")
+		return
+	}
+	if h.Changes == nil {
+		writeError(writer, http.StatusNotFound, "the blocker is not running")
+		return
+	}
+	// The origin is checked above; extensions have no host to compare with.
+	conn, err := websocket.Accept(writer, request, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	if err != nil {
+		return
+	}
+	defer conn.CloseNow()
+	ctx, cancel := context.WithCancel(request.Context())
+	defer cancel()
+	go func() {
+		defer cancel()
+		for {
+			if _, _, err := conn.Read(ctx); err != nil {
+				return
+			}
+			if h.CheckIn != nil {
+				h.CheckIn(request.RemoteAddr, nil)
+			}
+		}
+	}()
+	if h.CheckIn != nil {
+		h.CheckIn(request.RemoteAddr, nil)
+	}
+	send := func(message map[string]any) bool {
+		data, _ := json.Marshal(message)
+		writeCtx, done := context.WithTimeout(ctx, 5*time.Second)
+		defer done()
+		return conn.Write(writeCtx, websocket.MessageText, data) == nil
+	}
+	// Taken before the hello, so a change right after it is not missed.
+	next := h.Changes()
+	hello := map[string]any{"type": "hello"}
+	if h.ExtensionVersion != nil {
+		hello["extension_version"] = h.ExtensionVersion()
+	}
+	if !send(hello) {
+		return
+	}
+	// The kept version can change while the connection is open.
+	repeat := time.NewTicker(time.Minute)
+	defer repeat.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			conn.Close(websocket.StatusNormalClosure, "")
+			return
+		case <-repeat.C:
+			if h.ExtensionVersion != nil {
+				hello["extension_version"] = h.ExtensionVersion()
+			}
+			if !send(hello) {
+				return
+			}
+		case <-next:
+			next = h.Changes()
+			if !send(map[string]any{"type": "changed"}) {
+				return
+			}
+		}
 	}
 }
 

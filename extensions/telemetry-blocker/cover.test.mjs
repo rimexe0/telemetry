@@ -8,11 +8,11 @@ function world({ readyState, visibility, blocked }) {
     get isConnected() { return w.covered; }, remove() { w.covered = false; } });
   const document = { readyState, get visibilityState() { return w.visibility; },
     createElement: el, querySelectorAll: () => [], documentElement: { append() { w.covered = true; } },
-    addEventListener: (n, f) => (w.listeners[n] = f) };
+    addEventListener: (n, f) => (w.listeners[n] = f), dispatchEvent() {} };
   const window = { stop: () => w.stops++ }; window.top = window;
   const location = { hostname: "x.com", href: "https://x.com/a", reload: () => w.reloads++ };
   w.location = location;
-  const ctx = { window, document, location, history: {},
+  const ctx = { window, document, location, history: {}, Event: class {},
     setInterval: (f) => { w.tick = f; return 1; }, clearInterval() {}, MutationObserver: class { observe() {} disconnect() {} },
     chrome: { runtime: { sendMessage: (m, cb) => { w.messages.push(m); cb({ blocked: typeof blocked === "function" ? blocked(m.url) : blocked }); }, onMessage: { addListener: (f) => (w.send = (b) => f({ type: "decision", decision: { blocked: b } })) } } } };
   vm.runInNewContext(src, ctx);
@@ -41,3 +41,6 @@ check("the page address is sent with each check", w.messages.at(-1).url === "htt
 check("an open page of a closed site is uncovered when navigated to", !w.covered);
 w.location.href = "https://x.com/other"; w.tick();
 check("and covered again on the next page", w.covered);
+w = world({ readyState: "complete", visibility: "visible", blocked: true });
+w.listeners["telemetry-cover-replaced"]();
+check("a new copy of the script takes over from the old one", !w.covered);

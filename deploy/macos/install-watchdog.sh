@@ -11,7 +11,7 @@
 set -euo pipefail
 
 [[ $EUID -eq 0 && -n "${SUDO_UID:-}" ]] || { echo "run with sudo from the owner's account" >&2; exit 1; }
-repo="${0:A:h:h:h}"
+here="${0:A:h}"
 owner_home=$(dscl . -read "/Users/$SUDO_USER" NFSHomeDirectory | awk '{print $2}')
 app="$owner_home/Applications/Telemetry Desktop.app/Contents/MacOS/telemetry-desktop"
 job="$owner_home/Library/LaunchAgents/com.rime.telemetry.desktop.plist"
@@ -22,7 +22,7 @@ install -d -o root -g wheel -m 755 /Library/PrivilegedHelperTools "/Library/Appl
 install -o root -g wheel -m 755 "$app" /Library/PrivilegedHelperTools/telemetry-watchdog
 # The job file is put back from this copy if the owner's is deleted.
 install -o root -g wheel -m 644 "$job" "/Library/Application Support/Telemetry/com.rime.telemetry.desktop.plist"
-sed -e "s#__UID__#$SUDO_UID#" -e "s#__HOME__#$owner_home#" "$repo/deploy/macos/$label.plist" > "/Library/LaunchDaemons/$label.plist"
+sed -e "s#__UID__#$SUDO_UID#" -e "s#__HOME__#$owner_home#" "$here/$label.plist" > "/Library/LaunchDaemons/$label.plist"
 chown root:wheel "/Library/LaunchDaemons/$label.plist"
 chmod 644 "/Library/LaunchDaemons/$label.plist"
 

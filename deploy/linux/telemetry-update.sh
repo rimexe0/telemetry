@@ -37,7 +37,7 @@ tag=$(curl -fsSL "https://github.com/$REPO/releases/latest/download/release.txt"
 
 case "$KIND" in
   server) files=(telemetryd telemetry-places panel.tar.gz migrations.txt) ;;
-  collector) files=(telemetry-desktop) ;;
+  collector) files=(telemetry-desktop telemetry-extension.tar.gz) ;;
   *) log "unknown KIND $KIND"; exit 1 ;;
 esac
 files+=(telemetry-update.sh release.txt)
@@ -112,6 +112,15 @@ if ! healthy; then
   systemctl --user restart "$SERVICE"
   echo "$tag" > "$refused"
   exit 1
+fi
+
+# The browser loads the extension from this folder; the collector tells it when
+# the version here is newer, and it reloads itself.
+if [[ "$KIND" == collector ]]; then
+  mkdir -p extension-new
+  tar -xzf telemetry-extension.tar.gz -C extension-new
+  [[ -d "$DIR/extension" ]] && mv "$DIR/extension" extension-before
+  mv extension-new "$DIR/extension"
 fi
 
 echo "$tag" > "$installed"

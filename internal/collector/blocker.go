@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/rimexe0/telemetry/internal/awserver"
+	"github.com/rimexe0/telemetry/internal/changes"
 	"github.com/rimexe0/telemetry/internal/desktop"
 	"github.com/rimexe0/telemetry/internal/model"
 	"github.com/rimexe0/telemetry/internal/policy"
@@ -63,9 +64,13 @@ type Blocker struct {
 	// fingerprint is the server's for the answer in use; a waiting request
 	// returns when it changes.
 	fingerprint string
-	blocking    string
-	lastBlock   string
-	lastLock    time.Time
+	// decisionKey is the decision in force when last compared; decisionFeed
+	// tells the browser extension when it changes.
+	decisionKey  string
+	decisionFeed *changes.Feed
+	blocking     string
+	lastBlock    string
+	lastLock     time.Time
 	// host is set by Run; site checks record blocks through it.
 	host      *Host
 	lastSites map[string]bool
@@ -147,6 +152,7 @@ func (b *Blocker) Run(ctx context.Context, host Host) error {
 		case <-refresh.C:
 			b.refresh(ctx, host)
 		case <-sample.C:
+			b.tellDecisionChange(time.Now())
 			b.grayscale(ctx, host, time.Now())
 			if b.lockScreen(ctx, host, platform, time.Now()) {
 				continue
@@ -158,6 +164,35 @@ func (b *Blocker) Run(ctx context.Context, host Host) error {
 			b.enforce(ctx, host, window, time.Now())
 		}
 	}
+}
+
+// tellDecisionChange wakes whoever waits on Changes when the decision in force
+// differs from the last one seen, whether a new answer or the clock changed
+// it.
+func (b *Blocker) tellDecisionChange(now time.Time) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	key, _ := json.Marshal(DecisionAt(b.timeline, now))
+	if string(key) == b.decisionKey {
+		return
+	}
+	b.decisionKey = string(key)
+	b.changes().Changed()
+}
+
+// Changes gives a channel closed at the next change of the decision in force.
+func (b *Blocker) Changes() <-chan struct{} {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.changes().Next()
+}
+
+// changes returns the feed; the caller holds b.mu.
+func (b *Blocker) changes() *changes.Feed {
+	if b.decisionFeed == nil {
+		b.decisionFeed = changes.New()
+	}
+	return b.decisionFeed
 }
 
 // lockScreen locks the screen when the decision asks for it (bedtime) and

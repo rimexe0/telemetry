@@ -91,6 +91,13 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- The addresses for a new phone; see SetupLink. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="telemetry" android:host="setup" />
+            </intent-filter>
         </activity>
         <!-- Walks from the watch app. -->
         <service

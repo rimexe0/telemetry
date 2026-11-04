@@ -30,7 +30,7 @@ tag=$(curl -fsSL "https://github.com/$repo/releases/latest/download/release.txt"
 # A release that failed here once is not retried; the next one is.
 [[ "$tag" == "$(cat "$refused" 2>/dev/null)" ]] && exit 0
 
-files=(telemetry-desktop-macos.zip telemetry-panel-macos.zip telemetry-update-macos.sh release.txt)
+files=(telemetry-desktop-macos.zip telemetry-panel-macos.zip telemetry-extension.tar.gz telemetry-update-macos.sh release.txt)
 self="${0:A}"
 work="$root/updates/$tag"
 mkdir -p "$work"
@@ -103,6 +103,13 @@ fi
 # The panel holds no state; a running copy keeps working until it is reopened.
 [[ -d "$panel" ]] && mv "$panel" "before/"
 mv "new/Telemetry.app" "$panel"
+
+# The browser loads the extension from this folder; the collector tells it when
+# the version here is newer, and it reloads itself.
+mkdir new/extension
+tar -xzf telemetry-extension.tar.gz -C new/extension
+[[ -d "$root/extension" ]] && mv "$root/extension" before/extension
+mv new/extension "$root/extension"
 
 echo "$tag" > "$installed"
 log "$tag installed"

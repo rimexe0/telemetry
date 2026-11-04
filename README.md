@@ -19,6 +19,25 @@ It is built for its owner's own setup and is not yet packaged for other people.
 - `extensions/telemetry-blocker`: the browser extension.
 - `deploy/`: service units, launchd jobs and install scripts.
 
+## Installing
+
+One script for each device, from the newest signed release. Run again at any
+time; afterwards everything updates itself.
+
+```sh
+# Mac (then grant Accessibility and load the browser extension, as it says)
+curl -fsSL https://github.com/rimexe0/telemetry/releases/latest/download/install-mac.sh | zsh
+
+# Phone, connected to that Mac by USB with USB debugging on
+curl -fsSL https://github.com/rimexe0/telemetry/releases/latest/download/install-phone.sh | zsh
+
+# Linux desktop
+curl -fsSL https://github.com/rimexe0/telemetry/releases/latest/download/install-linux.sh | bash
+```
+
+The phone then updates through Obtainium, and the browser extension reloads
+itself when the updater brings a new version.
+
 ## Building
 
 ```sh

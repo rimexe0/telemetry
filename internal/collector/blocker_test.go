@@ -322,3 +322,37 @@ func TestWindDownGrayscaleOnlyUndoesWhatItTurnedOn(t *testing.T) {
 		t.Fatal("a restart left the screen gray")
 	}
 }
+
+func TestDecisionChangeWakesWaiters(t *testing.T) {
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	blocker := &Blocker{timeline: []policy.Segment{
+		{From: now.Add(-time.Hour), To: now.Add(time.Hour), Decision: policy.Decision{Mode: policy.ModeClosed}},
+		{From: now.Add(time.Hour), To: now.Add(2 * time.Hour), Decision: policy.Decision{Mode: "open"}},
+	}}
+	blocker.tellDecisionChange(now)
+	next := blocker.Changes()
+	blocker.tellDecisionChange(now.Add(time.Minute))
+	select {
+	case <-next:
+		t.Fatal("nothing changed, but waiters were woken")
+	default:
+	}
+	// The clock reaches the next segment.
+	blocker.tellDecisionChange(now.Add(time.Hour))
+	select {
+	case <-next:
+	default:
+		t.Fatal("the clock changed the decision, but waiters were not woken")
+	}
+	// A new answer changes it too.
+	next = blocker.Changes()
+	blocker.mu.Lock()
+	blocker.timeline[1].Decision.Reason = "new rule"
+	blocker.mu.Unlock()
+	blocker.tellDecisionChange(now.Add(time.Hour))
+	select {
+	case <-next:
+	default:
+		t.Fatal("a new answer changed the decision, but waiters were not woken")
+	}
+}
