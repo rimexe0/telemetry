@@ -16,8 +16,10 @@ import (
 func TestEventsTellExtensionsOnly(t *testing.T) {
 	feed := changes.New()
 	checkIns := make(chan struct{}, 10)
+	tabs := make(chan []string, 10)
 	server := httptest.NewServer(Handler{Changes: feed.Next, ExtensionVersion: func() string { return "0.6.0" },
-		CheckIn: func(string, *bool) { checkIns <- struct{}{} }})
+		CheckIn: func(string, *bool) { checkIns <- struct{}{} },
+		Tabs:    func(_ string, titles []string) { tabs <- titles }})
 	defer server.Close()
 	address := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/telemetry/events"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -69,5 +71,17 @@ func TestEventsTellExtensionsOnly(t *testing.T) {
 	case <-checkIns:
 	case <-ctx.Done():
 		t.Fatal("the keepalive did not check in")
+	}
+	// Newer copies send the tabs they show instead.
+	if err := conn.Write(ctx, websocket.MessageText, []byte(`{"type":"tabs","titles":["GitHub"]}`)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case titles := <-tabs:
+		if len(titles) != 1 || titles[0] != "GitHub" {
+			t.Fatalf("titles = %v", titles)
+		}
+	case <-ctx.Done():
+		t.Fatal("the tabs were not heard")
 	}
 }

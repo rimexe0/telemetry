@@ -65,12 +65,24 @@ type extensionState struct {
 	titles    map[int]string       // browser process → last window title that was not empty
 	lastError string               // why the last check-in's app could not be found
 	opened    map[string]time.Time // bundle ID → last time its Extensions page was opened
+	// Each browser profile runs its own copy of the extension, and each copy
+	// reports the titles of the tabs shown in its windows. A window whose
+	// title matches none of them belongs to a profile, or a guest window,
+	// without a running extension.
+	tabs      map[string]map[string]time.Time // bundle ID → tab title → last reported
+	unmatched map[int]time.Time               // browser process → first seen with an unreported title
 }
+
+// tabMatchGrace is how long a browser window may show a title no extension
+// has reported. A copy reports a new title within moments, so this only
+// covers the time between a page changing and the report arriving.
+const tabMatchGrace = 10 * time.Second
 
 func (s *extensionState) init() {
 	if s.seen == nil {
 		*s = extensionState{seen: map[string]time.Time{}, incognito: map[string]bool{}, ports: map[string]string{},
-			since: map[int]time.Time{}, opened: map[string]time.Time{}, titles: map[int]string{}}
+			since: map[int]time.Time{}, opened: map[string]time.Time{}, titles: map[int]string{},
+			tabs: map[string]map[string]time.Time{}, unmatched: map[int]time.Time{}}
 	}
 }
 
@@ -106,11 +118,61 @@ func (b *Blocker) ExtensionCheckIn(remote string, incognito *bool) {
 	}
 }
 
+// ExtensionTabs records the titles of the tabs one copy of the extension
+// shows, which tells the profile it runs in.
+func (b *Blocker) ExtensionTabs(remote string, titles []string) {
+	b.ExtensionCheckIn(remote, nil)
+	now := time.Now()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.extensions.init()
+	bundle, known := b.extensions.ports[remote]
+	if !known {
+		return
+	}
+	reported := b.extensions.tabs[bundle]
+	if reported == nil {
+		reported = map[string]time.Time{}
+		b.extensions.tabs[bundle] = reported
+	}
+	for title, at := range reported {
+		if now.Sub(at) > 10*time.Minute {
+			delete(reported, title)
+		}
+	}
+	for _, title := range titles {
+		if title = strings.TrimSpace(title); title != "" && len(reported) < 1000 {
+			reported[title] = now
+		}
+	}
+}
+
+// reportedTitle reports whether a window title shows a tab some copy of the
+// extension reported lately. Chromium browsers put the tab's title first,
+// then their own parts, such as "GitHub - Helium - You". Called with the
+// mutex held.
+func (s *extensionState) reportedTitle(bundle, title string, within time.Duration, now time.Time) bool {
+	title = strings.TrimSpace(title)
+	// Developer tools and picture in picture have windows of their own but
+	// no tab.
+	if strings.HasPrefix(title, "DevTools - ") || strings.HasPrefix(title, "Picture in picture") || strings.HasPrefix(title, "Picture-in-Picture") {
+		return true
+	}
+	for tab, at := range s.tabs[bundle] {
+		if now.Sub(at) < within && (title == tab || strings.HasPrefix(title, tab+" - ")) {
+			return true
+		}
+	}
+	return false
+}
+
 // hideBrowser hides the browser in front when the decision asks for a
 // working extension and this browser has none: never seen, quiet longer
 // than the decision allows, or not allowed in private windows. A browser
 // first seen in front gets that long to start its extension. It reports
-// whether it hid the browser.
+// whether it hid the browser. Once the browser's extension reports its tabs,
+// a window whose tab no copy reported, such as one from another profile,
+// is hidden too.
 func (b *Blocker) hideBrowser(ctx context.Context, host Host, window desktop.Window, decision policy.Decision, now time.Time) bool {
 	limit := time.Duration(decision.RequireExtensionSeconds) * time.Second
 	name, canRun := extensionBrowsers[window.BundleID]
@@ -148,16 +210,31 @@ func (b *Blocker) hideBrowser(ctx context.Context, host Host, window desktop.Win
 	seen := b.extensions.seen[window.BundleID]
 	incognito, said := b.extensions.incognito[window.BundleID]
 	opened := b.extensions.opened[window.BundleID]
+	// Older copies of the extension do not report tabs; the check starts
+	// with the first copy that does.
+	reports := len(b.extensions.tabs[window.BundleID]) > 0
+	matched := !reports || b.extensions.reportedTitle(window.BundleID, title, limit, now)
+	if matched {
+		delete(b.extensions.unmatched, window.PID)
+	} else if _, ok := b.extensions.unmatched[window.PID]; !ok {
+		if len(b.extensions.unmatched) > 100 {
+			b.extensions.unmatched = map[int]time.Time{}
+		}
+		b.extensions.unmatched[window.PID] = now
+	}
+	unmatched := !matched && now.Sub(b.extensions.unmatched[window.PID]) >= tabMatchGrace
 	b.mu.Unlock()
 	if now.Sub(first) < limit {
 		return false
 	}
 	running := !seen.IsZero() && now.Sub(seen) < limit
-	if canRun && running && said && incognito {
+	if canRun && running && said && incognito && !unmatched {
 		return false
 	}
 	reason := name + " cannot run the Telemetry extension, so it stays hidden while sites are blocked. Use Helium."
 	switch {
+	case canRun && running && said && incognito:
+		reason = "This " + name + " window's profile has no Telemetry extension running. Add it in this profile from its Extensions page, which is opening, or use a profile that has it."
 	case canRun && running && (!said || !incognito):
 		reason = "Allow the Telemetry extension in private windows: on " + name + "'s Extensions page, open Telemetry's Details and turn on Allow in Incognito. Its Extensions page is opening."
 	case canRun:

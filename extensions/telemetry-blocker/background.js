@@ -66,6 +66,22 @@ async function badge() {
   }
 }
 
+// Each browser profile runs its own copy of this extension. Each copy tells
+// the collector the tabs its windows show, so a window from a profile without
+// the extension can be told apart by its title and hidden while sites are
+// blocked.
+async function reportTabs() {
+  const socket = events;
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  const titles = (await chrome.tabs.query({ active: true })).map((tab) => tab.title || tab.url || "");
+  socket.send(JSON.stringify({ type: "tabs", titles }));
+}
+chrome.tabs.onActivated.addListener(reportTabs);
+chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
+  if (tab.active && (change.title || change.url)) reportTabs();
+});
+chrome.windows.onFocusChanged.addListener(reportTabs);
+
 // The collector says at once when the decision in force changes, so open tabs
 // follow within a second or two. Sending every 20 seconds keeps this service
 // worker alive while the connection is open.
@@ -76,7 +92,8 @@ function listen() {
   events = socket;
   let keepAlive = null;
   socket.onopen = () => {
-    keepAlive = setInterval(() => socket.send("ping"), 20000);
+    keepAlive = setInterval(reportTabs, 20000);
+    reportTabs();
     badge();
     refreshTabs();
   };

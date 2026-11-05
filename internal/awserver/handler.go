@@ -32,6 +32,9 @@ type Handler struct {
 	// the connection's remote address, and whether the extension may run in
 	// private windows when it said so.
 	CheckIn func(remote string, incognito *bool)
+	// Tabs, when set, hears the titles of the tabs one copy of the extension
+	// shows: each browser profile runs its own copy.
+	Tabs func(remote string, titles []string)
 	// Changes, when set, gives a channel closed at the next change of the
 	// decision in force; the extension hears of it through /api/telemetry/events.
 	Changes func() <-chan struct{}
@@ -159,10 +162,17 @@ func (h Handler) events(writer http.ResponseWriter, request *http.Request) {
 	go func() {
 		defer cancel()
 		for {
-			if _, _, err := conn.Read(ctx); err != nil {
+			_, data, err := conn.Read(ctx)
+			if err != nil {
 				return
 			}
-			if h.CheckIn != nil {
+			var message struct {
+				Type   string   `json:"type"`
+				Titles []string `json:"titles"`
+			}
+			if h.Tabs != nil && json.Unmarshal(data, &message) == nil && message.Type == "tabs" {
+				h.Tabs(request.RemoteAddr, message.Titles)
+			} else if h.CheckIn != nil {
 				h.CheckIn(request.RemoteAddr, nil)
 			}
 		}

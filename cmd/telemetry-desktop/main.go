@@ -158,7 +158,7 @@ func buildModules(names, listen, t3Dir, t3Token, t3MCPToken, extensionDir, notic
 	// The browser extension asks the local API; the blocker answers.
 	if api != nil && blocker != nil {
 		api.Site, api.Browser, api.CheckIn = blocker.SiteDecision, blocker.BrowserStatus, blocker.ExtensionCheckIn
-		api.Changes = blocker.Changes
+		api.Changes, api.Tabs = blocker.Changes, blocker.ExtensionTabs
 		api.ExtensionVersion = func() string { return keptExtensionVersion(extensionDir) }
 	}
 	// The tracker reads the answers the blocker already fetches.

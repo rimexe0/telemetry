@@ -234,6 +234,33 @@ func TestBrowserWithoutAWorkingExtensionIsHiddenWhileSitesAreBlocked(t *testing.
 	if blocker.hideBrowser(ctx, host, helium, decision, time.Now()) {
 		t.Fatal("hidden although its extension runs")
 	}
+	// Once its extension reports tabs, a window showing a tab no copy
+	// reported, such as one from a profile without the extension, is hidden
+	// after a short grace; a reported one stays.
+	now := time.Now()
+	blocker.ExtensionTabs("127.0.0.1:50000", []string{"GitHub"})
+	own := helium
+	own.Title = "GitHub - Helium - You"
+	if blocker.hideBrowser(ctx, host, own, decision, now) {
+		t.Fatal("a window of the profile with the extension was hidden")
+	}
+	other := helium
+	other.Title = "Reddit - Helium - Other"
+	if blocker.hideBrowser(ctx, host, other, decision, now.Add(time.Second)) {
+		t.Fatal("hidden before the report could arrive")
+	}
+	if !blocker.hideBrowser(ctx, host, other, decision, now.Add(12*time.Second)) {
+		t.Fatal("a window of a profile without the extension was not hidden")
+	}
+	tools := helium
+	tools.Title = "DevTools - github.com/"
+	if blocker.hideBrowser(ctx, host, tools, decision, now.Add(30*time.Second)) {
+		t.Fatal("developer tools were hidden")
+	}
+	if blocker.hideBrowser(ctx, host, own, decision, now.Add(13*time.Second)) {
+		t.Fatal("the profile with the extension stayed hidden")
+	}
+	blocker.ExtensionCheckIn("127.0.0.1:50000", &yes)
 	// Quiet longer than allowed hides it again.
 	if !blocker.hideBrowser(ctx, host, helium, decision, time.Now().Add(61*time.Second)) {
 		t.Fatal("a quiet extension was not noticed")
