@@ -1,0 +1,5 @@
+{
+  "ExtensionInstallForcelist": [
+    "fachbjhigbkfbbplbnoephgnkgghhbfa;http://127.0.0.1:5600/api/telemetry/extension.xml"
+  ]
+}

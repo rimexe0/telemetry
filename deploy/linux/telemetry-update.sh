@@ -31,13 +31,15 @@ flock -n 9 || exit 0
 # signed list below like every other.
 tag=$(curl -fsSL "https://github.com/$REPO/releases/latest/download/release.txt" | awk '{print $1}')
 [[ "$tag" =~ ^r[0-9]+$ ]] || { log "the latest release has no usable name: $tag"; exit 1; }
-[[ "$tag" == "$(cat "$installed" 2>/dev/null)" ]] && exit 0
+# A collector installed before releases carried the packed extension gets
+# its release again once, to fetch it.
+[[ "$tag" == "$(cat "$installed" 2>/dev/null)" && ( "$KIND" != collector || -f "$DIR/extension.crx" ) ]] && exit 0
 # A release that failed here once is not retried; the next one is.
 [[ "$tag" == "$(cat "$refused" 2>/dev/null)" ]] && exit 0
 
 case "$KIND" in
   server) files=(telemetryd telemetry-places panel.tar.gz migrations.txt) ;;
-  collector) files=(telemetry-desktop telemetry-extension.tar.gz) ;;
+  collector) files=(telemetry-desktop telemetry-extension.tar.gz telemetry-extension.crx) ;;
   *) log "unknown KIND $KIND"; exit 1 ;;
 esac
 files+=(telemetry-update.sh release.txt)
@@ -121,6 +123,9 @@ if [[ "$KIND" == collector ]]; then
   tar -xzf telemetry-extension.tar.gz -C extension-new
   [[ -d "$DIR/extension" ]] && mv "$DIR/extension" extension-before
   mv extension-new "$DIR/extension"
+  # Browser policy installs this packed copy from the collector.
+  install -m 644 telemetry-extension.crx "$DIR/extension.crx.new"
+  mv -f "$DIR/extension.crx.new" "$DIR/extension.crx"
 fi
 
 echo "$tag" > "$installed"

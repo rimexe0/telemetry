@@ -27,6 +27,8 @@ type ActivityWatchAPI struct {
 	Changes func() <-chan struct{}
 	// ExtensionVersion names the extension version kept for browsers to load.
 	ExtensionVersion func() string
+	// ExtensionPackage names the packed extension browser policy installs.
+	ExtensionPackage func() string
 }
 
 func (*ActivityWatchAPI) Name() string { return "activitywatch-api" }
@@ -44,7 +46,7 @@ func (a *ActivityWatchAPI) Run(ctx context.Context, host Host) error {
 		return fmt.Errorf("listen %s (is aw-server still running?): %w", a.Listen, err)
 	}
 	server := &http.Server{
-		Handler:           awserver.Handler{Store: host.Store, Hostname: host.Hostname, Version: a.Version, Site: a.Site, Status: a.Browser, CheckIn: a.CheckIn, Tabs: a.Tabs, Changes: a.Changes, ExtensionVersion: a.ExtensionVersion},
+		Handler:           awserver.Handler{Store: host.Store, Hostname: host.Hostname, Version: a.Version, Site: a.Site, Status: a.Browser, CheckIn: a.CheckIn, Tabs: a.Tabs, Changes: a.Changes, ExtensionVersion: a.ExtensionVersion, ExtensionPackage: a.ExtensionPackage},
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 	}

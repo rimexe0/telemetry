@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"strings"
 	"time"
 
@@ -245,12 +246,18 @@ func (b *Blocker) hideBrowser(ctx context.Context, host Host, window desktop.Win
 	case canRun:
 		reason = "The Telemetry extension is not running in " + name + ". On " + name + "'s Extensions page, which is opening, turn it on and set its Site access to On all sites; " + name + " comes back once it runs."
 	}
+	// Linux browsers do not open their Extensions page when another program
+	// asks; browser policy installs the extension there instead.
+	linux := runtime.GOOS == "linux"
+	if linux && canRun {
+		reason = "The Telemetry extension is not running in " + name + ". Restart " + name + ": the Telemetry browser policy installs it in every profile. Without the policy, run install-linux.sh once. Then turn on Allow in Incognito in its Details."
+	}
 	hide := b.Hide
 	if hide == nil {
 		hide = desktop.BlockApp
 	}
 	hide(name+" is hidden while sites are blocked", reason, window.PID)
-	if canRun && now.Sub(opened) >= time.Minute {
+	if canRun && !linux && now.Sub(opened) >= time.Minute {
 		b.mu.Lock()
 		b.extensions.opened[window.BundleID] = now
 		b.mu.Unlock()

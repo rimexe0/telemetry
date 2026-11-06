@@ -160,6 +160,7 @@ func buildModules(names, listen, t3Dir, t3Token, t3MCPToken, extensionDir, notic
 		api.Site, api.Browser, api.CheckIn = blocker.SiteDecision, blocker.BrowserStatus, blocker.ExtensionCheckIn
 		api.Changes, api.Tabs = blocker.Changes, blocker.ExtensionTabs
 		api.ExtensionVersion = func() string { return keptExtensionVersion(extensionDir) }
+		api.ExtensionPackage = func() string { return extensionDir + ".crx" }
 	}
 	// The tracker reads the answers the blocker already fetches.
 	if tracker != nil && blocker != nil {

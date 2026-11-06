@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -41,7 +44,14 @@ type Handler struct {
 	// ExtensionVersion, when set, names the extension version kept for this
 	// browser to load, so an older one can reload itself.
 	ExtensionVersion func() string
+	// ExtensionPackage, when set, names the packed extension kept beside it,
+	// which browser policy installs from here on Linux.
+	ExtensionPackage func() string
 }
+
+// ExtensionID is the packed Telemetry extension's ID, fixed by the key the
+// release signs it with.
+const ExtensionID = "fachbjhigbkfbbplbnoephgnkgghhbfa"
 
 // BrowserStatus is what the extension shows in its popup.
 type BrowserStatus struct {
@@ -112,6 +122,15 @@ func (h Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			decision = h.Site(host, request.URL.Query().Get("url"))
 		}
 		writeJSON(writer, http.StatusOK, decision)
+		return
+	}
+	if request.URL.Path == "/api/telemetry/extension.xml" && request.Method == http.MethodGet && h.ExtensionPackage != nil {
+		h.extensionUpdate(writer)
+		return
+	}
+	if request.URL.Path == "/api/telemetry/extension.crx" && request.Method == http.MethodGet && h.ExtensionPackage != nil {
+		writer.Header().Set("Content-Type", "application/x-chrome-extension")
+		http.ServeFile(writer, request, h.ExtensionPackage())
 		return
 	}
 	path, ok := strings.CutPrefix(request.URL.EscapedPath(), "/api/0/")
@@ -336,4 +355,25 @@ func writeJSON(writer http.ResponseWriter, status int, value any) {
 
 func writeError(writer http.ResponseWriter, status int, message string) {
 	writeJSON(writer, status, map[string]string{"message": message})
+}
+
+// extensionUpdate answers the browser's update check for the packed
+// extension, in the update manifest format Chromium reads.
+func (h Handler) extensionUpdate(writer http.ResponseWriter) {
+	version := ""
+	if h.ExtensionVersion != nil {
+		version = h.ExtensionVersion()
+	}
+	if _, err := os.Stat(h.ExtensionPackage()); err != nil || version == "" {
+		writeError(writer, http.StatusNotFound, "no packed extension is kept here")
+		return
+	}
+	writer.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(writer, `<?xml version="1.0" encoding="UTF-8"?>
+<gupdate xmlns="http://www.google.com/update2/response" protocol="2.0">
+  <app appid="%s">
+    <updatecheck codebase="http://127.0.0.1:5600/api/telemetry/extension.crx" version="%s" />
+  </app>
+</gupdate>
+`, ExtensionID, html.EscapeString(version))
 }
