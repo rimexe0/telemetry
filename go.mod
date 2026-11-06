@@ -4,10 +4,12 @@ go 1.27.0
 
 require (
 	github.com/coder/websocket v1.8.15
+	github.com/godbus/dbus/v5 v5.1.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/paulmach/osm v0.9.0
 	modernc.org/sqlite v1.58.0
+	rsc.io/qr v0.2.0
 )
 
 require (
@@ -36,5 +38,4 @@ require (
 	modernc.org/libc v1.75.6 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
-	rsc.io/qr v0.2.0 // indirect
 )

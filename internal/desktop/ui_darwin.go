@@ -107,7 +107,11 @@ static void td_block_hide(void) {
 */
 import "C"
 
-import "unsafe"
+import (
+	"fmt"
+	"os/exec"
+	"unsafe"
+)
 
 // RunMain runs work while the macOS app loop runs on the calling thread,
 // which must be the main thread (main locks it in init). The block notice
@@ -136,3 +140,11 @@ func HideBlock() { C.td_block_hide() }
 
 // BlockScreenSupported reports whether BlockApp does anything here.
 func BlockScreenSupported() bool { return true }
+
+// OpenInApp opens address in the app with this bundle ID.
+func OpenInApp(bundleID, address string) error {
+	if out, err := exec.Command("/usr/bin/open", "-b", bundleID, address).CombinedOutput(); err != nil {
+		return fmt.Errorf("open %s: %v: %s", address, err, out)
+	}
+	return nil
+}

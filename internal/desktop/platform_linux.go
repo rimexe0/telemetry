@@ -21,8 +21,9 @@ import (
 // compositor, and neither counts as the owner. Only the time of each event is
 // kept; which key or button it was is never read past the event type.
 //
-// Reading /dev/input needs the "input" group. The focused window is not read
-// on Linux yet, so window sampling reports nothing.
+// Reading /dev/input needs the "input" group. The focused window is read on
+// KDE Plasma through KWin (kwin_linux.go); on other desktops window sampling
+// reports nothing.
 
 const (
 	evKey = 1
@@ -38,16 +39,21 @@ type linux struct {
 	open      map[string]bool
 	readable  int
 	openError error
+	kwin      *kwin
+	kwinErr   error
 }
 
 // ReadsWindows reports whether this system's collector records the focused
-// window and its title.
+// window and its title. Only KDE Plasma sessions are read, and a desktop
+// with no window in front is common there, so the server is not told to
+// expect a steady window record.
 const ReadsWindows = false
 
 // NewPlatform returns the Linux implementation and starts watching the
 // physical input devices, rescanning for ones plugged in later.
 func NewPlatform() (Platform, error) {
 	platform := &linux{lastInput: time.Now(), open: map[string]bool{}}
+	platform.kwin, platform.kwinErr = desktopKWin()
 	platform.scan()
 	go func() {
 		for range time.Tick(30 * time.Second) {
@@ -132,7 +138,17 @@ func (l *linux) read(path string, file *os.File) {
 	}
 }
 
-func (*linux) ActiveWindow() (Window, bool, error) { return Window{}, false, nil }
+// ActiveWindow is the window KWin last reported in front.
+func (l *linux) ActiveWindow() (Window, bool, error) {
+	if l.kwinErr != nil {
+		return Window{}, false, l.kwinErr
+	}
+	if l.kwin == nil {
+		return Window{}, false, nil
+	}
+	window, ok := l.kwin.active()
+	return window, ok, nil
+}
 
 // IdleTime is the time since the last input from a physical device.
 func (l *linux) IdleTime() (time.Duration, error) {
@@ -175,7 +191,7 @@ func screenConnected() bool {
 	return false
 }
 
-func (*linux) CanReadTitles(bool) bool { return false }
+func (l *linux) CanReadTitles(bool) bool { return l.kwin != nil }
 
 // Diagnose lists the physical input devices and whether each is readable.
 func Diagnose() string {
@@ -183,7 +199,14 @@ func Diagnose() string {
 	if err != nil {
 		return "input devices: " + err.Error()
 	}
-	lines := []string{fmt.Sprintf("screen connected: %v", screenConnected())}
+	k, kerr := desktopKWin()
+	lines := []string{fmt.Sprintf("screen connected: %v", screenConnected()), fmt.Sprintf("KWin window reading: %v (error: %v)", k != nil, kerr)}
+	if k != nil {
+		// The watch script reports the window in front as it starts.
+		time.Sleep(time.Second)
+		window, ok := k.active()
+		lines = append(lines, fmt.Sprintf("window in front: %v %q %q pid %d", ok, window.BundleID, window.Title, window.PID))
+	}
 	for _, path := range devices {
 		name, _ := os.ReadFile("/sys/class/input/" + filepath.Base(path) + "/device/name")
 		state := "readable"

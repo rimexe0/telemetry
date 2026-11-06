@@ -3,7 +3,6 @@ package collector
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -18,11 +17,17 @@ var (
 		"net.imput.helium": "Helium", "com.google.Chrome": "Chrome", "com.google.Chrome.canary": "Chrome Canary",
 		"org.chromium.Chromium": "Chromium", "com.brave.Browser": "Brave", "com.microsoft.edgemac": "Edge",
 		"company.thebrowser.Browser": "Arc", "com.vivaldi.Vivaldi": "Vivaldi", "com.operasoftware.Opera": "Opera",
+		// Linux: the desktop file names KWin reports.
+		"helium": "Helium", "google-chrome": "Chrome", "chromium": "Chromium", "chromium-browser": "Chromium",
+		"brave-browser": "Brave", "microsoft-edge": "Edge", "vivaldi-stable": "Vivaldi", "opera": "Opera",
 	}
 	otherBrowsers = map[string]string{
 		"com.apple.Safari": "Safari", "com.apple.SafariTechnologyPreview": "Safari Technology Preview",
 		"org.mozilla.firefox": "Firefox", "app.zen-browser.zen": "Zen", "com.kagi.kagimacOS": "Orion",
 		"com.duckduckgo.macos.browser": "DuckDuckGo",
+		// Linux: the desktop file names KWin reports.
+		"firefox": "Firefox", "zen": "Zen", "app.zen_browser.zen": "Zen",
+		"librewolf": "LibreWolf", "io.gitlab.librewolf-community": "LibreWolf", "org.gnome.Epiphany": "Web",
 	}
 	// extensionsPageTitles are the Extensions page's tab title in the owner's
 	// languages; that page stays usable so the extension can be switched
@@ -271,8 +276,8 @@ func (b *Blocker) hideBrowser(ctx context.Context, host Host, window desktop.Win
 
 // openExtensionsPage brings the browser to the front on its Extensions page.
 func openExtensionsPage(bundleID string) error {
-	if out, err := exec.Command("/usr/bin/open", "-b", bundleID, "chrome://extensions/").CombinedOutput(); err != nil {
-		return fmt.Errorf("open extensions page: %v: %s", err, out)
+	if err := desktop.OpenInApp(bundleID, "chrome://extensions/"); err != nil {
+		return fmt.Errorf("open extensions page: %w", err)
 	}
 	return nil
 }
