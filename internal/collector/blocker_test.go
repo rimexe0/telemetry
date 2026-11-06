@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -209,7 +210,12 @@ func TestBrowserWithoutAWorkingExtensionIsHiddenWhileSitesAreBlocked(t *testing.
 	if blocker.hideBrowser(ctx, host, helium, decision, start) {
 		t.Fatal("hidden before its minute to start")
 	}
-	if !blocker.hideBrowser(ctx, host, helium, decision, start.Add(61*time.Second)) || len(opened) != 1 || len(hidden) != 1 {
+	// Linux browsers do not open their Extensions page for another program.
+	pages := 1
+	if runtime.GOOS == "linux" {
+		pages = 0
+	}
+	if !blocker.hideBrowser(ctx, host, helium, decision, start.Add(61*time.Second)) || len(opened) != pages || len(hidden) != 1 {
 		t.Fatalf("no extension after a minute: hidden %v, opened %v", hidden, opened)
 	}
 	// Its Extensions page stays usable.
