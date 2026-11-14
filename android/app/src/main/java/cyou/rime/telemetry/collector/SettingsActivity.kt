@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -40,7 +39,6 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -63,9 +61,6 @@ import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.lifecycle.lifecycleScope
 import cyou.rime.telemetry.collector.ui.TelemetryTheme
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -110,19 +105,9 @@ class SettingsActivity : ComponentActivity() {
     private var smsReady by mutableStateOf(false)
     private var smsBusy by mutableStateOf(false)
     private var captureNotifications by mutableStateOf(false)
-    private var suspendEnabled by mutableStateOf(false)
-    private var suspendStatus by mutableStateOf("")
-    private var watcherEnabled by mutableStateOf(false)
-    private var watcherStatus by mutableStateOf("")
-    private var passwordSet by mutableStateOf(false)
-    private var gateDialog by mutableStateOf<GateDialog?>(null)
-    private var gatePassword by mutableStateOf("")
-    private var gateBusy by mutableStateOf(false)
-    private var passwordDialogOpen by mutableStateOf(false)
-    private var newPassword by mutableStateOf("")
-    private var repeatPassword by mutableStateOf("")
-
-    private data class GateDialog(val action: UnlockGate.Action, val step: UnlockGate.Step, val until: Instant?)
+    private var blockingStatus by mutableStateOf("")
+    private var blockingEnforced by mutableStateOf(false)
+    private var blockingBusy by mutableStateOf(false)
     private var blockingOn by mutableStateOf(false)
     private var paired by mutableStateOf(false)
     private var pairingStatus by mutableStateOf("")
@@ -176,11 +161,8 @@ class SettingsActivity : ComponentActivity() {
         relayKey = deliveryConfig.relayKey
         freshnessStatus = CollectionRuntime.latest(this)
         captureNotifications = PolicyStore(this).captureNotifications
-        suspendEnabled = AppSuspender.enabled(this)
-        suspendStatus = AppSuspender.lastError(this).orEmpty()
-        watcherEnabled = GuardRoot.enabled(this)
-        watcherStatus = GuardRoot.lastError(this).orEmpty()
-        passwordSet = UnlockGate.armed(this)
+        refreshBlockingStatus()
+        ensureBlocking()
         val current = CollectionSettingsStore(this).current
         limits = listOf(current.cycleSeconds, current.healthMinutes, current.meteredKiB, current.meteredDailyMiB,
             current.batteryFloorPercent, current.hotTemperatureC).map { it.toString() }
@@ -196,6 +178,8 @@ class SettingsActivity : ComponentActivity() {
         refreshSmsStatus()
         resumePairingIfNeeded()
         blockingOn = PolicyEvents.blockingEnabled(this)
+        refreshBlockingStatus()
+        if (blockingOn) ensureBlocking()
         paired = DeliveryConfig(this).token() != null
     }
 
@@ -222,12 +206,10 @@ class SettingsActivity : ComponentActivity() {
                 Section("Blocking") {
                     Item("Blocking service", if (blockingOn) "On. Blocked apps are closed during blocks." else "Off. Tap to switch on Telemetry blocking in Accessibility.",
                         onClick = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) })
-                    Toggle("Gray out blocked apps", suspendStatus.ifBlank { "Needs root. The block screen stays as the fallback." }, suspendEnabled, ::changeSuspension)
-                    Toggle("Keep blocking enforced", watcherStatus.ifBlank { "With root: puts the block screen and the gray-outs back if they are switched off, and records it." }, watcherEnabled, ::changeWatcher)
-                    Item(if (passwordSet) "Change the unlock password" else "Set the unlock password",
-                        "Someone else holds it. Turning blocking off by hand needs it, after a wait of ${UnlockGate.WAIT.toMinutes()} minutes.",
-                        onClick = ::requestPasswordChange)
-                    Note("Blocking follows your policy. Tell the assistant what is a distraction, or choose apps in the planner.")
+                    Item(if (blockingEnforced) "Blocking is enforced" else "Set up blocking",
+                        blockingStatus.ifBlank { "Needs Accessibility and root. With root, the phone puts the block screen and the gray-outs back if they are switched off." },
+                        enabled = !blockingBusy, onClick = ::setupBlocking)
+                    Note("The panel decides what is blocked. This phone only enforces it; the 10-minute emergency stays on this phone.")
                 }
                 Section("Collection") {
                     // The last cycle's report is long; its first lines say whether it ran and uploaded.
@@ -295,91 +277,6 @@ class SettingsActivity : ComponentActivity() {
                 }
             }
         }
-        gateDialog?.let { dialog ->
-            UnlockDialog(dialog)
-        }
-        if (passwordDialogOpen) SetPasswordDialog()
-    }
-
-    @Composable
-    private fun UnlockDialog(dialog: GateDialog) {
-        when (dialog.step) {
-            UnlockGate.Step.START -> AlertDialog(
-                onDismissRequest = { gateDialog = null },
-                title = { Text("Not yet") },
-                text = {
-                    Text("${dialog.action.label} stays on. Turning it off needs the password, and only after a wait of ${UnlockGate.WAIT.toMinutes()} minutes. Start the wait now?")
-                },
-                confirmButton = { TextButton(onClick = { startWaiting(dialog.action) }) { Text("Start waiting") } },
-                dismissButton = { TextButton(onClick = { gateDialog = null }) { Text("Not now") } },
-            )
-            UnlockGate.Step.WAIT -> AlertDialog(
-                onDismissRequest = { gateDialog = null },
-                title = { Text("Not yet") },
-                text = { Text("Come back after ${clock(dialog.until)}. The password is asked then.") },
-                confirmButton = { TextButton(onClick = { gateDialog = null }) { Text("OK") } },
-            )
-            UnlockGate.Step.PASSWORD -> AlertDialog(
-                onDismissRequest = { gateDialog = null },
-                title = { Text("Password") },
-                text = {
-                    Column {
-                        Text("Ask the person who holds it to type it.")
-                        OutlinedTextField(
-                            value = gatePassword,
-                            onValueChange = { gatePassword = it },
-                            singleLine = true,
-                            label = { Text("Password") },
-                            visualTransformation = PasswordVisualTransformation(),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                        )
-                    }
-                },
-                confirmButton = {
-                    TextButton(enabled = gatePassword.isNotEmpty() && !gateBusy, onClick = { verifyGate(dialog.action) }) {
-                        Text(if (gateBusy) "Checking…" else "Turn off")
-                    }
-                },
-                dismissButton = { TextButton(onClick = { gateDialog = null }) { Text("Cancel") } },
-            )
-            UnlockGate.Step.NO_PASSWORD -> Unit
-        }
-    }
-
-    @Composable
-    private fun SetPasswordDialog() {
-        AlertDialog(
-            onDismissRequest = { passwordDialogOpen = false },
-            title = { Text("Unlock password") },
-            text = {
-                Column {
-                    Text("Give it to the person who should be able to turn blocking off. This phone keeps only a hash of it.")
-                    OutlinedTextField(
-                        value = newPassword,
-                        onValueChange = { newPassword = it },
-                        singleLine = true,
-                        label = { Text("Password (8 or more)") },
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                    )
-                    OutlinedTextField(
-                        value = repeatPassword,
-                        onValueChange = { repeatPassword = it },
-                        singleLine = true,
-                        label = { Text("Type it again") },
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(enabled = newPassword.length >= 8 && newPassword == repeatPassword, onClick = ::savePassword) { Text("Save") }
-            },
-            dismissButton = { TextButton(onClick = { passwordDialogOpen = false }) { Text("Cancel") } },
-        )
     }
 
     @Composable
@@ -432,121 +329,35 @@ class SettingsActivity : ComponentActivity() {
         )
     }
 
-    private fun changeSuspension(checked: Boolean) {
-        if (checked) {
-            applySuspension(true)
-            return
-        }
-        gate(UnlockGate.Action.SUSPENSION)
+    private fun setupBlocking() = runSetup(quiet = false)
+
+    /** Runs by itself once Accessibility is on, so nothing else needs a tap. */
+    private fun ensureBlocking() {
+        if (BlockingSetup.stored(this).enforced) return
+        runSetup(quiet = true)
     }
 
-    private fun applySuspension(checked: Boolean) {
-        // Root may ask for permission, so this runs off the main thread.
+    private fun runSetup(quiet: Boolean) {
+        if (blockingBusy) return
+        blockingBusy = true
+        if (!quiet) blockingStatus = "Asking root…"
         Thread {
-            val ok = AppSuspender.setEnabled(this, checked)
-            GuardRoot.syncWithCache(this)
+            val state = BlockingSetup.ensure(applicationContext)
             runOnUiThread {
-                suspendEnabled = checked && ok
-                suspendStatus = AppSuspender.lastError(this)
-                    ?: if (checked) "Blocked apps are suspended during blocks; the block screen stays as the fallback." else "Suspension is off; the block screen applies."
+                blockingBusy = false
+                showBlocking(state)
             }
         }.start()
     }
 
-    private fun changeWatcher(checked: Boolean) {
-        if (checked) {
-            applyWatcher(true)
-            return
-        }
-        gate(UnlockGate.Action.WATCHER)
+    private fun refreshBlockingStatus() {
+        showBlocking(BlockingSetup.stored(this))
     }
 
-    private fun applyWatcher(checked: Boolean) {
-        Thread {
-            val ok = GuardRoot.setEnabled(this, checked)
-            runOnUiThread {
-                watcherEnabled = checked && ok
-                watcherStatus = GuardRoot.lastError(this)
-                    ?: if (checked) "Puts the block screen and the gray-outs back if they are switched off, and records it." else "The watcher is off. Blocking can be switched off in Android's settings."
-                if (checked && ok) notice("The watcher is on.")
-            }
-        }.start()
+    private fun showBlocking(state: BlockingSetup.State) {
+        blockingEnforced = state.enforced
+        if (state.message.isNotBlank()) blockingStatus = state.message
     }
-
-    private fun requestPasswordChange() {
-        if (!passwordSet) {
-            newPassword = ""
-            repeatPassword = ""
-            passwordDialogOpen = true
-            return
-        }
-        gate(UnlockGate.Action.PASSWORD)
-    }
-
-    /** The wait, then the password, then the change. */
-    private fun gate(action: UnlockGate.Action) {
-        val until = UnlockGate.waitingUntil(this, action)
-        when (val step = UnlockGate.step(Instant.now(), UnlockGate.armed(this), until)) {
-            UnlockGate.Step.NO_PASSWORD -> notice("Set the unlock password first; someone else keeps it.")
-            else -> {
-                if (step == UnlockGate.Step.PASSWORD) gatePassword = ""
-                gateDialog = GateDialog(action, step, until)
-            }
-        }
-    }
-
-    private fun startWaiting(action: UnlockGate.Action) {
-        val until = UnlockGate.startWaiting(this, action)
-        gateDialog = null
-        recordGateEvent("android.policy_unlock_wait", action, mapOf("until" to until.toString()))
-        notice("Come back after ${clock(until)} to ask for the password.")
-    }
-
-    private fun verifyGate(action: UnlockGate.Action) {
-        if (gateBusy) return
-        gateBusy = true
-        val attempt = gatePassword
-        lifecycleScope.launch {
-            val ok = withContext(Dispatchers.Default) { UnlockGate.verify(this@SettingsActivity, attempt) }
-            gateBusy = false
-            if (!ok) {
-                notice("That password does not match.")
-                return@launch
-            }
-            UnlockGate.used(this@SettingsActivity, action)
-            gateDialog = null
-            gatePassword = ""
-            recordGateEvent("android.policy_unlock", action, emptyMap())
-            when (action) {
-                UnlockGate.Action.SUSPENSION -> applySuspension(false)
-                UnlockGate.Action.WATCHER -> applyWatcher(false)
-                UnlockGate.Action.PASSWORD -> {
-                    newPassword = ""
-                    repeatPassword = ""
-                    passwordDialogOpen = true
-                }
-            }
-        }
-    }
-
-    private fun savePassword() {
-        val stored = UnlockGate.setPassword(this, newPassword)
-        newPassword = ""
-        repeatPassword = ""
-        passwordDialogOpen = false
-        passwordSet = UnlockGate.armed(this)
-        notice(if (stored) "Password saved. Give it to the person who should hold it." else "Use at least 8 characters.")
-    }
-
-    private fun recordGateEvent(kind: String, action: UnlockGate.Action, extra: Map<String, Any?>) {
-        Thread {
-            runCatching { PolicyEvents.record(this, kind, "$kind:${System.currentTimeMillis()}", null, extra + ("action" to action.name)) }
-        }.start()
-    }
-
-    private fun clock(instant: Instant?): String =
-        DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault()).format(instant ?: Instant.now())
-
 
     private fun changeSms(checked: Boolean) {
         if (checked && !SmsCollectionSettings.hasReadPermission(this)) {

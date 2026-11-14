@@ -33,7 +33,9 @@ import androidx.health.connect.client.records.HeartRateRecord
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Guided setup: asks for one thing at a time and moves on by itself. */
 class SetupActivity : ComponentActivity() {
@@ -172,6 +174,10 @@ class SetupActivity : ComponentActivity() {
         lifecycleScope.launch {
             healthDone = healthStepDone()
             val done = syncDone(this@SetupActivity) + if (healthDone) setOf(SetupStep.HEALTH) else emptySet()
+            // Accessibility is on: start the root paths that keep it on.
+            if (SetupStep.BLOCKING in done && (!AppSuspender.enabled(this@SetupActivity) || !GuardRoot.enabled(this@SetupActivity))) {
+                withContext(Dispatchers.IO) { BlockingSetup.ensure(this@SetupActivity) }
+            }
             // Asked for from the Now screen: that step first while it is missing.
             val asked = intent.getStringExtra(EXTRA_STEP)?.let { name -> SetupStep.entries.firstOrNull { it.name == name } }?.takeIf { it !in done }
             if (asked == null) intent.removeExtra(EXTRA_STEP)
