@@ -29,9 +29,17 @@ func guard(arguments []string) error {
 	plist := flags.String("plist", os.ExpandEnv("$HOME/Library/LaunchAgents/com.rime.telemetry.desktop.plist"), "the collector's launchd job file")
 	uid := flags.Int("uid", os.Getuid(), "the user whose collector is watched")
 	restore := flags.String("restore", "", "a copy of the job file to put back when -plist is missing")
+	policy := flags.String("policy", "", "the browser policy file the extension is installed by")
+	policySource := flags.String("policy-source", "", "the system's copy of the policy file, put back when -policy differs")
 	flags.Parse(arguments)
 	if runtime.GOOS != "darwin" {
 		return fmt.Errorf("guard runs on macOS only")
+	}
+	// Every run: a changed or deleted policy lets the extension be removed.
+	if *policy != "" && *policySource != "" {
+		if err := restorePolicy(*policySource, *policy); err != nil {
+			log.Printf("guard: %v", err)
+		}
 	}
 	domain := fmt.Sprintf("gui/%d", *uid)
 	// Nobody logged in to the screen: there is nothing to start.
@@ -85,6 +93,23 @@ func guardAction(loaded bool, printed string) string {
 		return "reload"
 	}
 	return ""
+}
+
+// restorePolicy puts the system's copy of the browser policy back when it is
+// missing or was changed, so the extension cannot be removed from the browser.
+func restorePolicy(source, target string) error {
+	wanted, err := os.ReadFile(source)
+	if err != nil {
+		return fmt.Errorf("read the kept policy: %w", err)
+	}
+	if current, err := os.ReadFile(target); err == nil && string(current) == string(wanted) {
+		return nil
+	}
+	if err := os.WriteFile(target, wanted, 0o644); err != nil {
+		return fmt.Errorf("put back %s: %w", target, err)
+	}
+	log.Printf("guard: put back %s", target)
+	return nil
 }
 
 // restoreJob puts the system's copy of the job file back when the owner's

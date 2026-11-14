@@ -44,3 +44,31 @@ func TestRestoreJobPutsBackOnlyAMissingFile(t *testing.T) {
 		t.Fatalf("job overwritten: %q", data)
 	}
 }
+
+func TestRestorePolicyPutsBackAChangedFile(t *testing.T) {
+	dir := t.TempDir()
+	kept, policy := filepath.Join(dir, "kept.plist"), filepath.Join(dir, "managed.plist")
+	os.WriteFile(kept, []byte("forcelist"), 0o644)
+
+	// Missing: written.
+	if err := restorePolicy(kept, policy); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(policy); string(data) != "forcelist" {
+		t.Fatalf("policy = %q", data)
+	}
+
+	// Unchanged: left alone.
+	if err := restorePolicy(kept, policy); err != nil {
+		t.Fatal(err)
+	}
+
+	// Changed: put back.
+	os.WriteFile(policy, []byte("no extension"), 0o644)
+	if err := restorePolicy(kept, policy); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(policy); string(data) != "forcelist" {
+		t.Fatalf("policy not put back: %q", data)
+	}
+}

@@ -17,6 +17,10 @@
     <string>__HOME__/Library/LaunchAgents/com.rime.telemetry.desktop.plist</string>
     <string>-restore</string>
     <string>/Library/Application Support/Telemetry/com.rime.telemetry.desktop.plist</string>
+    <string>-policy</string>
+    <string>/Library/Managed Preferences/net.imput.helium.plist</string>
+    <string>-policy-source</string>
+    <string>/Library/Application Support/Telemetry/helium-policy.plist</string>
   </array>
   <key>StartInterval</key>
   <integer>60</integer>

@@ -112,10 +112,11 @@ say "What is left is yours to grant"
 open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" 2>/dev/null || true
 print -- "
 1. Accessibility: turn on Telemetry Desktop in the settings window just opened.
-2. Browser extension, once in each browser:
-   open chrome://extensions, turn on Developer mode, choose Load unpacked, and pick:
-   $root/extension
-   Then open its Details and turn on Allow in Incognito. Updates come by themselves.
+2. Helium: restart it once. The extension is installed by browser policy, so
+   chrome://extensions shows it as installed by your administrator and it
+   cannot be removed or switched off there. Remove the copy you loaded
+   unpacked earlier, or it covers pages twice. In its Details, turn on
+   Allow in Incognito.
 3. Phone: connect it by USB with USB debugging on, and run install-phone.sh.
 
 Done. Telemetry now updates itself."

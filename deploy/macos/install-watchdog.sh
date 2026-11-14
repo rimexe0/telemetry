@@ -18,10 +18,14 @@ job="$owner_home/Library/LaunchAgents/com.rime.telemetry.desktop.plist"
 label="com.rime.telemetry.watchdog"
 [[ -x "$app" && -f "$job" ]] || { echo "install the collector first (deploy/macos/install-desktop.sh)" >&2; exit 1; }
 
-install -d -o root -g wheel -m 755 /Library/PrivilegedHelperTools "/Library/Application Support/Telemetry"
+install -d -o root -g wheel -m 755 /Library/PrivilegedHelperTools "/Library/Application Support/Telemetry" "/Library/Managed Preferences"
 install -o root -g wheel -m 755 "$app" /Library/PrivilegedHelperTools/telemetry-watchdog
 # The job file is put back from this copy if the owner's is deleted.
 install -o root -g wheel -m 644 "$job" "/Library/Application Support/Telemetry/com.rime.telemetry.desktop.plist"
+# Helium installs the browser extension by policy, so it cannot be removed in
+# chrome://extensions; the watchdog puts the policy back if it is changed.
+install -o root -g wheel -m 644 "$here/helium-policy.plist" "/Library/Application Support/Telemetry/helium-policy.plist"
+install -o root -g wheel -m 644 "$here/helium-policy.plist" "/Library/Managed Preferences/net.imput.helium.plist"
 sed -e "s#__UID__#$SUDO_UID#" -e "s#__HOME__#$owner_home#" "$here/$label.plist" > "/Library/LaunchDaemons/$label.plist"
 chown root:wheel "/Library/LaunchDaemons/$label.plist"
 chmod 644 "/Library/LaunchDaemons/$label.plist"
