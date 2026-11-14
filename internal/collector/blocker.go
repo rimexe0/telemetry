@@ -408,8 +408,9 @@ func (b *Blocker) alwaysOpen(host string) bool {
 
 // SiteDecision answers whether host is blocked now, for the browser
 // extension. address is the page's full address when the extension sends it;
-// a page among the decision's open addresses stays open. Without a current
-// decision nothing is blocked.
+// a page among the decision's open addresses stays open. A page that may be
+// trimmed stays blocked for older extensions, which cover it, and names the
+// trim for current ones. Without a current decision nothing is blocked.
 func (b *Blocker) SiteDecision(host, address string) awserver.SiteDecision {
 	b.mu.Lock()
 	decision := DecisionAt(b.timeline, time.Now())
@@ -420,12 +421,13 @@ func (b *Blocker) SiteDecision(host, address string) awserver.SiteDecision {
 	}
 	if BlocksSite(*decision, host) && !policy.AddressOpen(decision.OpenAddresses, address) {
 		result.Blocked, result.Mode, result.Reason = true, ModeLabel(decision.Mode), decision.Reason
-		b.recordSite(host, *decision)
+		result.Trim = TrimmedPage(*decision, host, address)
+		b.recordSite(host, result.Trim, *decision)
 	}
 	return result
 }
 
-func (b *Blocker) recordSite(site string, decision policy.Decision) {
+func (b *Blocker) recordSite(site, trim string, decision policy.Decision) {
 	now := time.Now()
 	key := fmt.Sprintf("site:%s:%d", site, now.Unix()/60)
 	b.mu.Lock()
@@ -440,7 +442,11 @@ func (b *Blocker) recordSite(site string, decision policy.Decision) {
 	if host == nil || seen {
 		return
 	}
-	payload, _ := json.Marshal(map[string]any{"site": site, "mode": decision.Mode, "reason": decision.Reason, "policy_version": decision.PolicyVersion})
+	fields := map[string]any{"site": site, "mode": decision.Mode, "reason": decision.Reason, "policy_version": decision.PolicyVersion}
+	if trim != "" {
+		fields["trim"] = trim
+	}
+	payload, _ := json.Marshal(fields)
 	observation := model.Observation{
 		SourceInstanceKey: "telemetry-desktop:" + host.DeviceID + ":policy", SourceKind: "desktop_policy", DeviceID: host.DeviceID,
 		SourceRecordKey: key, Kind: "desktop.site_block", OccurredAt: now.UTC(), CollectedAt: now.UTC(),

@@ -3,6 +3,10 @@
 // history stay as they are. When the block ends the cover goes away. A page
 // that was stopped before it loaded is loaded again, but only once its tab is
 // looked at; a page that had already loaded is left as it was.
+//
+// Some pages of a closed site may stay usable with their feeds hidden: the
+// decision then names a trim. If the page no longer looks the way the trim
+// expects, or a feed shows through, the page is covered instead.
 (() => {
   if (window.top !== window) return;
   // After an extension update, a new copy of this script takes over the page.
@@ -12,6 +16,91 @@
   let mediaTimer = null;
   let guard = null;
   let reloadWhenSeen = false;
+  let trimStyle = null;
+  let trimTimer = null;
+  let trimmed = null;
+  // Set once a trim fails on this page; the site stays covered until the
+  // block ends or the page is loaded again.
+  let trimFailed = false;
+  let ticksOnAddress = 0;
+
+  const hidden = (selectors) => selectors.join(",\n") + " { display: none !important; }";
+  const TRIMS = {
+    youtube: {
+      css: hidden([
+        // The home feed, the guide on the left and the notifications.
+        'ytd-browse[page-subtype="home"]', "#guide", "tp-yt-app-drawer#guide", "ytd-mini-guide-renderer", "#guide-button",
+        "ytd-notification-topbar-button-renderer",
+        // Beside and under a video: suggestions and comments. A playlist
+        // being watched stays.
+        "ytd-watch-flexy #related", "ytd-watch-next-secondary-results-renderer", "ytd-watch-flexy #comments",
+        // In the player: end screens, cards, next-video countdown and the
+        // fullscreen grid of more videos.
+        ".html5-endscreen", ".ytp-endscreen-content", ".ytp-ce-element", ".ytp-cards-teaser", ".ytp-cards-button",
+        ".ytp-autonav-endscreen-countdown-overlay", ".ytp-fullscreen-grid", ".ytp-suggested-action",
+        // In search results: Shorts and suggestion shelves.
+        "ytd-search ytd-reel-shelf-renderer", "ytd-search grid-shelf-view-model", "ytd-search ytd-shelf-renderer",
+        "ytd-search ytm-shorts-lockup-view-model", "ytd-search ytm-shorts-lockup-view-model-v2",
+      ]),
+      // Seen on screen, these mean the hiding stopped working.
+      leaks: [
+        'ytd-browse[page-subtype="home"] ytd-rich-item-renderer', "ytd-rich-grid-renderer ytd-rich-item-renderer",
+        "ytd-watch-next-secondary-results-renderer yt-lockup-view-model", "ytd-compact-video-renderer",
+        "ytd-comment-thread-renderer", "ytd-reel-item-renderer", "ytm-shorts-lockup-view-model", ".ytp-videowall-still",
+        'ytd-search a[href^="/shorts/"]',
+      ],
+      // What a loaded page must have; without it the page has changed.
+      expects: (path) => ({ "/": 'ytd-browse[page-subtype="home"]', "/results": "ytd-search", "/watch": "ytd-watch-flexy #related" })[path],
+      // Autoplay would play suggestions one after another.
+      tidy() {
+        const autoplay = document.querySelector('.ytp-autonav-toggle-button[aria-checked="true"]');
+        if (autoplay) (autoplay.closest("button") || autoplay).click();
+      },
+    },
+    reddit: {
+      css: hidden([
+        "#left-sidebar-container", "#right-sidebar-container", "#mosaic-pdp-feed", "pdp-right-rail", "shreddit-sidebar-ad",
+        "reddit-pdp-right-rail-post", "#navbar-menu-button",
+      ]),
+      leaks: ["reddit-pdp-right-rail-post", "#mosaic-pdp-feed shreddit-post", "#left-sidebar-container", "shreddit-feed"],
+      expects: () => "shreddit-post",
+      tidy() {},
+    },
+  };
+
+  const onScreen = (element) => (element.checkVisibility ? element.checkVisibility() : element.getClientRects().length > 0);
+
+  // Checked every second while a page is trimmed.
+  function checkTrim() {
+    const trim = TRIMS[trimmed?.trim];
+    if (!trim) return;
+    if (!trimStyle.isConnected) document.documentElement.append(trimStyle);
+    trim.tidy();
+    ticksOnAddress++;
+    const leaked = trim.leaks.some((selector) => [...document.querySelectorAll(selector)].some(onScreen));
+    const expected = trim.expects(location.pathname);
+    const missing = expected && ticksOnAddress >= 10 && document.readyState === "complete" && !document.querySelector(expected);
+    if (leaked || missing) {
+      trimFailed = true;
+      apply(trimmed);
+    }
+  }
+
+  function trim(decision) {
+    trimmed = decision;
+    if (!trimStyle) {
+      trimStyle = document.createElement("style");
+      trimStyle.textContent = TRIMS[decision.trim].css;
+    }
+    if (!trimStyle.isConnected) document.documentElement.append(trimStyle);
+    trimTimer ??= setInterval(checkTrim, 1000);
+  }
+
+  function untrim() {
+    clearInterval(trimTimer);
+    trimStyle?.remove();
+    trimStyle = trimTimer = trimmed = null;
+  }
 
   // A background tab stays stopped until the owner opens it.
   document.addEventListener("visibilitychange", () => {
@@ -42,7 +131,9 @@
       </main></div>`;
     shadow.querySelector(".mode").textContent = decision.mode || "";
     shadow.querySelector(".reason").textContent = decision.reason || "This site is blocked right now.";
-    shadow.querySelector(".closed").textContent = `${location.hostname} is closed right now. The page will come back when the block ends.`;
+    shadow.querySelector(".closed").textContent = decision.trimFailed
+      ? `This ${location.hostname} page looks different from what the blocker knows, so the site is closed until the block ends.`
+      : `${location.hostname} is closed right now. The page will come back when the block ends.`;
     shadow.querySelector("button").addEventListener("click", () => history.back());
     return host;
   }
@@ -74,8 +165,17 @@
   }
 
   function apply(decision) {
-    if (decision && decision.blocked) show(decision);
-    else hide();
+    if (decision && decision.blocked && TRIMS[decision.trim] && !trimFailed) {
+      hide();
+      trim(decision);
+    } else if (decision && decision.blocked) {
+      untrim();
+      show(trimFailed ? { ...decision, trimFailed } : decision);
+    } else {
+      untrim();
+      trimFailed = false;
+      hide();
+    }
   }
 
   const check = () => chrome.runtime.sendMessage({ type: "check", host: location.hostname, url: location.href }, apply);
@@ -89,12 +189,14 @@
   const addressTimer = setInterval(() => {
     if (location.href === address) return;
     address = location.href;
+    ticksOnAddress = 0;
     check();
   }, 1000);
   document.addEventListener("telemetry-cover-replaced", () => {
     guard?.disconnect();
     clearInterval(mediaTimer);
     clearInterval(addressTimer);
+    untrim();
     cover?.remove();
     cover = guard = mediaTimer = null;
   });

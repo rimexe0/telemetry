@@ -71,6 +71,9 @@ type SiteDecision struct {
 	Blocked bool   `json:"blocked"`
 	Mode    string `json:"mode,omitempty"`
 	Reason  string `json:"reason,omitempty"`
+	// Trim names how the extension may show a blocked page with its feeds
+	// hidden instead of covering it, such as "youtube".
+	Trim string `json:"trim,omitempty"`
 }
 
 func (h Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
