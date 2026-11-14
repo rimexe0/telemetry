@@ -246,7 +246,7 @@ func Prompt(digest string, known []Known, now time.Time, location *time.Location
 		location = time.UTC
 	}
 	lines := []string{
-		"You keep track of what one person is trying to do, from what their computer and phone showed. They have ADHD, do several things at once, switch often, and work in their own, often unexpected way. They do not write plans; you work it out for them.",
+		"You keep track of what one person is trying to do, from what their computer and phone showed. They have ADHD, do several things at once, switch often, and work in their own, often unexpected way. They do not write plans; you work it out for them. Refer to them as \"they\".",
 		"",
 		"Group what you see into aims: the things they are actually trying to get done or are spending time on. An aim is defined by its purpose, not by the app: one aim can span a browser, a coding agent, a chat app and the phone (for example a YouTube tutorial, a ChatGPT question and a coding thread all about one 3D printer).",
 		"Coding agent threads are strong evidence of an aim, but not the only one. Name non-coding aims too: errands, appointments, buying something, talking to someone, learning something.",
