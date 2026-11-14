@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/rimexe0/telemetry/internal/activity"
 	"github.com/rimexe0/telemetry/internal/intent"
 )
 
@@ -93,11 +94,12 @@ func (p *Postgres) SaveIntentReading(ctx context.Context, from, to time.Time, di
 	return saved, tx.Commit(ctx)
 }
 
-// ListIntents returns intents seen since a time, and any still active or
-// waiting, most recently seen first.
-func (p *Postgres) ListIntents(ctx context.Context, since time.Time) ([]Intent, error) {
+// ListIntents returns intents first seen by until and seen since since, or
+// still active or waiting, most recently seen first. until keeps a reading
+// of the past from seeing aims that began after it.
+func (p *Postgres) ListIntents(ctx context.Context, since, until time.Time) ([]Intent, error) {
 	rows, err := p.pool.Query(ctx, `SELECT id, title, kind, status, next_step, evidence, confidence, first_seen, last_seen, reading_id FROM intents
-		WHERE last_seen >= $1 OR status IN ('active', 'waiting') ORDER BY last_seen DESC, id DESC LIMIT 200`, since)
+		WHERE first_seen <= $2 AND (last_seen >= $1 OR status IN ('active', 'waiting')) ORDER BY last_seen DESC, id DESC LIMIT 200`, since, until)
 	if err != nil {
 		return nil, err
 	}
@@ -118,10 +120,11 @@ func (p *Postgres) ListIntents(ctx context.Context, since time.Time) ([]Intent, 
 	return result, rows.Err()
 }
 
-// LatestIntentReading returns the newest reading, or nil before the first.
+// LatestIntentReading returns the reading of the latest window, or nil
+// before the first.
 func (p *Postgres) LatestIntentReading(ctx context.Context) (*IntentReading, error) {
 	var reading IntentReading
-	err := p.pool.QueryRow(ctx, `SELECT id, read_at, window_from, window_to, note, now_intent_id FROM intent_readings ORDER BY read_at DESC, id DESC LIMIT 1`).
+	err := p.pool.QueryRow(ctx, `SELECT id, read_at, window_from, window_to, note, now_intent_id FROM intent_readings ORDER BY window_to DESC, id DESC LIMIT 1`).
 		Scan(&reading.ID, &reading.ReadAt, &reading.From, &reading.To, &reading.Note, &reading.NowIntentID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -137,4 +140,37 @@ func nonNil(values []string) []string {
 		return []string{}
 	}
 	return values
+}
+
+// intentContextKinds are the records, besides screen time and coding
+// agents, that help tell what the owner is trying to do.
+var intentContextKinds = []string{
+	"desktop.site_block", "desktop.policy_block", "android.policy_block", "android.policy_bypass",
+	"android.notification.posted", "android.calendar_event", "health_connect.sleep_session",
+}
+
+// IntentContextRecords returns those records from 16 hours before from (the
+// night before) to 12 hours after to (later appointments).
+func (p *Postgres) IntentContextRecords(ctx context.Context, from, to time.Time) ([]activity.Record, error) {
+	rows, err := p.pool.Query(ctx, `
+		SELECT o.source_instance_key, si.device_id, o.kind, o.occurred_at, o.ended_at, r.projection
+		FROM observations o
+		JOIN observation_revisions r ON r.id = o.effective_revision_id
+		JOIN source_instances si ON si.source_instance_key = o.source_instance_key
+		WHERE o.kind = ANY($1) AND o.occurred_at >= $2 AND o.occurred_at < $3
+		ORDER BY o.occurred_at, o.id
+		LIMIT 20000`, intentContextKinds, from.Add(-16*time.Hour), to.Add(12*time.Hour))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	records := []activity.Record{}
+	for rows.Next() {
+		var record activity.Record
+		if err := rows.Scan(&record.Source, &record.Device, &record.Kind, &record.Start, &record.End, &record.Payload); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
 }

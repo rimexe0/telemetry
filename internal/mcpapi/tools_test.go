@@ -546,7 +546,7 @@ type intentsRepository struct {
 	planningRepository
 }
 
-func (intentsRepository) ListIntents(context.Context, time.Time) ([]store.Intent, error) {
+func (intentsRepository) ListIntents(context.Context, time.Time, time.Time) ([]store.Intent, error) {
 	seen := time.Date(2026, 11, 14, 12, 40, 0, 0, time.UTC)
 	return []store.Intent{
 		{ID: 7, Title: "Fix the tablet's touchscreen", Kind: "work", Status: "waiting", Evidence: []string{"agent working"}, FirstSeen: seen.Add(-time.Hour), LastSeen: seen},

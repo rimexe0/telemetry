@@ -55,7 +55,7 @@ func addIntentTools(server *mcp.Server, repository store.Repository, now func() 
 		if err != nil {
 			return nil, IntentsOutput{}, err
 		}
-		intents, err := repository.ListIntents(ctx, now().UTC().Add(-time.Duration(hours)*time.Hour))
+		intents, err := repository.ListIntents(ctx, now().UTC().Add(-time.Duration(hours)*time.Hour), now().UTC())
 		if err != nil {
 			return nil, IntentsOutput{}, err
 		}

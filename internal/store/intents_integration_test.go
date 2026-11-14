@@ -24,7 +24,7 @@ func TestPostgresIntentReadings(t *testing.T) {
 	if err != nil || first.ID == 0 || first.NowIntentID == nil {
 		t.Fatalf("first = %+v, %v", first, err)
 	}
-	listed, err := database.ListIntents(ctx, start)
+	listed, err := database.ListIntents(ctx, start, start.Add(6*time.Hour))
 	if err != nil || len(listed) != 2 {
 		t.Fatalf("listed = %+v, %v", listed, err)
 	}
@@ -36,6 +36,10 @@ func TestPostgresIntentReadings(t *testing.T) {
 		case "Watching car videos":
 			videos = item
 		}
+	}
+	// A reading of the past does not see aims that began after it.
+	if before, err := database.ListIntents(ctx, start, start.Add(time.Hour)); err != nil || len(before) != 0 {
+		t.Fatalf("before = %+v, %v", before, err)
 	}
 	if *first.NowIntentID != videos.ID || len(tablet.Evidence) != 1 || len(videos.Evidence) != 0 || videos.Evidence == nil {
 		t.Fatalf("tablet %+v videos %+v now %d", tablet, videos, *first.NowIntentID)
@@ -51,7 +55,7 @@ func TestPostgresIntentReadings(t *testing.T) {
 	if err != nil || second.NowIntentID == nil || *second.NowIntentID != tablet.ID {
 		t.Fatalf("second = %+v, %v", second, err)
 	}
-	listed, err = database.ListIntents(ctx, start)
+	listed, err = database.ListIntents(ctx, start, later.Add(3*time.Hour))
 	if err != nil || len(listed) != 2 {
 		t.Fatalf("listed = %+v, %v", listed, err)
 	}
@@ -79,7 +83,7 @@ func TestPostgresIntentReadings(t *testing.T) {
 		t.Fatalf("latest = %+v, %v", latest, err)
 	}
 	// Only recent ones, plus any still active.
-	if recent, err := database.ListIntents(ctx, later.Add(3*time.Hour)); err != nil || len(recent) != 2 {
+	if recent, err := database.ListIntents(ctx, later.Add(3*time.Hour), later.Add(3*time.Hour)); err != nil || len(recent) != 2 {
 		t.Fatalf("recent = %+v, %v", recent, err)
 	}
 }

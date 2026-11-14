@@ -885,10 +885,14 @@ func (f *fakeRepository) SaveIntentReading(context.Context, time.Time, time.Time
 	return store.IntentReading{}, nil
 }
 
-func (f *fakeRepository) ListIntents(context.Context, time.Time) ([]store.Intent, error) {
+func (f *fakeRepository) ListIntents(context.Context, time.Time, time.Time) ([]store.Intent, error) {
 	return nil, nil
 }
 
 func (f *fakeRepository) LatestIntentReading(context.Context) (*store.IntentReading, error) {
+	return nil, nil
+}
+
+func (f *fakeRepository) IntentContextRecords(context.Context, time.Time, time.Time) ([]activity.Record, error) {
 	return nil, nil
 }

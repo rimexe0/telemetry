@@ -87,10 +87,12 @@ const (
 )
 
 // Digest writes what the owner did between from and to as short timeline
-// lines: screen time on the Mac and phone (app, site, window or page
-// title) and the coding agents they worked with. It carries names and
-// titles only, never page or message contents.
-func Digest(input activity.DayInput, from, to time.Time, location *time.Location) string {
+// lines: screen time on each computer and the phone (app, site, window or
+// page title), the coding agents they worked with, and from records the
+// context: time away from home (input.Fixes and input.Home), last sleep,
+// calendar events, blocked attempts, and who sent notifications. It carries
+// names and titles only, never page or message contents.
+func Digest(input activity.DayInput, context []activity.Record, from, to time.Time, location *time.Location) string {
 	if location == nil {
 		location = time.UTC
 	}
@@ -118,7 +120,7 @@ func Digest(input activity.DayInput, from, to time.Time, location *time.Location
 		matched := false
 		for index := len(runs) - 1; index >= 0 && index >= len(runs)-3; index-- {
 			last := &runs[index]
-			if last.device == segment.Device && last.app == segment.App && last.domain == segment.Domain && last.title == title &&
+			if last.device == deviceName(segment) && last.app == segment.App && last.domain == segment.Domain && last.title == title &&
 				start.Sub(last.end) <= joinGap {
 				if end.After(last.end) {
 					last.end = end
@@ -128,7 +130,7 @@ func Digest(input activity.DayInput, from, to time.Time, location *time.Location
 			}
 		}
 		if !matched {
-			runs = append(runs, run{device: segment.Device, app: segment.App, domain: segment.Domain, title: title, start: start, end: end})
+			runs = append(runs, run{device: deviceName(segment), app: segment.App, domain: segment.Domain, title: title, start: start, end: end})
 		}
 	}
 
@@ -155,7 +157,7 @@ func Digest(input activity.DayInput, from, to time.Time, location *time.Location
 	}
 
 	var out strings.Builder
-	fmt.Fprintf(&out, "Screen time from %s to %s (start-end device app [site] — window or page title):\n", clock(from), clock(to))
+	fmt.Fprintf(&out, "Screen time from %s to %s (start-end device app [site] — window or page title; device is mac, phone, or another computer's name):\n", clock(from), clock(to))
 	if len(lines) == 0 {
 		out.WriteString("(nothing on screen)\n")
 	}
@@ -236,7 +238,134 @@ func Digest(input activity.DayInput, from, to time.Time, location *time.Location
 			out.WriteString(line + "\n")
 		}
 	}
+	out.WriteString(contextLines(input, context, from, to, clock))
 	return out.String()
+}
+
+// deviceName names where a segment happened: "phone", "mac", or another
+// computer by its own name.
+func deviceName(segment activity.Segment) string {
+	if segment.Device != activity.DeviceMac || segment.Machine == "" || strings.HasPrefix(segment.Machine, "mac") {
+		return segment.Device
+	}
+	return segment.Machine
+}
+
+// contextLines words the records around the screen time.
+func contextLines(input activity.DayInput, records []activity.Record, from, to time.Time, clock func(time.Time) string) string {
+	lines := []string{}
+	away := []string{}
+	for _, stretch := range activity.Outside(input) {
+		if stretch.End.Before(from) || stretch.Start.After(to) {
+			continue
+		}
+		text := clock(stretch.Start) + "-" + clock(stretch.End)
+		if stretch.Ongoing {
+			text += " (not back yet)"
+		}
+		away = append(away, text)
+	}
+	if len(away) > 0 {
+		lines = append(lines, "Away from home: "+strings.Join(away, ", "))
+	}
+
+	type count struct {
+		name string
+		n    int
+	}
+	tally := func(counts map[string]int, limit int) string {
+		list := []count{}
+		for name, n := range counts {
+			list = append(list, count{name, n})
+		}
+		sort.Slice(list, func(i, j int) bool {
+			return list[i].n > list[j].n || (list[i].n == list[j].n && list[i].name < list[j].name)
+		})
+		if len(list) > limit {
+			list = list[:limit]
+		}
+		parts := []string{}
+		for _, item := range list {
+			parts = append(parts, fmt.Sprintf("%s ×%d", item.name, item.n))
+		}
+		return strings.Join(parts, ", ")
+	}
+	var slept *[2]time.Time
+	blocked, notified := map[string]int{}, map[string]int{}
+	bypasses, events := []string{}, []string{}
+	seenEvents := map[string]bool{}
+	for _, record := range records {
+		var payload map[string]any
+		if json.Unmarshal(record.Payload, &payload) != nil {
+			continue
+		}
+		field := func(key string) string { value, _ := payload[key].(string); return strings.TrimSpace(value) }
+		inWindow := !record.Start.Before(from) && record.Start.Before(to)
+		switch record.Kind {
+		case "health_connect.sleep_session":
+			start, errStart := time.Parse(time.RFC3339, field("start_time"))
+			end, errEnd := time.Parse(time.RFC3339, field("end_time"))
+			if errStart == nil && errEnd == nil && end.Before(to) && (slept == nil || end.After(slept[1])) {
+				slept = &[2]time.Time{start, end}
+			}
+		case "android.calendar_event":
+			start, errStart := time.Parse(time.RFC3339, field("start"))
+			end, errEnd := time.Parse(time.RFC3339, field("end"))
+			key := field("title") + field("start")
+			if errStart != nil || errEnd != nil || field("title") == "" || seenEvents[key] || end.Before(from) || start.After(to.Add(12*time.Hour)) {
+				continue
+			}
+			seenEvents[key] = true
+			events = append(events, clock(start)+"-"+clock(end)+" "+cut(field("title"), 60))
+		case "desktop.site_block", "desktop.policy_block", "android.policy_block":
+			if !inWindow {
+				continue
+			}
+			name := field("site")
+			if name == "" {
+				name = field("app")
+			}
+			if name == "" {
+				name = field("package")
+			}
+			if name != "" {
+				blocked[name]++
+			}
+		case "android.policy_bypass":
+			if inWindow {
+				bypasses = append(bypasses, clock(record.Start)+" phone ("+field("cause")+")")
+			}
+		case "android.notification.posted":
+			app := field("package_name")
+			if !inWindow || app == "" || strings.HasPrefix(app, "cyou.rime.telemetry") || app == "android" {
+				continue
+			}
+			name := app
+			if title := field("title"); title != "" {
+				name += " from " + cut(title, 40)
+			}
+			notified[name]++
+		}
+	}
+	if slept != nil {
+		lines = append(lines, "Last sleep: "+clock(slept[0])+"-"+clock(slept[1]))
+	}
+	if len(events) > 0 {
+		lines = append(lines, "Calendar (now and the next 12 h): "+strings.Join(events, "; "))
+	}
+	if len(blocked) > 0 {
+		lines = append(lines, "Blocked attempts to open (each counted when it was blocked): "+tally(blocked, 12))
+	}
+	if len(bypasses) > 0 {
+		lines = append(lines, "Blocking turned off: "+strings.Join(bypasses, ", "))
+	}
+	if len(notified) > 0 {
+		lines = append(lines, "Notifications received (app from sender or chat; contents not shown): "+tally(notified, 12))
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.Join(lines, "\n") + "\n"
 }
 
 // Prompt asks for the reading. known are the aims from earlier readings

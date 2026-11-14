@@ -468,6 +468,10 @@ type Away struct {
 	Ongoing bool `json:"ongoing,omitempty"`
 }
 
+// Outside is the stretches away from home in the input's range, from its
+// Fixes and Home.
+func Outside(input DayInput) []Away { return outside(input.Fixes, input.Home, input.From, input.To) }
+
 // outside finds the stretches away from home in [from, to): from the end of
 // one stay at home to the start of the next.
 func outside(fixes []places.Fix, home *[2]float64, from, to time.Time) []Away {

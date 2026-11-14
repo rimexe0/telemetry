@@ -40,6 +40,7 @@ func main() {
 		panelCookieSecure = flag.Bool("panel-cookie-secure", envBool("TELEMETRY_PANEL_COOKIE_SECURE", true), "mark panel session cookies secure")
 		migrate           = flag.Bool("migrate", false, "apply embedded migrations and exit")
 		outreachPreview   = flag.Bool("outreach-preview", false, "print what would be written to the owner now, send nothing, and exit")
+		intentsBackfill   = flag.String("intents-backfill", "", "make the readings of what the owner was trying to do from this date (YYYY-MM-DD, UTC) until now, and exit")
 		relayListen       = flag.String("relay-listen", os.Getenv("TELEMETRY_RELAY_LISTEN"), "listen address for sealed device requests from a relay such as a Cloudflare Tunnel")
 		relayKeyFile      = flag.String("relay-key-file", os.Getenv("TELEMETRY_RELAY_KEY_FILE"), "server key for sealed device requests, created when missing")
 	)
@@ -72,6 +73,20 @@ func main() {
 	}
 	if *outreachPreview {
 		if err := previewOutreach(context, database, strings.Fields(os.Getenv("TELEMETRY_OUTREACH_COMPOSE_COMMAND"))); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if *intentsBackfill != "" {
+		from, err := time.Parse("2006-01-02", *intentsBackfill)
+		if err != nil {
+			log.Fatal(err)
+		}
+		command := intentCommand(os.Getenv)
+		if len(command) == 0 {
+			log.Fatal("TELEMETRY_INTENT_COMMAND or TELEMETRY_JUDGE_COMMAND is required")
+		}
+		if err := backfillIntents(context, database, command, from); err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -202,11 +217,7 @@ func main() {
 	go runJudge(context, database, strings.Fields(os.Getenv("TELEMETRY_JUDGE_COMMAND")))
 	// The assistant that works out what the owner is trying to do from all
 	// activity; the judge's command unless one of its own is set.
-	intentCommand := os.Getenv("TELEMETRY_INTENT_COMMAND")
-	if strings.TrimSpace(intentCommand) == "" {
-		intentCommand = os.Getenv("TELEMETRY_JUDGE_COMMAND")
-	}
-	go runIntents(context, database, strings.Fields(intentCommand))
+	go runIntents(context, database, intentCommand(os.Getenv))
 	// The assistant writing to the owner without being asked: one command
 	// that sends its standard input, such as "hermes send -t telegram -q",
 	// and one that words the message, taking the prompt as its last argument.
