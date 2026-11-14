@@ -113,6 +113,10 @@
 
   function build(decision) {
     const host = document.createElement("telemetry-cover");
+    // Inline and important, so page styles cannot hide it. Reddit hides every
+    // element it does not know, which a page changed without loading has.
+    const forced = { all: "initial", position: "fixed", inset: "0", "z-index": "2147483647", display: "block", visibility: "visible", opacity: "1", "pointer-events": "auto" };
+    for (const [name, value] of Object.entries(forced)) host.style.setProperty(name, value, "important");
     const shadow = host.attachShadow({ mode: "closed" });
     shadow.innerHTML = `
       <style>

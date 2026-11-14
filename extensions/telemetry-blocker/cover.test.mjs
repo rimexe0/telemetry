@@ -6,7 +6,7 @@ function world({ readyState, visibility, blocked, trim, pathname = "/a", found =
   const w = { reloads: 0, stops: 0, paused: 0, clicks: 0, listeners: {}, messages: [], visibility, covered: false, styled: false, timers: [], found };
   const el = (tag) => tag === "style"
     ? { get isConnected() { return w.styled; }, remove() { w.styled = false; }, set textContent(v) { w.css = v; } }
-    : { attachShadow: () => ({ innerHTML: "", querySelector: (q) => ({ addEventListener() {}, set textContent(v) { if (q === ".closed") w.closedText = v; } }) }),
+    : { style: { setProperty: (k, v, p) => ((w.coverStyle ||= {})[k] = v + " " + p) }, attachShadow: () => ({ innerHTML: "", querySelector: (q) => ({ addEventListener() {}, set textContent(v) { if (q === ".closed") w.closedText = v; } }) }),
         get isConnected() { return w.covered; }, remove() { w.covered = false; } };
   const visible = { checkVisibility: () => true };
   const document = { readyState, get visibilityState() { return w.visibility; },
@@ -74,3 +74,5 @@ check("a page of the site that is not trimmed is covered", w.covered && !w.style
 w.location.href = "https://x.com/watch"; w.location.pathname = "/watch"; w.tick();
 check("and trimmed again when going back to one that is", !w.covered && w.styled);
 w.send(false); check("the style goes when the block ends", !w.covered && !w.styled);
+w = world({ readyState: "complete", visibility: "visible", blocked: true });
+check("the cover cannot be hidden by page styles", w.coverStyle.visibility === "visible important" && w.coverStyle["z-index"] === "2147483647 important");
