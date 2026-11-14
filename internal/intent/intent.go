@@ -290,8 +290,9 @@ func contextLines(input activity.DayInput, records []activity.Record, from, to t
 		}
 		return strings.Join(parts, ", ")
 	}
-	var slept *[2]time.Time
+	slept := [][2]time.Time{}
 	blocked, notified := map[string]int{}, map[string]int{}
+	blockedMinutes := map[string]bool{}
 	bypasses, events := []string{}, []string{}
 	seenEvents := map[string]bool{}
 	for _, record := range records {
@@ -305,8 +306,8 @@ func contextLines(input activity.DayInput, records []activity.Record, from, to t
 		case "health_connect.sleep_session":
 			start, errStart := time.Parse(time.RFC3339, field("start_time"))
 			end, errEnd := time.Parse(time.RFC3339, field("end_time"))
-			if errStart == nil && errEnd == nil && end.Before(to) && (slept == nil || end.After(slept[1])) {
-				slept = &[2]time.Time{start, end}
+			if errStart == nil && errEnd == nil && end.Before(to) && end.After(from.Add(-16*time.Hour)) {
+				slept = append(slept, [2]time.Time{start, end})
 			}
 		case "android.calendar_event":
 			start, errStart := time.Parse(time.RFC3339, field("start"))
@@ -328,7 +329,9 @@ func contextLines(input activity.DayInput, records []activity.Record, from, to t
 			if name == "" {
 				name = field("package")
 			}
-			if name != "" {
+			// A covered tab is reported every few seconds; count minutes.
+			if minute := name + record.Start.Truncate(time.Minute).String(); name != "" && !blockedMinutes[minute] {
+				blockedMinutes[minute] = true
 				blocked[name]++
 			}
 		case "android.policy_bypass":
@@ -347,14 +350,19 @@ func contextLines(input activity.DayInput, records []activity.Record, from, to t
 			notified[name]++
 		}
 	}
-	if slept != nil {
-		lines = append(lines, "Last sleep: "+clock(slept[0])+"-"+clock(slept[1]))
+	if len(slept) > 0 {
+		sort.Slice(slept, func(i, j int) bool { return slept[i][0].Before(slept[j][0]) })
+		parts := []string{}
+		for _, session := range slept {
+			parts = append(parts, clock(session[0])+"-"+clock(session[1]))
+		}
+		lines = append(lines, "Sleep recorded since the evening before: "+strings.Join(parts, ", "))
 	}
 	if len(events) > 0 {
 		lines = append(lines, "Calendar (now and the next 12 h): "+strings.Join(events, "; "))
 	}
 	if len(blocked) > 0 {
-		lines = append(lines, "Blocked attempts to open (each counted when it was blocked): "+tally(blocked, 12))
+		lines = append(lines, "Blocked (minutes in which each was blocked): "+tally(blocked, 12))
 	}
 	if len(bypasses) > 0 {
 		lines = append(lines, "Blocking turned off: "+strings.Join(bypasses, ", "))

@@ -103,6 +103,7 @@ func TestDigestAddsContextWithoutContents(t *testing.T) {
 		record("android.calendar_event", from.Add(3*time.Hour), `{"title":"CDAS Appointment","start":"2026-11-14T12:20:00Z","end":"2026-11-14T12:30:00Z"}`),
 		record("desktop.site_block", from.Add(10*time.Minute), `{"site":"x.com","mode":"work"}`),
 		record("desktop.site_block", from.Add(11*time.Minute), `{"site":"x.com","mode":"work"}`),
+		record("desktop.site_block", from.Add(11*time.Minute+5*time.Second), `{"site":"x.com","mode":"work"}`),
 		record("android.policy_block", from.Add(12*time.Minute), `{"package":"com.twitter.android"}`),
 		record("android.policy_bypass", from.Add(13*time.Minute), `{"cause":"blocking_turned_off"}`),
 		record("android.notification.posted", from.Add(14*time.Minute), `{"package_name":"com.whatsapp","title":"Mom","text":"secret message text"}`),
@@ -114,9 +115,9 @@ func TestDigestAddsContextWithoutContents(t *testing.T) {
 	for _, want := range []string{
 		"09:00-09:05 catchy Konsole — ~",
 		"09:00-09:05 mac Krita",
-		"Last sleep: 01:12-04:45",
+		"Sleep recorded since the evening before: 01:12-04:45",
 		"Calendar (now and the next 12 h): 12:20-12:30 CDAS Appointment",
-		"Blocked attempts to open (each counted when it was blocked): x.com ×2, com.twitter.android ×1",
+		"Blocked (minutes in which each was blocked): x.com ×2, com.twitter.android ×1",
 		"Blocking turned off: 09:13 phone (blocking_turned_off)",
 		"Notifications received (app from sender or chat; contents not shown): com.whatsapp from Mom ×1",
 	} {
