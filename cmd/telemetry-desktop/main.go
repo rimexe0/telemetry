@@ -102,9 +102,9 @@ func login(arguments []string) {
 func defaultModules() string {
 	if runtime.GOOS == "darwin" {
 		// t3-open is left out: T3 Code removed the request it used (2026-10-28).
-		return "window,activitywatch-api,t3,blocker,tracker"
+		return "window,activitywatch-api,t3,browser-history,blocker,tracker"
 	}
-	return "activitywatch-api,t3"
+	return "activitywatch-api,t3,browser-history"
 }
 
 // keptExtensionVersion reads the version of the browser extension the updater
@@ -143,6 +143,8 @@ func buildModules(names, listen, t3Dir, t3Token, t3MCPToken, extensionDir, notic
 			modules = append(modules, api)
 		case "t3":
 			modules = append(modules, &collector.T3{Dir: t3Dir, MCPTokenFile: t3MCPToken})
+		case "browser-history":
+			modules = append(modules, &collector.BrowserHistory{})
 		case "t3-open":
 			modules = append(modules, &collector.T3Open{Dir: t3Dir, TokenFile: t3Token})
 		case "blocker":
@@ -152,7 +154,7 @@ func buildModules(names, listen, t3Dir, t3Token, t3MCPToken, extensionDir, notic
 			tracker = &collector.Tracker{Credentials: credentials, Notices: notices}
 			modules = append(modules, tracker)
 		default:
-			return nil, fmt.Errorf("unknown module %q (known: window, activitywatch-api, t3, t3-open, blocker, tracker)", name)
+			return nil, fmt.Errorf("unknown module %q (known: window, activitywatch-api, t3, t3-open, browser-history, blocker, tracker)", name)
 		}
 	}
 	// The browser extension asks the local API; the blocker answers.
@@ -174,7 +176,7 @@ func buildModules(names, listen, t3Dir, t3Token, t3MCPToken, extensionDir, notic
 
 func run(arguments []string) error {
 	flags := flag.NewFlagSet("run", flag.ExitOnError)
-	moduleNames := flags.String("modules", defaultModules(), "comma-separated modules to run: window, activitywatch-api, t3, t3-open, blocker, tracker")
+	moduleNames := flags.String("modules", defaultModules(), "comma-separated modules to run: window, activitywatch-api, t3, t3-open, browser-history, blocker, tracker")
 	listen := flags.String("listen", "127.0.0.1:5600", "loopback address for the activitywatch-api module")
 	home, _ := os.UserHomeDir()
 	t3Dir := flags.String("t3-dir", filepath.Join(home, ".t3", "userdata"), "T3 Code userdata directory for the t3 module")
