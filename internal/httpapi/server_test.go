@@ -896,3 +896,7 @@ func (f *fakeRepository) LatestIntentReading(context.Context) (*store.IntentRead
 func (f *fakeRepository) IntentContextRecords(context.Context, time.Time, time.Time) ([]activity.Record, error) {
 	return nil, nil
 }
+
+func (f *fakeRepository) IntentReadingStarts(context.Context, time.Time, time.Time) ([]time.Time, error) {
+	return nil, nil
+}

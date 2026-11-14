@@ -59,10 +59,21 @@ func runIntents(ctx context.Context, repository store.Repository, command []stri
 // before. A window with no activity is skipped.
 func backfillIntents(ctx context.Context, repository store.Repository, command []string, from time.Time) error {
 	now := time.Now().UTC()
+	starts, err := repository.IntentReadingStarts(ctx, from, now)
+	if err != nil {
+		return err
+	}
+	done := map[int64]bool{}
+	for _, start := range starts {
+		done[start.Unix()] = true
+	}
 	made := 0
 	for start := from.UTC(); start.Add(intentWindow).Before(now); start = start.Add(intentWindow) {
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		if done[start.Unix()] {
+			continue
 		}
 		end := start.Add(intentWindow)
 		read, err := readIntents(ctx, repository, command, start, end, start)

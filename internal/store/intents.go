@@ -174,3 +174,22 @@ func (p *Postgres) IntentContextRecords(ctx context.Context, from, to time.Time)
 	}
 	return records, rows.Err()
 }
+
+// IntentReadingStarts returns the window starts of the readings made for
+// windows starting in [from, to), so a backfill can skip them.
+func (p *Postgres) IntentReadingStarts(ctx context.Context, from, to time.Time) ([]time.Time, error) {
+	rows, err := p.pool.Query(ctx, `SELECT DISTINCT window_from FROM intent_readings WHERE window_from >= $1 AND window_from < $2`, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	starts := []time.Time{}
+	for rows.Next() {
+		var start time.Time
+		if err := rows.Scan(&start); err != nil {
+			return nil, err
+		}
+		starts = append(starts, start)
+	}
+	return starts, rows.Err()
+}

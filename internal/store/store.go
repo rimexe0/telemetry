@@ -136,6 +136,7 @@ type Repository interface {
 	ListIntents(ctx context.Context, since, until time.Time) ([]Intent, error)
 	LatestIntentReading(context.Context) (*IntentReading, error)
 	IntentContextRecords(ctx context.Context, from, to time.Time) ([]activity.Record, error)
+	IntentReadingStarts(ctx context.Context, from, to time.Time) ([]time.Time, error)
 	AddTaskClaim(context.Context, TaskClaim) (TaskClaim, error)
 	ListTaskClaims(context.Context, time.Time, time.Time) ([]TaskClaim, error)
 	ApplyTaskRuleChanges(context.Context, []TaskRuleChange, string) (AgentChange, []ActivityContextRule, error)

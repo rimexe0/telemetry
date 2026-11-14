@@ -82,6 +82,9 @@ func TestPostgresIntentReadings(t *testing.T) {
 	if latest, err := database.LatestIntentReading(ctx); err != nil || latest == nil || latest.NowIntentID != nil {
 		t.Fatalf("latest = %+v, %v", latest, err)
 	}
+	if starts, err := database.IntentReadingStarts(ctx, start, later.Add(time.Hour)); err != nil || len(starts) != 2 {
+		t.Fatalf("starts = %v, %v", starts, err)
+	}
 	// Only recent ones, plus any still active.
 	if recent, err := database.ListIntents(ctx, later.Add(3*time.Hour), later.Add(3*time.Hour)); err != nil || len(recent) != 2 {
 		t.Fatalf("recent = %+v, %v", recent, err)
