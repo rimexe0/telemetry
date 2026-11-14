@@ -187,7 +187,7 @@ func run(arguments []string) error {
 	tokenFile := flags.String("ingest-token-file", "", "file containing the Telemetry ingest token")
 	hostname := flags.String("hostname", "", "hostname used in bucket names (default: this computer's)")
 	deliverEvery := flags.Duration("deliver-every", 30*time.Second, "how often queued records are sent")
-	notices := flags.String("notices", collector.NoticesFocus, "tracker notices: focus (only in a focus session), all, or off")
+	notices := flags.String("notices", collector.NoticesOff, "tracker notices: off (none), turns (only that an agent stopped), focus (also in a focus session), or all")
 	distractionsOnly := flags.Bool("distractions-only", false, "block only distractions, never everything but the essentials; for a machine agents also use")
 	relay := flags.String("relay", "", "relay that carries sealed device requests to the server, such as https://relay.example.com; the server address is used when it cannot be reached")
 	relayKey := flags.String("relay-key", "", "the server's public key for -relay")

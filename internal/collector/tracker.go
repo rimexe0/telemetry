@@ -39,9 +39,11 @@ const (
 type Tracker struct {
 	Credentials *Credentials
 	HTTP        *http.Client
-	// Notices is "focus" (only in a focus session the owner started; the
-	// default), "all", or "off". The owner is easily pulled away, and found
-	// notices outside focus to be one more distraction (2026-10-06).
+	// Notices is "turns" (only that an agent stopped; the default), "focus"
+	// (also in a focus session the owner started), "all", or "off". The
+	// owner is easily pulled away, and found notices outside focus to be one
+	// more distraction (2026-10-06), and the focus cards useless too
+	// (2026-11-14).
 	Notices string
 	// Prompt shows a notice and returns the option chosen, or -1.
 	Prompt func(title, detail string, options []string, timeout time.Duration) int
@@ -63,6 +65,7 @@ type Tracker struct {
 
 // The tracker's notice settings.
 const (
+	NoticesTurns = "turns"
 	NoticesFocus = "focus"
 	NoticesAll   = "all"
 	NoticesOff   = "off"
@@ -144,19 +147,21 @@ type turnRef struct {
 }
 
 type trackingNow struct {
-	Tracking struct {
-		State        string     `json:"state"`
-		TaskID       *int64     `json:"task_id"`
-		Task         string     `json:"task"`
-		Since        *time.Time `json:"since"`
-		Context      string     `json:"context"`
-		LearnContext string     `json:"learn_context"`
-		Excused      bool       `json:"excused"`
-		AgentRunning bool       `json:"agent_running"`
-		YourTurn     []turnRef  `json:"your_turn"`
-		Focus        *focusNow  `json:"focus"`
-	} `json:"tracking"`
-	Tasks []taskRef `json:"tasks"`
+	Tracking trackingState `json:"tracking"`
+	Tasks    []taskRef     `json:"tasks"`
+}
+
+type trackingState struct {
+	State        string     `json:"state"`
+	TaskID       *int64     `json:"task_id"`
+	Task         string     `json:"task"`
+	Since        *time.Time `json:"since"`
+	Context      string     `json:"context"`
+	LearnContext string     `json:"learn_context"`
+	Excused      bool       `json:"excused"`
+	AgentRunning bool       `json:"agent_running"`
+	YourTurn     []turnRef  `json:"your_turn"`
+	Focus        *focusNow  `json:"focus"`
 }
 
 // notice is what to show the owner now, if anything.
@@ -182,7 +187,13 @@ type notice struct {
 // reminder when the owner has left the focus task.
 func (t *Tracker) decide(now trackingNow, at time.Time) *notice {
 	tracking := now.Tracking
-	if tracking.State == "" || tracking.State == "away" || t.Notices == NoticesOff || (t.Notices != NoticesAll && tracking.Focus == nil) {
+	if tracking.State == "" || tracking.State == "away" || t.Notices == NoticesOff {
+		return nil
+	}
+	if t.Notices == NoticesTurns {
+		return t.turn(tracking, at)
+	}
+	if t.Notices != NoticesAll && tracking.Focus == nil {
 		return nil
 	}
 	if day := at.Format("2006-01-02"); t.greeted != day && len(now.Tasks) > 0 && tracking.Focus == nil {
@@ -215,8 +226,28 @@ func (t *Tracker) decide(now trackingNow, at time.Time) *notice {
 		}
 		return nil
 	}
-	// An agent stopped: it is the owner's turn on that task. Said once per stop,
-	// and not when they are already on it.
+	if stopped := t.stopped(tracking, at); stopped != nil {
+		return stopped
+	}
+	if tracking.State == "task" && tracking.TaskID != nil && *tracking.TaskID != t.told {
+		t.told = *tracking.TaskID
+		return &notice{kind: "tell", title: "Tracking: " + tracking.Task, detail: tracking.Context, options: now.Tasks,
+			context: tracking.Context, learn: tracking.LearnContext, task: *tracking.TaskID}
+	}
+	return t.stillWaiting(tracking, at)
+}
+
+// turn is the notice, if any, that a task's agent has stopped.
+func (t *Tracker) turn(tracking trackingState, at time.Time) *notice {
+	if stopped := t.stopped(tracking, at); stopped != nil {
+		return stopped
+	}
+	return t.stillWaiting(tracking, at)
+}
+
+// stopped says an agent stopped: it is the owner's turn on that task. Said
+// once per stop, and not when they are already on it.
+func (t *Tracker) stopped(tracking trackingState, at time.Time) *notice {
 	if t.turns == nil {
 		t.turns = map[string]bool{}
 	}
@@ -228,13 +259,15 @@ func (t *Tracker) decide(now trackingNow, at time.Time) *notice {
 		t.turns[key] = true
 		return &notice{kind: "turn", title: "Your turn: " + turn.Task, detail: "Its agent stopped " + ago(at.Sub(turn.Since)) + "."}
 	}
-	if tracking.State == "task" && tracking.TaskID != nil && *tracking.TaskID != t.told {
-		t.told = *tracking.TaskID
-		return &notice{kind: "tell", title: "Tracking: " + tracking.Task, detail: tracking.Context, options: now.Tasks,
-			context: tracking.Context, learn: tracking.LearnContext, task: *tracking.TaskID}
+	return nil
+}
+
+// stillWaiting says it once more a while later, when the owner is
+// elsewhere, as what is waiting rather than how long they have been away.
+func (t *Tracker) stillWaiting(tracking trackingState, at time.Time) *notice {
+	if t.turns == nil {
+		t.turns = map[string]bool{}
 	}
-	// Still waiting a while later, and the owner is elsewhere: said once
-	// more, as what is waiting rather than how long they have been away.
 	for _, turn := range tracking.YourTurn {
 		key := fmt.Sprintf("again %d %s", turn.TaskID, turn.Since.UTC().Format(time.RFC3339))
 		if t.turns[key] || at.Sub(turn.Since) < waitingAgain || (tracking.TaskID != nil && *tracking.TaskID == turn.TaskID) {

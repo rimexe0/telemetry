@@ -233,12 +233,12 @@ func TestTrackerRecordsAnswers(t *testing.T) {
 	}
 }
 
-// By default the Mac says nothing outside a focus session the owner started.
-func TestTrackerIsQuietOutsideFocusByDefault(t *testing.T) {
+// In focus mode the Mac says nothing outside a focus session the owner started.
+func TestTrackerIsQuietOutsideFocusInFocusMode(t *testing.T) {
 	start := time.Date(2026, 10, 6, 9, 0, 0, 0, time.Local)
 	body := trackingBody("task", 3, "Dad's album", "", start)
 	body.Tracking.YourTurn = []turnRef{{TaskID: 4, Task: "Science fair presentation", Since: start.Add(-time.Hour)}}
-	tracker := &Tracker{}
+	tracker := &Tracker{Notices: NoticesFocus}
 	for minute := 0; minute < 120; minute += 5 {
 		if got := tracker.decide(body, start.Add(time.Duration(minute)*time.Minute)); got != nil {
 			t.Fatalf("outside focus: %+v", got)
@@ -251,5 +251,30 @@ func TestTrackerIsQuietOutsideFocusByDefault(t *testing.T) {
 	}
 	if got := tracker.decide(body, start.Add(10*time.Minute)); got == nil || got.kind != "back" {
 		t.Fatalf("a focus session the owner started keeps its reminder: %+v", got)
+	}
+}
+
+// By default the Mac only says that an agent stopped: no day greeting, no
+// "tracking" card, and nothing about leaving a focus task (2026-11-14).
+func TestTrackerOnlyTellsTurnsByDefault(t *testing.T) {
+	start := time.Date(2026, 11, 14, 9, 0, 0, 0, time.Local)
+	body := trackingBody("task", 3, "Dad's album", "", start)
+	body.Tracking.Focus = &focusNow{TaskID: 3, Task: "Dad's album", Since: start, On: "off", OffSince: &start}
+	tracker := &Tracker{Notices: NoticesTurns}
+	for minute := 0; minute < 60; minute += 5 {
+		if got := tracker.decide(body, start.Add(time.Duration(minute)*time.Minute)); got != nil {
+			t.Fatalf("minute %d: %+v", minute, got)
+		}
+	}
+	body.Tracking.YourTurn = []turnRef{{TaskID: 4, Task: "Science fair presentation", Since: start.Add(50 * time.Minute)}}
+	at := start.Add(time.Hour)
+	if got := tracker.decide(body, at); got == nil || got.kind != "turn" || got.title != "Your turn: Science fair presentation" {
+		t.Fatalf("an agent that stopped is said: %+v", got)
+	}
+	if got := tracker.decide(body, at.Add(time.Minute)); got != nil {
+		t.Fatalf("said once: %+v", got)
+	}
+	if got := tracker.decide(body, at.Add(30*time.Minute)); got == nil || got.title != "Science fair presentation is waiting for you" {
+		t.Fatalf("said once more while it waits: %+v", got)
 	}
 }
