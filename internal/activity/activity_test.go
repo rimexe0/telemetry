@@ -154,3 +154,35 @@ func TestLabelsPreferSitesOverTheBrowser(t *testing.T) {
 		t.Fatalf("labels = %+v", phone.Labels)
 	}
 }
+
+// Two computers are built apart: the Linux desktop sitting idle must not
+// hide the Mac's use, and its windows must not be counted as the Mac's
+// (2026-11-14: a whole hour of Mac time vanished this way).
+func TestEachComputerIsBuiltOnItsOwn(t *testing.T) {
+	on := func(machine string, record Record) Record {
+		record.Source = "activitywatch:" + machine + record.Source[len("activitywatch:mac-1"):]
+		return record
+	}
+	records := []Record{
+		aw("aw-watcher-window_m", 0, 60, `{"app":"Helium","title":"Krita docs"}`),
+		aw("aw-watcher-afk_m", 0, 60, `{"status":"not-afk"}`),
+		on("catchy", aw("aw-watcher-window_d", 0, 60, `{"app":"Konsole","title":"~"}`)),
+		on("catchy", aw("aw-watcher-afk_d", 0, 10, `{"status":"not-afk"}`)),
+		on("catchy", aw("aw-watcher-afk_d", 10, 50, `{"status":"afk"}`)),
+	}
+	result := Build(records, at(0), at(60))
+	mac, desktop := 0.0, 0.0
+	for _, segment := range result.Segments {
+		switch {
+		case segment.Machine == "mac-1" && segment.App == "Helium":
+			mac += segment.Duration().Minutes()
+		case segment.Machine == "catchy" && segment.App == "Konsole":
+			desktop += segment.Duration().Minutes()
+		default:
+			t.Fatalf("unexpected %+v", segment)
+		}
+	}
+	if mac != 60 || desktop != 10 {
+		t.Fatalf("mac %v min, desktop %v min; want 60 and 10", mac, desktop)
+	}
+}

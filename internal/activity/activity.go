@@ -38,6 +38,10 @@ type Segment struct {
 	// AFKUnknown marks Mac time with no AFK record: the window was in front
 	// but whether the owner was present is not known.
 	AFKUnknown bool `json:"afk_unknown,omitempty"`
+	// Machine is the computer a "mac" segment came from, such as
+	// "mac-20134be9" or "catchy": every computer's time is built on its own,
+	// so one machine's idle time never hides another's use.
+	Machine string `json:"machine,omitempty"`
 }
 
 func (s Segment) Duration() time.Duration { return s.End.Sub(s.Start) }
@@ -75,11 +79,21 @@ func DeviceOf(source string) string {
 	return ""
 }
 
+// machineOf names the computer behind an ActivityWatch source,
+// "activitywatch:<machine>:<bucket>".
+func machineOf(source string) string {
+	parts := strings.SplitN(source, ":", 3)
+	if len(parts) < 3 || parts[0] != "activitywatch" {
+		return ""
+	}
+	return parts[1]
+}
+
 // Build reconstructs activity in [from, to). Records may start before from;
 // they are used to know what was already open at from.
 func Build(records []Record, from, to time.Time) Result {
 	result := Result{LastRecord: map[string]time.Time{}}
-	var windows, afk, web []span
+	windows, afk, web := map[string][]span{}, map[string][]span{}, map[string][]span{}
 	var usage []Record
 	var screen []screenState
 	covered := map[string][]span{}
@@ -96,13 +110,14 @@ func Build(records []Record, from, to time.Time) Result {
 			result.LastRecord[device] = at
 		}
 		covered[device] = append(covered[device], span{start: record.Start, end: at})
+		machine := machineOf(record.Source)
 		switch {
 		case strings.Contains(record.Source, "aw-watcher-window"):
-			windows = appendAWSpan(windows, record)
+			windows[machine] = appendAWSpan(windows[machine], record)
 		case strings.Contains(record.Source, "aw-watcher-afk"):
-			afk = appendAWSpan(afk, record)
+			afk[machine] = appendAWSpan(afk[machine], record)
 		case strings.Contains(record.Source, "aw-watcher-web"):
-			web = appendAWSpan(web, record)
+			web[machine] = appendAWSpan(web[machine], record)
 		case strings.HasSuffix(record.Source, ":usage"):
 			usage = append(usage, record)
 		case strings.HasSuffix(record.Source, ":state"):
@@ -114,7 +129,14 @@ func Build(records []Record, from, to time.Time) Result {
 			}
 		}
 	}
-	segments := macSegments(windows, afk, web)
+	segments := []Segment{}
+	for machine := range windows {
+		made := macSegments(windows[machine], afk[machine], web[machine])
+		for i := range made {
+			made[i].Machine = machine
+		}
+		segments = append(segments, made...)
+	}
 	segments = append(segments, phoneSegments(usage, screen, to)...)
 	result.Segments = clipAndMerge(segments, from, to)
 	for _, device := range []string{DeviceMac, DevicePhone} {
@@ -350,6 +372,9 @@ func clipAndMerge(segments []Segment, from, to time.Time) []Segment {
 		if segments[i].Device != segments[j].Device {
 			return segments[i].Device < segments[j].Device
 		}
+		if segments[i].Machine != segments[j].Machine {
+			return segments[i].Machine < segments[j].Machine
+		}
 		return segments[i].Start.Before(segments[j].Start)
 	})
 	result := []Segment{}
@@ -360,7 +385,7 @@ func clipAndMerge(segments []Segment, from, to time.Time) []Segment {
 		}
 		if n := len(result); n > 0 {
 			last := &result[n-1]
-			if last.Device == segment.Device && last.App == segment.App && last.Domain == segment.Domain && last.Title == segment.Title && last.AFKUnknown == segment.AFKUnknown &&
+			if last.Device == segment.Device && last.Machine == segment.Machine && last.App == segment.App && last.Domain == segment.Domain && last.Title == segment.Title && last.AFKUnknown == segment.AFKUnknown &&
 				!segment.Start.After(last.End.Add(mergeTolerance)) {
 				last.End = later(last.End, segment.End)
 				continue
