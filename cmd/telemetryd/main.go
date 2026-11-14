@@ -200,6 +200,13 @@ func main() {
 	// The assistant that judges unknown things in a focus session: a command
 	// that takes the prompt as its last argument, such as "hermes --ignore-rules -z".
 	go runJudge(context, database, strings.Fields(os.Getenv("TELEMETRY_JUDGE_COMMAND")))
+	// The assistant that works out what the owner is trying to do from all
+	// activity; the judge's command unless one of its own is set.
+	intentCommand := os.Getenv("TELEMETRY_INTENT_COMMAND")
+	if strings.TrimSpace(intentCommand) == "" {
+		intentCommand = os.Getenv("TELEMETRY_JUDGE_COMMAND")
+	}
+	go runIntents(context, database, strings.Fields(intentCommand))
 	// The assistant writing to the owner without being asked: one command
 	// that sends its standard input, such as "hermes send -t telegram -q",
 	// and one that words the message, taking the prompt as its last argument.

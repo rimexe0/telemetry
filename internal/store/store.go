@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/rimexe0/telemetry/internal/activity"
+	"github.com/rimexe0/telemetry/internal/intent"
 	"github.com/rimexe0/telemetry/internal/silence"
 	"time"
 
@@ -131,6 +132,9 @@ type Repository interface {
 	ListTaskEvidence(context.Context) ([]TaskEvidence, error)
 	AddOutreach(context.Context, Outreach) (Outreach, error)
 	ListOutreach(context.Context, time.Time) ([]Outreach, error)
+	SaveIntentReading(ctx context.Context, from, to time.Time, digest, output string, reading intent.Reading) (IntentReading, error)
+	ListIntents(context.Context, time.Time) ([]Intent, error)
+	LatestIntentReading(context.Context) (*IntentReading, error)
 	AddTaskClaim(context.Context, TaskClaim) (TaskClaim, error)
 	ListTaskClaims(context.Context, time.Time, time.Time) ([]TaskClaim, error)
 	ApplyTaskRuleChanges(context.Context, []TaskRuleChange, string) (AgentChange, []ActivityContextRule, error)

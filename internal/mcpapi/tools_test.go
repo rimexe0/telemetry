@@ -498,6 +498,7 @@ func connectPlanning(t *testing.T, repository store.Repository, now time.Time) *
 	addFocusTools(server, repository)
 	addPatternTools(server, repository, func() time.Time { return now })
 	addOutreachTools(server, repository, func() time.Time { return now })
+	addIntentTools(server, repository, func() time.Time { return now })
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(context.Background(), serverTransport, nil); err != nil {
 		t.Fatal(err)
@@ -538,5 +539,39 @@ func TestMCPAcceptsItsPublicHostButNotOthersOnLoopback(t *testing.T) {
 	}
 	if got := call("evil.example"); got != http.StatusForbidden {
 		t.Fatalf("other host = %d, want 403", got)
+	}
+}
+
+type intentsRepository struct {
+	planningRepository
+}
+
+func (intentsRepository) ListIntents(context.Context, time.Time) ([]store.Intent, error) {
+	seen := time.Date(2026, 11, 14, 12, 40, 0, 0, time.UTC)
+	return []store.Intent{
+		{ID: 7, Title: "Fix the tablet's touchscreen", Kind: "work", Status: "waiting", Evidence: []string{"agent working"}, FirstSeen: seen.Add(-time.Hour), LastSeen: seen},
+		{ID: 3, Title: "Watching car videos", Kind: "leisure", Status: "paused", Evidence: []string{}, FirstSeen: seen.Add(-3 * time.Hour), LastSeen: seen.Add(-2 * time.Hour)},
+	}, nil
+}
+
+func (intentsRepository) LatestIntentReading(context.Context) (*store.IntentReading, error) {
+	current := int64(7)
+	return &store.IntentReading{ID: 2, ReadAt: time.Date(2026, 11, 14, 12, 40, 0, 0, time.UTC), Note: "tablet work", NowIntentID: &current}, nil
+}
+
+func TestWhatOwnerIsDoingShowsTheLatestReading(t *testing.T) {
+	session := connectPlanning(t, &intentsRepository{}, time.Date(2026, 11, 14, 12, 45, 0, 0, time.UTC))
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "what_owner_is_doing", Arguments: map[string]any{}})
+	if err != nil || result.IsError {
+		t.Fatalf("what_owner_is_doing = %+v, %v", result, err)
+	}
+	encoded, _ := json.Marshal(result.StructuredContent)
+	var output IntentsOutput
+	json.Unmarshal(encoded, &output)
+	if output.Now == nil || output.Now.ID != 7 || len(output.Intents) != 2 || output.Note != "tablet work" || output.ReadAt == "" {
+		t.Fatalf("output = %s", encoded)
+	}
+	if bad, _ := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "what_owner_is_doing", Arguments: map[string]any{"hours": 999}}); !bad.IsError {
+		t.Fatal("too many hours must be refused")
 	}
 }

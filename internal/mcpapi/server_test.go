@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/rimexe0/telemetry/internal/activity"
+	"github.com/rimexe0/telemetry/internal/intent"
 	"github.com/rimexe0/telemetry/internal/silence"
 	"net/http"
 	"net/http/httptest"
@@ -444,4 +445,16 @@ func (fakeRepository) UnlockSettings(context.Context, string) (time.Time, error)
 
 func (fakeRepository) PreviewBlockingSchedule(context.Context, store.ScheduleChange) (policy.Config, error) {
 	return policy.Config{}, nil
+}
+
+func (fakeRepository) SaveIntentReading(context.Context, time.Time, time.Time, string, string, intent.Reading) (store.IntentReading, error) {
+	return store.IntentReading{}, nil
+}
+
+func (fakeRepository) ListIntents(context.Context, time.Time) ([]store.Intent, error) {
+	return nil, nil
+}
+
+func (fakeRepository) LatestIntentReading(context.Context) (*store.IntentReading, error) {
+	return nil, nil
 }

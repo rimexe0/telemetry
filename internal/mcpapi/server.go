@@ -133,6 +133,7 @@ func New(repository store.Repository, readToken string, publicHosts ...string) (
 	addFocusTools(server, repository)
 	addPatternTools(server, repository, time.Now)
 	addOutreachTools(server, repository, time.Now)
+	addIntentTools(server, repository, time.Now)
 	addLocationTools(server, repository, time.Now)
 	addCalendarTools(server, repository, time.Now)
 	addAnalysisTools(server, repository, time.Now)
