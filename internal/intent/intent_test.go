@@ -131,3 +131,31 @@ func TestDigestAddsContextWithoutContents(t *testing.T) {
 		}
 	}
 }
+
+// When the computer's screen time is missing, the browser's own history
+// shows what was opened; when it is there, history adds nothing.
+func TestDigestFallsBackToBrowserHistory(t *testing.T) {
+	from := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	visit := func(minute int, address, title string) activity.Record {
+		return activity.Record{Kind: "browser.visit", Start: from.Add(time.Duration(minute) * time.Minute),
+			Payload: []byte(`{"url":"` + address + `","title":"` + title + `"}`)}
+	}
+	history := []activity.Record{
+		visit(5, "https://www.krita.org/en/download/", "Download | Krita"),
+		visit(6, "https://www.krita.org/en/download/", "Download | Krita"),
+		visit(9, "https://docs.krita.org/en/", "Krita Manual"),
+	}
+	gap := Digest(activity.DayInput{}, history, from, from.Add(2*time.Hour), time.UTC)
+	for _, want := range []string{"browser's own history", "12:05 krita.org — Download | Krita", "12:09 docs.krita.org — Krita Manual"} {
+		if !strings.Contains(gap, want) {
+			t.Errorf("lacks %q:\n%s", want, gap)
+		}
+	}
+	if strings.Count(gap, "Download | Krita") != 1 {
+		t.Errorf("a page is listed once:\n%s", gap)
+	}
+	seen := activity.DayInput{Result: activity.Result{Segments: []activity.Segment{{Device: "mac", App: "Helium", Start: from, End: from.Add(time.Hour)}}}}
+	if full := Digest(seen, history, from, from.Add(2*time.Hour), time.UTC); strings.Contains(full, "browser's own history") {
+		t.Errorf("with screen time, history is left out:\n%s", full)
+	}
+}

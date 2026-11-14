@@ -123,6 +123,14 @@ func readIntents(ctx context.Context, repository store.Repository, command []str
 			break
 		}
 	}
+	// A page opened counts too: the browser keeps its history even when
+	// the collector was not running.
+	for _, record := range extra {
+		if record.Kind == "browser.visit" && record.Start.After(activeSince) && record.Start.Before(to) {
+			recent = true
+			break
+		}
+	}
 	if !recent {
 		return false, nil
 	}

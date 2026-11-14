@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os/exec"
 	"sort"
 	"strings"
@@ -84,6 +85,7 @@ const (
 	// The digest keeps the newest lines when there are more.
 	maxLines    = 220
 	maxTitleLen = 110
+	maxVisits   = 80
 )
 
 // Digest writes what the owner did between from and to as short timeline
@@ -290,6 +292,16 @@ func contextLines(input activity.DayInput, records []activity.Record, from, to t
 		}
 		return strings.Join(parts, ", ")
 	}
+	// The browser's own history fills in when the computer's screen time is
+	// missing, as when the collector was not running.
+	computerSeen := false
+	for _, segment := range input.Result.Segments {
+		if segment.Device == activity.DeviceMac && segment.End.After(from) && segment.Start.Before(to) {
+			computerSeen = true
+			break
+		}
+	}
+	visited, seenPages := []string{}, map[string]bool{}
 	slept := [][2]time.Time{}
 	blocked, notified := map[string]int{}, map[string]int{}
 	blockedMinutes := map[string]bool{}
@@ -348,7 +360,27 @@ func contextLines(input activity.DayInput, records []activity.Record, from, to t
 				name += " from " + cut(title, 40)
 			}
 			notified[name]++
+		case "browser.visit":
+			if inWindow && !computerSeen {
+				if address, err := url.Parse(field("url")); err == nil && address.Hostname() != "" {
+					page := strings.TrimPrefix(address.Hostname(), "www.")
+					if title := field("title"); title != "" {
+						page += " — " + cut(title, 80)
+					}
+					if !seenPages[page] {
+						seenPages[page] = true
+						visited = append(visited, clock(record.Start)+" "+page)
+					}
+				}
+			}
 		}
+	}
+	if len(visited) > 0 {
+		if len(visited) > maxVisits {
+			visited = append(visited[:maxVisits], fmt.Sprintf("(%d more)", len(visited)-maxVisits))
+		}
+		lines = append(lines, "No computer screen time was recorded here, but the browser's own history shows these pages opened (time site — title):")
+		lines = append(lines, visited...)
 	}
 	if len(slept) > 0 {
 		sort.Slice(slept, func(i, j int) bool { return slept[i][0].Before(slept[j][0]) })

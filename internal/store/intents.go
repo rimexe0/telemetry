@@ -146,7 +146,7 @@ func nonNil(values []string) []string {
 // agents, that help tell what the owner is trying to do.
 var intentContextKinds = []string{
 	"desktop.site_block", "desktop.policy_block", "android.policy_block", "android.policy_bypass",
-	"android.notification.posted", "android.calendar_event", "health_connect.sleep_session",
+	"android.notification.posted", "android.calendar_event", "health_connect.sleep_session", "browser.visit",
 }
 
 // IntentContextRecords returns those records from 16 hours before from (the
