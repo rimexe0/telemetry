@@ -16,6 +16,8 @@ import androidx.core.content.ContextCompat
 object CollectionStarter {
     fun ensureRunning(context: Context) {
         val app = context.applicationContext
+        // Blocking is enforced even before the phone is paired.
+        runCatching { GuardRoot.ensureRunning(app) }
         if (DeliveryConfig(app).token() == null) return
         if (!app.getSharedPreferences("telemetry-setup", Context.MODE_PRIVATE).getBoolean("collection_started", false)) return
         BackgroundJobs.scheduleDelivery(app)

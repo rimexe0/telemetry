@@ -26,6 +26,8 @@ object Emergency {
         prefs(context).edit().putLong(KEY_UNTIL, until.toEpochMilli()).commit()
         PolicyEvents.record(context, "android.policy_emergency", "emergency:${now.toEpochMilli()}", null,
             mapOf("started_at" to now.toString(), "until" to until.toString()))
+        // The watcher must not put the blocks back before this runs out.
+        runCatching { GuardRoot.pause(context, until) }
         runCatching { AppSuspender.reconcile(context, null) }
     }
 

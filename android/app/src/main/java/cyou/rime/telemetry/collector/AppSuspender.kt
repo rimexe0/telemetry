@@ -2,7 +2,6 @@ package cyou.rime.telemetry.collector
 
 import android.content.Context
 import android.content.pm.PackageManager
-import java.util.concurrent.TimeUnit
 
 /**
  * Optional, root-only: blocked apps are suspended the way Digital Wellbeing
@@ -88,14 +87,10 @@ object AppSuspender {
 
     fun quote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
 
-    private fun installed(context: Context, pkg: String): Boolean =
+    fun installed(context: Context, pkg: String): Boolean =
         runCatching { context.packageManager.getPackageInfo(pkg, 0); true }.getOrElse { it !is PackageManager.NameNotFoundException }
 
-    private fun runRoot(command: String): Int = runCatching {
-        val process = ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
-        process.inputStream.bufferedReader().readText()
-        if (process.waitFor(15, TimeUnit.SECONDS)) process.exitValue() else { process.destroy(); -1 }
-    }.getOrDefault(-1)
+    private fun runRoot(command: String): Int = RootShell.run(command).first
 
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 }

@@ -35,6 +35,9 @@ object PolicyWatch {
         val decision = entry?.let { BlockPolicy.current(context, it.json) }
         // Optional root suspension; lifts everything when nothing should be blocked.
         runCatching { AppSuspender.reconcile(context, decision) }
+        // Optional root watcher: puts back what was switched off, and reports it.
+        runCatching { GuardRoot.sync(context, decision) }
+        runCatching { GuardRoot.collectAttempts(context) }
         runCatching { Grayscale.reconcile(context, decision) }
         runCatching { TelemetryNotificationListenerService.connected?.quietBlocked() }
         val bypassed = decision?.active == true && !PolicyEvents.blockingEnabled(context)
