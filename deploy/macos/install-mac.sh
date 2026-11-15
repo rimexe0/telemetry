@@ -96,11 +96,17 @@ else
 fi
 domain="gui/$(id -u)"
 for label in com.rime.telemetry.desktop com.rime.telemetry.guard com.rime.telemetry.update; do
-  launchctl bootout "$domain/$label" 2>/dev/null || true
-  while launchctl print "$domain/$label" >/dev/null 2>&1; do sleep 0.5; done
+  # The guards start these jobs again every minute, so a job that comes back
+  # right after bootout is loaded on purpose. Try a few times and then leave it
+  # running instead of waiting for something that will not stay stopped.
+  for attempt in 1 2 3 4; do
+    launchctl bootout "$domain/$label" 2>/dev/null || true
+    sleep 0.5
+    launchctl print "$domain/$label" >/dev/null 2>&1 || break
+  done
   launchctl enable "$domain/$label" 2>/dev/null || true
-  # The system watcher may have loaded it again in the meantime.
-  launchctl bootstrap "$domain" "$agents/$label.plist" || launchctl print "$domain/$label" >/dev/null
+  launchctl bootstrap "$domain" "$agents/$label.plist" 2>/dev/null || true
+  launchctl print "$domain/$label" >/dev/null 2>&1 || print "could not load $label" >&2
 done
 print -- "$tag" > "$root/.release"
 
