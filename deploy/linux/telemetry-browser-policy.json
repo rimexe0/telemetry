@@ -1,5 +1,12 @@
 {
   "ExtensionInstallForcelist": [
     "fachbjhigbkfbbplbnoephgnkgghhbfa;http://127.0.0.1:5600/api/telemetry/extension.xml"
-  ]
+  ],
+  "ExtensionSettings": {
+    "fachbjhigbkfbbplbnoephgnkgghhbfa": {
+      "installation_mode": "force_installed",
+      "update_url": "http://127.0.0.1:5600/api/telemetry/extension.xml",
+      "override_update_url": true
+    }
+  }
 }

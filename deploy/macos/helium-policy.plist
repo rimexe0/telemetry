@@ -9,5 +9,20 @@
   <array>
     <string>fachbjhigbkfbbplbnoephgnkgghhbfa;http://127.0.0.1:5600/api/telemetry/extension.xml</string>
   </array>
+  <!-- Updates come from the collector too: without this the browser asks
+       the address in the extension's own manifest, and copies installed
+       before it named one ask the Chrome Web Store, which never answers. -->
+  <key>ExtensionSettings</key>
+  <dict>
+    <key>fachbjhigbkfbbplbnoephgnkgghhbfa</key>
+    <dict>
+      <key>installation_mode</key>
+      <string>force_installed</string>
+      <key>update_url</key>
+      <string>http://127.0.0.1:5600/api/telemetry/extension.xml</string>
+      <key>override_update_url</key>
+      <true/>
+    </dict>
+  </dict>
 </dict>
 </plist>
