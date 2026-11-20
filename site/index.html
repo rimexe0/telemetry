@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Telemetry: self-hosted screen time that blocks the feeds for you</title>
+  <meta name="description" content="Telemetry is an open-source, self-hosted screen time tracker and distraction blocker for Mac, Linux and Android. It keeps feeds closed, notices drift, and lets your AI assistant see what you are actually doing.">
+  <link rel="canonical" href="https://telemetry.rime.cyou/">
+  <meta name="robots" content="index, follow">
+  <meta name="author" content="rime">
+  <meta name="theme-color" content="#111213">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Telemetry">
+  <meta property="og:url" content="https://telemetry.rime.cyou/">
+  <meta property="og:title" content="Telemetry: screen time that does something about it">
+  <meta property="og:description" content="Self-hosted screen time, distraction blocking and drift detection for Mac, Linux and Android, with an MCP server for your AI assistant.">
+  <meta property="og:image" content="https://telemetry.rime.cyou/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="The word telemetry over rows of drifting t logos">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Telemetry: screen time that does something about it">
+  <meta name="twitter:description" content="Self-hosted screen time, distraction blocking and drift detection for Mac, Linux and Android.">
+  <meta name="twitter:image" content="https://telemetry.rime.cyou/og.png">
+  <link rel="icon" href="logo.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="img/icon-180.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script>document.documentElement.classList.add('js')</script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Telemetry",
+    "url": "https://telemetry.rime.cyou/",
+    "applicationCategory": "ProductivityApplication",
+    "operatingSystem": "macOS, Linux, Android",
+    "description": "Open-source, self-hosted screen time tracker and distraction blocker for Mac, Linux and Android, with drift detection and an MCP server for AI assistants.",
+    "license": "https://opensource.org/licenses/MIT",
+    "isAccessibleForFree": true,
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "codeRepository": "https://github.com/rimexe0/telemetry",
+    "author": { "@type": "Person", "name": "rime", "url": "https://rime.cyou" },
+    "screenshot": "https://telemetry.rime.cyou/img/activity.jpg"
+  }
+  </script>
+</head>
+<body>
+  <a class="skip" href="#why">Skip to content</a>
+
+  <div class="bg" aria-hidden="true">
+    <div class="noise"></div>
+    <div class="drift">
+      <div class="row a"></div>
+      <div class="row b"></div>
+    </div>
+  </div>
+
+  <nav class="side-nav hidden" aria-label="Sections">
+    <a href="#top">top</a>
+    <a href="#why">why</a>
+    <a href="#how">how</a>
+    <a href="#features">features</a>
+    <a href="#panel">panel</a>
+    <a href="#setup">setup</a>
+    <a href="#faq">faq</a>
+  </nav>
+
+  <main class="page">
+    <header class="hero" id="top">
+      <h1 class="sr-only">Telemetry: self-hosted screen time and distraction blocking for Mac, Linux and Android</h1>
+      <div class="wordmark" aria-hidden="true">
+        <span class="layer back"><span class="letter">t</span><span class="letter">e</span><span class="letter">l</span><span class="letter">e</span><span class="letter">m</span><span class="letter">e</span><span class="letter">t</span><span class="letter">r</span><span class="letter">y</span></span>
+        <span class="layer front"><span class="letter">t</span><span class="letter">e</span><span class="letter">l</span><span class="letter">e</span><span class="letter">m</span><span class="letter">e</span><span class="letter">t</span><span class="letter">r</span><span class="letter">y</span></span>
+      </div>
+      <div class="intro">
+      <p class="lead">Screen time that does something about it.</p>
+      <p class="sub">Telemetry watches your Mac, Linux PC and Android phone, keeps the feeds closed when you can't, and tells your AI assistant what you're actually doing, so it can help you get back to it. It runs on your own machine, and it's free and open source.</p>
+      <div class="chips" aria-label="Runs on">
+        <span class="chip light">macOS</span>
+        <span class="chip linux">Linux</span>
+        <span class="chip android">Android</span>
+        <span class="chip chromium">Chromium browsers</span>
+        <span class="chip mcp">MCP</span>
+      </div>
+      <div class="links">
+        <a class="btn" href="setup.html"><span class="rainbow">set it up</span> <span class="arrow">→</span></a>
+        <a class="btn" href="https://github.com/rimexe0/telemetry">github</a>
+        <a class="btn white" href="#why">why bother?</a>
+      </div>
+      </div>
+      <p class="scroll-hint" aria-hidden="true">scroll ↓</p>
+    </header>
+
+    <!-- why -->
+    <section id="why" class="deck" aria-labelledby="why-title">
+      <article class="card wide reveal" data-hue="Why">
+        <div class="card-head"><h2 id="why-title">Why</h2><span class="num">01</span></div>
+        <div class="why-grid">
+          <div class="body">
+            <p class="big">Your phone already has a screen time page. It tells you that you spent four hours on YouTube yesterday, and then lets you do it again.</p>
+            <p>Feeds are built by thousands of smart people whose job is to keep you scrolling. On the other side there's you: tired, at 1 a.m., deciding for the fortieth time whether to open one more video. It's not a fair fight, and willpower in the moment is the weakest tool you've got.</p>
+            <p>Telemetry takes the decision out of the moment. You decide once, while you're calm. After that the system holds the line: feeds stay shut, making a rule looser waits until tomorrow, and the PIN can live with a friend.</p>
+            <p>It's built for people who know exactly what they want to do and still can't start it, or can't come back to it after a detour. Call it ADHD, burnout or just living in 2026. The tool is the same.</p>
+          </div>
+          <div class="stats body">
+            <div class="stat"><b>2.3 h</b><span>a day on YouTube, X and Reddit</span></div>
+            <div class="stat"><b>24%</b><span>of all computer time went to feeds</span></div>
+            <div class="stat"><b>43</b><span>feed sittings longer than an hour</span></div>
+            <div class="stat"><b>1 in 3</b><span>minutes of a coding agent's run that I was even looking at it</span></div>
+            <p class="note">The author's own first six weeks, measured by Telemetry. That's why the blocking exists.</p>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <!-- how -->
+    <section id="how" class="deck" aria-labelledby="how-title">
+      <article class="card wide reveal" data-hue="How it works">
+        <div class="card-head"><h2 id="how-title">How it works</h2><span class="num">02</span></div>
+        <div class="loop">
+          <div class="item">
+            <h3>Collect</h3>
+            <p>Small collectors on each device record what's in front of you: the app, the window title, the site, phone apps, sleep, steps, places. If the server is down they keep everything and catch up later.</p>
+          </div>
+          <div class="item">
+            <h3>Understand</h3>
+            <p>Every 10 minutes an assistant reads the last two hours from all your devices and writes down what you're trying to do: which aims are active, which are waiting on an agent, and which you've dropped.</p>
+          </div>
+          <div class="item">
+            <h3>Hold the line</h3>
+            <p>Distractions are closed by default. The blocking runs on each device, so it keeps working when the server or the internet doesn't.</p>
+          </div>
+          <div class="item">
+            <h3>Bring you back</h3>
+            <p>When you drift, it notices whether and when you came back. Your assistant sees the same picture through MCP, so it can help you pick the thread back up instead of starting over.</p>
+          </div>
+        </div>
+
+        <p><b>A real reading</b>, written by the assistant from two hours of the author's evening. It has no plan to work from and nobody asked it anything. It works this out from the records alone.</p>
+        <div class="reading body" role="figure" aria-label="Example reading of what the owner was doing">
+          <div class="meta"><span>what_owner_is_doing</span><span>19 Nov · 17:55 → 19:55 · Mac, phone, 5 agent threads</span></div>
+          <p class="note">They edited otuz.ecproj and watched two YouTube videos before 18:15, then the evening went to T3 Code, where the meva Waterfall, sillyCastle lighting and open-issue agents are still working while the meva media-library agent stopped.</p>
+          <div class="aim">
+            <span class="t"><span class="now-mark">▸ now</span> meva: Waterfall Timing for Launch and Search</span>
+            <span class="tags"><span class="chip wait">waiting</span></span>
+            <span class="ev">meva agent: 2 sent, last 19:39, agent working now</span>
+          </div>
+          <div class="aim">
+            <span class="t">Editing an EffectCraft motion graphics project</span>
+            <span class="tags"><span class="chip">work</span><span class="chip ok">active</span></span>
+            <span class="ev">EffectCraft otuz.ecproj open 17:55–17:57 and 17:59–18:15</span>
+            <span class="next">next: keep editing otuz.ecproj in EffectCraft</span>
+          </div>
+          <div class="aim">
+            <span class="t">Follow up on sillyCastle lighting issue</span>
+            <span class="tags"><span class="chip">work</span><span class="chip wait">waiting</span></span>
+            <span class="ev">sillycastle agent: 4 sent, last 19:37, agent working now</span>
+          </div>
+          <div class="aim">
+            <span class="t">Running the media library from B2 on mobile (meva)</span>
+            <span class="tags"><span class="chip">work</span><span class="chip pause">paused</span></span>
+            <span class="ev">T3 Code thread 18:16–18:19 · agent: 10 sent, stopped 19:53, so it's your turn</span>
+          </div>
+          <div class="aim">
+            <span class="t">Watching YouTube: RTE 31</span>
+            <span class="tags"><span class="chip">leisure</span><span class="chip pause">paused</span></span>
+            <span class="ev">Helium, 17:58–17:59</span>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <!-- features -->
+    <section id="features" aria-labelledby="features-title">
+      <h2 id="features-title" class="sr-only">Features</h2>
+      <div class="deck">
+        <article class="card reveal" data-hue="Sees">
+          <div class="card-head"><h2>Sees</h2><span class="num">03</span></div>
+          <div class="item">
+            <h3>Screen time, minute by minute</h3>
+            <p>The app and window in front of you, and whether you're actually at the keyboard.</p>
+            <div class="chips"><span class="chip light">macOS</span><span class="chip linux">Linux · KDE</span></div>
+          </div>
+          <div class="item">
+            <h3>Every site</h3>
+            <p>The browser extension records the site you're on. When the collector was down, the browser's own history fills the gap.</p>
+            <div class="chips"><span class="chip chromium">Chrome, Helium, Brave…</span></div>
+          </div>
+          <div class="item">
+            <h3>Your phone</h3>
+            <p>App use, calendar, and notifications. For notifications it keeps only the app and the sender, never the text.</p>
+            <div class="chips"><span class="chip android">Android</span></div>
+          </div>
+          <div class="item">
+            <h3>Your body</h3>
+            <p>Steps, heart rate, sleep and workouts from Health Connect. A Galaxy Watch records walks even when the phone stays at home.</p>
+            <div class="chips"><span class="chip android">Health Connect</span><span class="chip">Wear OS</span></div>
+          </div>
+          <div class="item">
+            <h3>Places</h3>
+            <p>Home or out, and for how long. Places are named from a self-hosted OpenStreetMap extract, so nothing goes to Google.</p>
+          </div>
+          <div class="item">
+            <h3>Coding agents</h3>
+            <p>Shows which T3 Code or Codex agent is still working and which one stopped and is waiting for you.</p>
+            <div class="chips"><span class="chip">T3 Code</span><span class="chip">Codex</span></div>
+          </div>
+        </article>
+
+        <article class="card reveal" data-hue="Blocks">
+          <div class="card-head"><h2>Blocks</h2><span class="num">04</span></div>
+          <div class="item">
+            <h3>Closed by default</h3>
+            <p>Feeds stay shut unless it's their time. You don't need to plan your day first for this to work.</p>
+          </div>
+          <div class="item">
+            <h3>Trimmed, not banned</h3>
+            <p>While you work, YouTube keeps search and single videos and loses Shorts, the sidebar, comments and autoplay. Reddit opens single posts only.</p>
+          </div>
+          <div class="item">
+            <h3>Openings</h3>
+            <p>Need something that's blocked? Ask. It makes you wait (ten minutes, say), then asks you to confirm again and again, moving the button each time. The urge is usually gone by the third.</p>
+          </div>
+          <div class="item">
+            <h3>Loosening waits a day</h3>
+            <p>Any change that asks less of you starts tomorrow. Tightening a rule takes effect at once.</p>
+          </div>
+          <div class="item">
+            <h3>A PIN someone else holds</h3>
+            <p>During the hours you choose, nothing can loosen the rules without a PIN, and you get three tries an hour. Your assistant can't lift it either.</p>
+          </div>
+          <div class="item">
+            <h3>Morning code &amp; bedtime</h3>
+            <p>The day stays shut until you scan a QR code you printed and left in the kitchen. Before bed the screens go grayscale, then only the essentials stay open.</p>
+          </div>
+          <div class="item">
+            <h3>No scolding</h3>
+            <p>A blocked app is hidden with a small notice. A blocked page is covered where it is: your tabs are never closed or reloaded.</p>
+            <div class="chips"><span class="chip light">macOS</span><span class="chip linux">Linux</span><span class="chip android">Android</span><span class="chip chromium">extension</span></div>
+          </div>
+        </article>
+
+        <article class="card reveal" data-hue="Understands">
+          <div class="card-head"><h2>Understands</h2><span class="num">05</span></div>
+          <div class="item">
+            <h3>What you're doing, not just where</h3>
+            <p>It groups apps, tabs, phone and agents into aims, like "editing the video" or "waiting on the meva agent", across all your devices. It never asks you for a plan.</p>
+          </div>
+          <div class="item">
+            <h3>Drift and return</h3>
+            <p>It records stretches spent on distractions, what came just before them, and whether you got back to work within an hour. What it measures is the coming back, not the leaving.</p>
+          </div>
+          <div class="item">
+            <h3>Missing is missing</h3>
+            <p>When a device sent nothing, the panel says so. It never counts that time as rest, focus or slacking.</p>
+          </div>
+          <div class="item">
+            <h3>Tells you when it breaks</h3>
+            <p>If a collector stops while its computer is on, you get one message about it, not a stream of them.</p>
+          </div>
+        </article>
+
+        <article class="card reveal" data-hue="Talks to your assistant">
+          <div class="card-head"><h2>Talks</h2><span class="num">06</span></div>
+          <div class="item">
+            <h3>An MCP server for your day</h3>
+            <p>Any MCP client can read your day: Claude, Codex, ChatGPT, or a Telegram bot. It gets 38 tools, from <code>activity_summary</code> and <code>drift_episodes</code> to <code>health_daily</code> and <code>what_owner_is_doing</code>.</p>
+            <div class="chips"><span class="chip mcp">MCP</span><span class="chip">Claude</span><span class="chip">Codex</span><span class="chip">any client</span></div>
+          </div>
+          <div class="item">
+            <h3>You approve every change</h3>
+            <p>Your assistant can block something right away. It changes a label only after you approve the exact change in chat. Every change is logged, and undoing one takes a single call.</p>
+          </div>
+          <div class="item">
+            <h3>It can ask, never confirm</h3>
+            <p>Your assistant can request an opening, but only you can confirm it.</p>
+          </div>
+          <div class="item">
+            <h3>Speaks up rarely</h3>
+            <p>It messages you only when you wake up and after a long stretch off task.</p>
+          </div>
+        </article>
+
+        <article class="card reveal" data-hue="Keeps">
+          <div class="card-head"><h2>Keeps</h2><span class="num">07</span></div>
+          <div class="item">
+            <h3>Nothing is deleted</h3>
+            <p>Every observation is kept for good, along with its later corrections. Summaries are added next to the originals and never replace them.</p>
+          </div>
+          <div class="item">
+            <h3>Works offline</h3>
+            <p>Each device saves to a local queue and catches up later. Blocking never waits for the server.</p>
+          </div>
+          <div class="item">
+            <h3>Updates itself</h3>
+            <p>Releases are signed. Each update is checked after it installs and rolled back if it fails, and the database is backed up every night.</p>
+          </div>
+        </article>
+
+        <article class="card reveal" data-hue="Yours">
+          <div class="card-head"><h2>Yours</h2><span class="num">08</span></div>
+          <div class="item">
+            <h3>Self-hosted</h3>
+            <p>It's one Go server and a Postgres database on a machine you own, reached privately over Tailscale. No account, no cloud and no analytics. This site has none either.</p>
+            <div class="chips"><span class="chip go">Go</span><span class="chip pg">Postgres</span><span class="chip ts">Tailscale</span></div>
+          </div>
+          <div class="item">
+            <h3>Sealed relay</h3>
+            <p>If your phone has to go through a public relay, the traffic is end-to-end encrypted. The relay only sees sizes and timing.</p>
+          </div>
+          <div class="item">
+            <h3>MIT licensed</h3>
+            <p>Read it, fork it, change it. The panel is <span class="chip svelte">Svelte</span> and the phone app is <span class="chip kotlin">Kotlin</span>.</p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- panel -->
+    <section id="panel" class="deck" aria-labelledby="panel-title">
+      <article class="card wide reveal" data-hue="The panel">
+        <div class="card-head"><h2 id="panel-title">Screens <small>real data, the author's install, Nov 2026</small></h2><span class="num">09</span></div>
+        <div class="shots">
+          <figure class="shot wide body">
+            <button type="button" aria-label="Enlarge: a blocked site"><img src="img/blocked.jpg" width="1280" height="800" alt="A blocked YouTube tab covered by a dark page: CLOSED. Distractions are closed. Distraction time starts at 20:00. www.youtube.com is closed right now. The page will come back when the block ends. Go back."></button>
+            <figcaption><b>A blocked site.</b> The page is covered where it is. Your tab, its address and its history stay as they were, and it comes back when the block ends.</figcaption>
+          </figure>
+          <figure class="shot body">
+            <button type="button" aria-label="Enlarge: Activity view"><img src="img/activity.jpg" width="1600" height="1000" alt="Activity view for 19 November: 2 hours 17 minutes on distractions, mostly youtube.com; longest run without a distraction 1 hour 28 minutes; agents worked 15 hours; Mac 7 h 38 min of screen time with apps listed."></button>
+            <figcaption><b>Activity.</b> Where the day went, on every device. The blunt bits up top, details below.</figcaption>
+          </figure>
+          <figure class="shot body">
+            <button type="button" aria-label="Enlarge: Health view"><img src="img/health.jpg" width="1600" height="1000" alt="Health view: a month of daily steps and sleep bars, then 18 November with 5,006 steps, 4 h 33 m sleep, a sleep and exercise timeline and individual heart rate samples."></button>
+            <figcaption><b>Health.</b> Sleep, steps, workouts and every heart rate sample, straight from the watch.</figcaption>
+          </figure>
+          <figure class="shot body">
+            <button type="button" aria-label="Enlarge: Rules view"><img src="img/rules.jpg" width="1600" height="1000" alt="Rules view with settings lock, bedtime, browser extension, morning code and blocked apps sections."></button>
+            <figcaption><b>Rules.</b> The settings lock, bedtime, morning code and blocked apps. Asking for less starts tomorrow.</figcaption>
+          </figure>
+          <figure class="shot body">
+            <button type="button" aria-label="Enlarge: Sources view"><img src="img/sources.jpg" width="1600" height="1000" alt="Collection health view: 9 devices and 61 sources, each phone with its last upload, battery, collection mode and source checks."></button>
+            <figcaption><b>Sources.</b> Which device is reporting, which one went quiet, and why.</figcaption>
+          </figure>
+        </div>
+      </article>
+    </section>
+
+    <!-- setup -->
+    <section id="setup" class="deck" aria-labelledby="setup-title">
+      <article class="card wide reveal" data-hue="Setup">
+        <div class="card-head"><h2 id="setup-title">Setup <small>about 15 minutes</small></h2><span class="num">10</span></div>
+        <p>You need one machine that's always on, like an old laptop, a home server or a cheap VPS, and <a href="https://tailscale.com">Tailscale</a> (free) on every device.</p>
+        <ol class="steps">
+          <li class="body">
+            <h3>Start the server</h3>
+            <p>On the always-on Linux machine with Docker:</p>
+            <div class="code"><pre><span class="prompt">$ </span><span data-copy>curl -fsSL https://github.com/rimexe0/telemetry/releases/latest/download/install-server.sh | bash</span></pre></div>
+            <p class="aside">When it finishes it prints the panel address and your login token.</p>
+          </li>
+          <li class="body">
+            <h3>Install on your computers</h3>
+            <p>On each Mac or Linux PC, paste the server address when it asks:</p>
+            <div class="code"><pre><span class="prompt">$ </span><span data-copy>curl -fsSL https://github.com/rimexe0/telemetry/releases/latest/download/install.sh | sh</span></pre></div>
+          </li>
+          <li class="body">
+            <h3>Add your phone</h3>
+            <p>Download the APK, open it, and scan the pairing code that the panel shows.</p>
+            <div class="links"><a class="btn" href="https://github.com/rimexe0/telemetry/releases/latest/download/telemetry.apk">download APK</a></div>
+          </li>
+          <li class="body">
+            <h3>Connect your assistant (recommended)</h3>
+            <p>Your assistant is what turns app names into "you were editing the video, then drifted". The server prints the exact command for your client.</p>
+          </li>
+        </ol>
+        <p><a class="btn" href="setup.html">full setup guide <span class="arrow">→</span></a></p>
+      </article>
+    </section>
+
+    <!-- faq -->
+    <section id="faq" class="deck" aria-labelledby="faq-title">
+      <article class="card wide reveal" data-hue="Questions">
+        <div class="card-head"><h2 id="faq-title">Questions</h2><span class="num">11</span></div>
+        <div class="faq body">
+          <details>
+            <summary>Isn't this just spyware?</summary>
+            <p>It's surveillance you point at yourself, on a server you own. Nothing leaves your machines unless you connect an assistant, and then it reads only what you allow. It never stores page contents or message text.</p>
+          </details>
+          <details>
+            <summary>Do I need an AI assistant?</summary>
+            <p>No. Collection, the panel and blocking all work without one. An assistant makes it much better, though: it's what turns a list of app names into "you were editing otuz.ecproj, then drifted to YouTube for 40 minutes". Any MCP client works, so you can use one you already pay for.</p>
+          </details>
+          <details>
+            <summary>Why not just use Screen Time or Digital Wellbeing?</summary>
+            <p>Those report what happened, and you can turn them off in two taps at exactly the wrong moment. Telemetry covers every device at once, makes looser rules wait a day, and lets someone else hold the key.</p>
+          </details>
+          <details>
+            <summary>Can I cheat it?</summary>
+            <p>Yes. They're your machines. The point isn't to make cheating impossible. It's to make it slow enough that the urge passes first, and it usually does.</p>
+          </details>
+          <details>
+            <summary>Why does it need an always-on server?</summary>
+            <p>Your phone and your computers need one place to meet, so the panel and your assistant see your whole day. The devices themselves don't depend on it: each one keeps collecting and blocking while the server is away, then catches up.</p>
+          </details>
+          <details>
+            <summary>What does it run on?</summary>
+            <p>macOS, Linux (window tracking needs KDE Plasma), Android, and Chromium-based browsers for the extension. The server runs anywhere Docker does. On a Mac, browsers without the extension, Safari included, are hidden while sites are blocked.</p>
+          </details>
+          <details>
+            <summary>What does it cost?</summary>
+            <p>Nothing. It's MIT licensed. Your costs are a machine to run it on and, if you want, an AI subscription.</p>
+          </details>
+        </div>
+      </article>
+    </section>
+
+    <footer>
+      <p>Made by <a href="https://rime.cyou">rime</a>, who built it to stop watching YouTube at 3 a.m. It mostly works.</p>
+      <div class="links">
+        <a class="btn" href="https://github.com/rimexe0/telemetry">github</a>
+        <a class="btn" href="setup.html">setup</a>
+        <a class="btn blue" href="https://rime.cyou">rime.cyou</a>
+      </div>
+    </footer>
+  </main>
+
+  <dialog class="lightbox" aria-label="Screenshot">
+    <img src="" alt="">
+    <p><span></span><button type="button">close</button></p>
+  </dialog>
+
+  <script src="site.js" defer></script>
+</body>
+</html>
