@@ -278,7 +278,7 @@ code, kbd, pre { font-family: var(--mono); }
 .shots { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; padding: 8px 14px 14px; }
 .shot { margin: 0; }
 .shot.wide { grid-column: 1 / -1; }
-.shot.wide img { aspect-ratio: 16 / 7; object-position: 0 40%; }
+.shot.wide img { aspect-ratio: 16 / 5.5; object-position: 0 50%; }
 .shot button {
   display: block; width: 100%; padding: 0; border: 2px dashed var(--ink); background: #111;
   cursor: zoom-in; box-shadow: var(--small-shadow);
