@@ -26,6 +26,11 @@ install -o root -g wheel -m 644 "$job" "/Library/Application Support/Telemetry/c
 # chrome://extensions; the watchdog puts the policy back if it is changed.
 install -o root -g wheel -m 644 "$here/helium-policy.plist" "/Library/Application Support/Telemetry/helium-policy.plist"
 install -o root -g wheel -m 644 "$here/helium-policy.plist" "/Library/Managed Preferences/net.imput.helium.plist"
+# The same policy for the other Chromium browsers, so the extension is there
+# whichever one is used. Only Helium's copy is guarded.
+for browser in com.google.Chrome org.chromium.Chromium com.brave.Browser com.microsoft.Edge; do
+  install -o root -g wheel -m 644 "$here/helium-policy.plist" "/Library/Managed Preferences/$browser.plist"
+done
 sed -e "s#__UID__#$SUDO_UID#" -e "s#__HOME__#$owner_home#" "$here/$label.plist" > "/Library/LaunchDaemons/$label.plist"
 chown root:wheel "/Library/LaunchDaemons/$label.plist"
 chmod 644 "/Library/LaunchDaemons/$label.plist"
