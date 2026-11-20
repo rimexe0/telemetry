@@ -13,7 +13,7 @@ enum class SetupStep(
     val missing: String? = null,
 ) {
     PAIR(true, "Connect this phone",
-        "Links the phone to your Telemetry server. Turn Tailscale on first, tap Connect here, then approve it in the Telemetry panel on your Mac.",
+        "Links the phone to your Telemetry server. Turn Tailscale on first, enter the server's address, tap Connect here, then approve it in the Telemetry panel.",
         "Connect", "Not connected to the server"),
     NOTIFICATIONS(true, "Allow notifications",
         "Collection runs with a visible notification, and later the phone asks you short questions when something looks off.",
