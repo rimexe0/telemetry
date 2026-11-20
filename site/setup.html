@@ -87,8 +87,8 @@
         <table class="table body">
           <thead><tr><th>What</th><th>Why</th></tr></thead>
           <tbody>
-            <tr><td><b>An always-on Linux machine</b> with Docker: an old laptop, a Raspberry Pi 4/5, a home server, or a small VPS</td><td>Your devices meet here. The panel and your assistant read from it. If it goes down, devices keep collecting and blocking, then catch up.</td></tr>
-            <tr><td><b><a href="https://tailscale.com/download">Tailscale</a></b> on every device, signed in to the same account (free)</td><td>It gives every device a private address, so the server is never exposed to the internet.</td></tr>
+            <tr><td><b>An always-on Linux machine</b> with Docker and its Compose plugin: an old laptop, a mini PC, a home server, or a small VPS</td><td>Your devices meet here. The panel and your assistant read from it. If it goes down, devices keep collecting and blocking, then catch up.</td></tr>
+            <tr><td><b><a href="https://tailscale.com/download">Tailscale</a></b> on every device, signed in to the same account (free). In the admin console under <b>DNS</b>, turn on MagicDNS and HTTPS certificates.</td><td>It gives every device a private address, so the server is never exposed to the internet.</td></tr>
             <tr><td><b>A Chromium-based browser</b>: Chrome, Brave, Edge, Helium, Vivaldi…</td><td>The extension records and covers sites. On a Mac, browsers without it are hidden while sites are blocked.</td></tr>
             <tr><td><b>An Android phone</b> (optional)</td><td>Phone app use, health, places and phone-side blocking.</td></tr>
             <tr><td><b>An AI assistant with MCP</b> (optional, recommended): Claude, Codex, ChatGPT…</td><td>It turns raw app names into "what you're doing" and helps you set rules by just talking.</td></tr>
@@ -108,7 +108,8 @@
             <h3>Run one script</h3>
             <p>On the always-on machine, as your normal user (not root):</p>
             <div class="code"><pre><span class="prompt">$ </span><span data-copy>curl -fsSL https://github.com/rimexe0/telemetry/releases/latest/download/install-server.sh | bash</span></pre></div>
-            <p class="aside">It checks for Docker and Tailscale, creates every password and token, starts Postgres and the server, and publishes it on your tailnet with <code>tailscale serve</code>. Running it again is safe: it keeps your data and secrets.</p>
+            <p class="aside">It checks what it needs and tells you how to fix anything missing. It creates every password and token, starts Postgres in Docker and the server as a background service, turns on nightly backups and self-updates, and publishes the server on your tailnet with <code>tailscale serve</code>. Running it again is safe: it keeps your data and secrets.</p>
+            <div class="callout"><p>If Tailscale says <b>access denied</b>, run this once, then run the script again:</p><div class="code"><pre><span class="prompt">$ </span><span data-copy>sudo tailscale set --operator=$USER</span></pre></div></div>
           </li>
           <li class="body">
             <h3>Keep what it prints</h3>
@@ -117,6 +118,7 @@
               <li>the <b>panel address</b>, like <code>https://your-server.your-tailnet.ts.net:8443/panel/</code></li>
               <li>your <b>panel token</b>. It works like a password, so put it in your password manager.</li>
               <li>the exact commands for steps 2–4, with your address already filled in.</li>
+              <li>a copy of all of it in <code>~/telemetry/setup.txt</code>, in case you close the terminal.</li>
             </ul>
           </li>
           <li class="body">
@@ -134,16 +136,17 @@
           <li class="body">
             <h3>Run the installer</h3>
             <p>On each Mac or Linux PC. It detects which one it's on:</p>
-            <div class="code"><pre><span class="prompt">$ </span><span data-copy>curl -fsSL https://github.com/rimexe0/telemetry/releases/latest/download/install.sh | sh</span></pre></div>
-            <p class="aside">Paste the server address when it asks. It installs the collector as a background service, verifies the signed release, and keeps it updated from then on.</p>
+            <div class="code"><pre><span class="prompt">$ </span><span data-copy>curl -fsSL https://github.com/rimexe0/telemetry/releases/latest/download/install.sh | bash</span></pre></div>
+            <p class="aside">Paste the server address when it asks, or set <code>TELEMETRY_SERVER=</code> before running it. It checks the release signature, installs the collector as a background service and keeps it updated from then on.</p>
           </li>
           <li class="body">
             <h3>Approve the device</h3>
-            <p>The installer opens a pairing link. Approve it in the panel under <b>Devices</b>. Each device gets its own key, and you can revoke it there at any time.</p>
+            <p>The panel shows a banner saying <b>"… wants to connect"</b>. Click <b>Connect</b>. Each device gets its own key, and you can revoke it under <b>Devices</b> at any time.</p>
           </li>
           <li class="body">
             <h3>Mac only: two permissions</h3>
-            <p>Grant <b>Accessibility</b> to Telemetry Desktop when macOS asks (System Settings → Privacy &amp; Security → Accessibility). That's how it reads the window in front and hides blocked apps. Then open your browser once: the extension is installed by policy and turns itself on.</p>
+            <p>Grant <b>Accessibility</b> to Telemetry Desktop when macOS asks (System Settings → Privacy &amp; Security → Accessibility). That's how it reads the window in front and hides blocked apps. Then open your browser: the extension is installed by policy and turns itself on.</p>
+            <p class="aside">Chrome on a Mac that isn't company-managed may refuse an extension installed by policy. If it doesn't show up, the installer tells you how to load it yourself in two clicks.</p>
           </li>
         </ol>
       </article>
@@ -156,11 +159,12 @@
           <li class="body">
             <h3>Install the app</h3>
             <p>Install Tailscale from the Play Store and sign in. Then download the Telemetry APK on the phone and open it. Android will ask you to allow installs from your browser once.</p>
-            <div class="links"><a class="btn" href="https://github.com/rimexe0/telemetry/releases/latest/download/telemetry.apk">download telemetry.apk</a> <a class="btn white" href="https://obtainium.imranr.dev/">auto-update with Obtainium</a></div>
+            <div class="links"><a class="btn" href="https://github.com/rimexe0/telemetry/releases/latest/download/telemetry-phone.apk">download telemetry-phone.apk</a> <a class="btn white" href="https://obtainium.imranr.dev/">auto-update with Obtainium</a></div>
           </li>
           <li class="body">
+            <img class="phone-shot" src="img/phone-setup.jpg" width="600" height="667" alt="The Telemetry phone app on step 1 of 12, Connect this phone, with a server address typed in and a Connect button.">
             <h3>Pair it</h3>
-            <p>In the panel, open <b>Devices</b> and choose <b>Pair a phone</b>. Scan the code with the app, or type the server address. Then approve the phone in the panel.</p>
+            <p>Open the app, type your server address (the same <code>https://…</code> one the server printed) and tap <b>Connect</b>. Then click <b>Connect</b> on the "wants to connect" banner in the panel.</p>
           </li>
           <li class="body">
             <h3>Grant what it asks for</h3>
@@ -178,14 +182,12 @@
         <ol class="steps">
           <li class="body">
             <h3>Claude Code</h3>
-            <div class="code"><pre><span class="prompt">$ </span><span data-copy>claude mcp add --transport http telemetry https://YOUR-SERVER/mcp --header "Authorization: Bearer YOUR-READ-TOKEN"</span></pre></div>
+            <div class="code"><pre><span class="prompt">$ </span><span data-copy>claude mcp add --scope user --transport http telemetry https://YOUR-SERVER/mcp --header "Authorization: Bearer YOUR-READ-TOKEN"</span></pre></div>
           </li>
           <li class="body">
             <h3>Codex</h3>
-            <div class="code"><pre><span class="cmt"># ~/.codex/config.toml</span>
-<span data-copy>[mcp_servers.telemetry]
-url = "https://YOUR-SERVER/mcp"
-bearer_token_env_var = "TELEMETRY_TOKEN"</span></pre></div>
+            <div class="code"><pre><span class="prompt">$ </span><span data-copy>export TELEMETRY_MCP_TOKEN=YOUR-READ-TOKEN</span>
+<span class="prompt">$ </span><span data-copy>codex mcp add telemetry --url https://YOUR-SERVER/mcp --bearer-token-env-var TELEMETRY_MCP_TOKEN</span></pre></div>
           </li>
           <li class="body">
             <h3>Anything else</h3>
@@ -193,7 +195,7 @@ bearer_token_env_var = "TELEMETRY_TOKEN"</span></pre></div>
           </li>
           <li class="body">
             <h3>Let it read your day (optional)</h3>
-            <p>For the "what you're doing" readings, give the server a command that runs your assistant once per reading, like <code>claude -p</code>, and set it in <code>TELEMETRY_INTENT_COMMAND</code>. Without one, everything else still works.</p>
+            <p>For the "what you're doing" readings and check-ins, the server needs a command that runs your assistant once per reading, like <code>claude -p</code>. Set it as <code>TELEMETRY_INTENT_COMMAND</code> in <code>~/telemetry/.env</code> on the server and run the server script again. Everything else works without it.</p>
           </li>
         </ol>
       </article>
@@ -234,7 +236,7 @@ bearer_token_env_var = "TELEMETRY_TOKEN"</span></pre></div>
           </details>
           <details>
             <summary>A site isn't blocked</summary>
-            <p>Check that the extension is on in that browser profile (it's off in private windows until you allow it). On a Mac, a browser without the extension is hidden while sites are blocked, so a missing extension can't be used as a way around the block.</p>
+            <p>Check that the extension is on in that browser profile. In private windows it stays off until you allow it. On a Mac, a browser without the extension is hidden while sites are blocked, so a missing extension can't be used as a way around the block.</p>
           </details>
           <details>
             <summary>The phone stopped reporting</summary>
@@ -242,11 +244,11 @@ bearer_token_env_var = "TELEMETRY_TOKEN"</span></pre></div>
           </details>
           <details>
             <summary>How do I update?</summary>
-            <p>You don't need to. The computers check for signed releases every 10 minutes and roll back if an update fails. The phone updates through Obtainium. The server updates the same way.</p>
+            <p>You don't need to. The server and the computers check for signed releases every 10 minutes, check that each update works, and roll it back if it doesn't. The phone updates through Obtainium.</p>
           </details>
           <details>
             <summary>How do I remove it?</summary>
-            <p>Revoke the device in <b>Devices</b>, then uninstall: on Android, as a normal app; on a computer, run the installer with <code>--uninstall</code>. Your history stays on the server until you delete the Docker volume.</p>
+            <p>Revoke the device under <b>Devices</b> so it can't send anything more. On Android, uninstall it like any other app. A one-command uninstaller for computers isn't there yet: the <a href="https://github.com/rimexe0/telemetry#readme">README</a> lists the services the installer adds. Your history stays on the server until you delete its Docker volume.</p>
           </details>
           <details>
             <summary>Something else</summary>

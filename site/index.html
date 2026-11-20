@@ -201,7 +201,7 @@
           </div>
           <div class="item">
             <h3>Places</h3>
-            <p>Home or out, and for how long. Places are named from a self-hosted OpenStreetMap extract, so nothing goes to Google.</p>
+            <p>Home or out, and for how long. If you want place names, they come from an OpenStreetMap extract on your own server, so nothing goes to Google.</p>
           </div>
           <div class="item">
             <h3>Coding agents</h3>
@@ -334,7 +334,7 @@
           </figure>
           <figure class="shot body">
             <button type="button" aria-label="Enlarge: Health view"><img src="img/health.jpg" width="1600" height="1000" alt="Health view: a month of daily steps and sleep bars, then 18 November with 5,006 steps, 4 h 33 m sleep, a sleep and exercise timeline and individual heart rate samples."></button>
-            <figcaption><b>Health.</b> Sleep, steps, workouts and every heart rate sample, straight from the watch.</figcaption>
+            <figcaption><b>Health.</b> Sleep, steps, workouts and every heart rate sample, from your phone and watch through Health Connect.</figcaption>
           </figure>
           <figure class="shot body">
             <button type="button" aria-label="Enlarge: Rules view"><img src="img/rules.jpg" width="1600" height="1000" alt="Rules view with settings lock, bedtime, browser extension, morning code and blocked apps sections."></button>
@@ -352,27 +352,28 @@
     <section id="setup" class="deck" aria-labelledby="setup-title">
       <article class="card wide reveal" data-hue="Setup">
         <div class="card-head"><h2 id="setup-title">Setup <small>about 15 minutes</small></h2><span class="num">10</span></div>
-        <p>You need one machine that's always on, like an old laptop, a home server or a cheap VPS, and <a href="https://tailscale.com">Tailscale</a> (free) on every device.</p>
+        <p>You need one Linux machine that's always on (an old laptop, a home server or a cheap VPS) with Docker, and <a href="https://tailscale.com">Tailscale</a> (free) on every device.</p>
         <ol class="steps">
           <li class="body">
             <h3>Start the server</h3>
             <p>On the always-on Linux machine with Docker:</p>
             <div class="code"><pre><span class="prompt">$ </span><span data-copy>curl -fsSL https://github.com/rimexe0/telemetry/releases/latest/download/install-server.sh | bash</span></pre></div>
-            <p class="aside">When it finishes it prints the panel address and your login token.</p>
+            <p class="aside">When it finishes it prints the panel address, your login token and the commands for the next three steps.</p>
           </li>
           <li class="body">
             <h3>Install on your computers</h3>
-            <p>On each Mac or Linux PC, paste the server address when it asks:</p>
-            <div class="code"><pre><span class="prompt">$ </span><span data-copy>curl -fsSL https://github.com/rimexe0/telemetry/releases/latest/download/install.sh | sh</span></pre></div>
+            <p>On each Mac or Linux PC. Paste the server address when it asks, then click <b>Connect</b> in the panel:</p>
+            <div class="code"><pre><span class="prompt">$ </span><span data-copy>curl -fsSL https://github.com/rimexe0/telemetry/releases/latest/download/install.sh | bash</span></pre></div>
           </li>
           <li class="body">
             <h3>Add your phone</h3>
-            <p>Download the APK, open it, and scan the pairing code that the panel shows.</p>
-            <div class="links"><a class="btn" href="https://github.com/rimexe0/telemetry/releases/latest/download/telemetry.apk">download APK</a></div>
+            <p>Install the APK, type the server address, tap <b>Connect</b>, and approve it in the panel.</p>
+            <div class="links"><a class="btn" href="https://github.com/rimexe0/telemetry/releases/latest/download/telemetry-phone.apk">download APK</a></div>
           </li>
           <li class="body">
             <h3>Connect your assistant (recommended)</h3>
-            <p>Your assistant is what turns app names into "you were editing the video, then drifted". The server prints the exact command for your client.</p>
+            <p>Your assistant is what turns app names into "you were editing the video, then drifted". For Claude Code it's one line, and the server prints it with your address filled in:</p>
+            <div class="code"><pre><span class="prompt">$ </span><span data-copy>claude mcp add --scope user --transport http telemetry https://YOUR-SERVER/mcp --header "Authorization: Bearer YOUR-READ-TOKEN"</span></pre></div>
           </li>
         </ol>
         <p><a class="btn" href="setup.html">full setup guide <span class="arrow">→</span></a></p>

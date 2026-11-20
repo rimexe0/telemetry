@@ -327,7 +327,7 @@ dialog.lightbox button { background: #fff; color: #000; border: 0; font: inherit
   position: relative; margin: 8px 0 10px; background: #0f1011; color: #f1f1ee;
   border-radius: 0 10px 0 10px; font-size: 0.86rem;
 }
-.code pre { margin: 0; padding: 14px 16px; overflow-x: auto; line-height: 1.6; }
+.code pre { margin: 0; padding: 14px 70px 14px 16px; overflow-x: auto; line-height: 1.6; }
 .code .prompt { color: #7c8086; user-select: none; }
 .code .cmt { color: #8c8f93; }
 .code .copy {
@@ -415,3 +415,11 @@ footer .links { justify-content: center; margin-top: 10px; }
   html { scroll-behavior: auto; }
 }
 a.chip { text-decoration: none; }
+
+.phone-shot {
+  float: right; width: 230px; height: auto; margin: 0 0 12px 20px;
+  border: 2px dashed var(--ink); box-shadow: var(--small-shadow);
+  border-radius: 0 14px 0 14px;
+}
+.steps > li::after { content: ""; display: block; clear: both; }
+@media (max-width: 640px) { .phone-shot { float: none; width: 70%; margin: 6px 0 12px; } }
