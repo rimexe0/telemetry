@@ -271,6 +271,17 @@ func (s *Server) readAuthorized(request *http.Request) bool {
 	return s.authorized(request, s.config.ReadToken) || s.panelSessionAuthorized(request)
 }
 
+// PanelOwner reports whether the request carries a panel session started with
+// the panel token. It is always false when an external sign-in is configured.
+func (s *Server) PanelOwner(request *http.Request) bool {
+	return s.panelSessionAuthorized(request)
+}
+
+// PanelSessionsEnabled reports whether the panel token signs the owner in.
+func (s *Server) PanelSessionsEnabled() bool {
+	return s.panelSessionsEnabled()
+}
+
 func (s *Server) panelSessionsEnabled() bool {
 	return s.config.OwnerAuthorized == nil && s.config.PanelToken != "" && s.config.PanelSessionSecret != ""
 }

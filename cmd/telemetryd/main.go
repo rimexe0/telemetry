@@ -121,13 +121,20 @@ func main() {
 		log.Fatal(err)
 	}
 	deviceSessions := httpapi.NewDeviceSessions(deviceSessionKey, 12*time.Hour)
+	// Devices pair through the panel: approved by the Clerk owner, or without
+	// Clerk by whoever signed in with the panel token. Either needs the public
+	// HTTPS origin the devices and the panel use.
+	clerkPairing, panelPairing := pairingMode(clerkKey, ownerID, *panelToken, *panelSecret, publicURL)
+	if clerkKey == "" && *panelToken != "" && publicURL == "" {
+		log.Print("TELEMETRY_PUBLIC_URL is not set: devices cannot pair until it names this server's HTTPS address")
+	}
 	// Changes wake devices waiting for their next decision.
 	feed := changes.New()
 	server, err := httpapi.New(database, httpapi.Config{
 		IngestToken:         *ingestToken,
 		OwnerAuthorized:     ownerAuthorized,
 		DeviceAuthorized:    devices.AuthorizeDevice,
-		PairingEnabled:      clerkKey != "" && ownerID != "",
+		PairingEnabled:      clerkPairing || panelPairing,
 		DeviceSessions:      deviceSessions,
 		Changes:             feed,
 		PublicURL:           publicURL,
@@ -151,8 +158,12 @@ func main() {
 	}
 	router := http.NewServeMux()
 	router.Handle("/mcp", mcpHandler)
-	if clerkKey != "" && ownerID != "" {
-		pairing, err := enrollment.NewHandler(devices, enrollment.HandlerConfig{VerifyOwner: ownerAuthorized, PublicURL: publicURL})
+	if clerkPairing || panelPairing {
+		verifyOwner := ownerAuthorized
+		if panelPairing {
+			verifyOwner = server.PanelOwner
+		}
+		pairing, err := enrollment.NewHandler(devices, enrollment.HandlerConfig{VerifyOwner: verifyOwner, PublicURL: publicURL})
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -226,6 +237,17 @@ func main() {
 	if err := httpServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
+}
+
+// pairingMode says who approves new devices: the Clerk owner when Clerk is
+// configured, otherwise the panel-token owner once the server knows its
+// public origin. Clerk always takes precedence, so a panel token left in a
+// Clerk deployment never approves devices.
+func pairingMode(clerkKey, ownerID, panelToken, panelSecret, publicURL string) (clerk, panel bool) {
+	if clerkKey != "" {
+		return ownerID != "", false
+	}
+	return false, panelToken != "" && panelSecret != "" && publicURL != ""
 }
 
 func contextWithTimeout() (context.Context, context.CancelFunc) {
