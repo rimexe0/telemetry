@@ -49,6 +49,20 @@ class DeliveryConfig(context: Context) {
         return builtIn
     }
 
+    /** A one-time setup code from a setup link, used by the next pairing. */
+    var setupCode: String
+        get() = preferences.getString(KEY_SETUP_CODE, null).orEmpty()
+        set(value) = preferences.edit().putString(KEY_SETUP_CODE, value.trim()).apply()
+
+    /** Set when the server said this phone was removed in the panel. */
+    val removed: Boolean
+        get() = preferences.getBoolean(KEY_REMOVED, false)
+
+    /** Forgets the key the server no longer accepts, so setup asks again. */
+    fun markRemoved() {
+        check(preferences.edit().remove(KEY_TOKEN).remove(KEY_IV).putBoolean(KEY_REMOVED, true).commit())
+    }
+
     var pairingId: String?
         get() = preferences.getString(KEY_PAIRING_ID, null)
         private set(value) {
@@ -77,7 +91,8 @@ class DeliveryConfig(context: Context) {
             // A pairing the server never answered, or one for an address that
             // no longer exists, can only be started again.
             if (pending == server) return existing
-            require(pairingId == null || pending?.trimEnd('/') in RETIRED_SERVERS) { "Finish pending pairing before changing servers" }
+            // A request to another address is dropped: it never finished,
+            // and keeping it only stopped the phone from connecting.
             clearPairing()
         }
         check(preferences.edit().putString(KEY_PAIRING_SERVER, server).commit())
@@ -104,6 +119,7 @@ class DeliveryConfig(context: Context) {
             .putString(KEY_TOKEN, Base64.encodeToString(cipher.doFinal(secret.toByteArray(StandardCharsets.UTF_8)), Base64.NO_WRAP))
             .putString(KEY_IV, Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
             .remove(KEY_PAIRING_ID).remove(KEY_PAIRING_SECRET).remove(KEY_PAIRING_SECRET_IV).remove(KEY_PAIRING_SERVER)
+            .remove(KEY_SETUP_CODE).remove(KEY_REMOVED)
             .commit()) { "Unable to persist paired credential" }
     }
 
@@ -174,6 +190,8 @@ class DeliveryConfig(context: Context) {
         const val KEY_PAIRING_ID = "pairing_id"
         const val KEY_PAIRING_SECRET = "pairing_secret_ciphertext"
         const val KEY_PAIRING_SECRET_IV = "pairing_secret_iv"
+        const val KEY_SETUP_CODE = "setup_code"
+        const val KEY_REMOVED = "removed"
         const val KEY_ALIAS = "telemetry_delivery_token"
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
         const val KeyStoreKeyAlgorithm = "AES"

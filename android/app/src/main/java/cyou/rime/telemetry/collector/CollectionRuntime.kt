@@ -193,6 +193,11 @@ object CollectionRuntime {
         } catch (error: Exception) {
             // The drain reports attempts even when recording metrics failed.
             // Unknown failures retain the full reservation conservatively.
+            if (error is DeliveryException && error.kind == DeliveryFailureKind.DEVICE_REMOVED) {
+                // Forget the dead key and say so; setup asks for a new code.
+                config.markRemoved()
+                RemovedNotice.show(context)
+            }
             if (error is DeliveryException) {
                 attemptedBytes = error.partialResult?.bodyBytes
                     ?: if (error.kind == DeliveryFailureKind.OVERSIZED_ROW || error.kind == DeliveryFailureKind.INVALID_PAYLOAD) 0L

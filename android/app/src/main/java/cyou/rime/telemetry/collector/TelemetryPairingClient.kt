@@ -9,6 +9,8 @@ import org.json.JSONObject
 data class PairingStart(
     val id: String,
     val panelUrl: String,
+    /** True when a setup code connected the phone at once. */
+    val approved: Boolean = false,
 )
 
 data class PairingStatus(
@@ -21,6 +23,10 @@ data class PairingStatus(
 class PairingException(
     val status: Int,
     message: String,
+    /** The server's error code, such as invalid_code. */
+    val code: String? = null,
+    /** The server's own explanation. */
+    val detail: String? = null,
 ) : IllegalStateException(message)
 
 /**
@@ -43,11 +49,12 @@ class TelemetryPairingClient(
         val u = URL(serverUrl)
         require(u.protocol == "https" && u.userInfo == null && u.query == null && u.ref == null && (u.path.isEmpty() || u.path == "/")) { "Pairing requires a private HTTPS origin" }
     }
-    fun start(secret: String): PairingStart {
+    fun start(secret: String, code: String = ""): PairingStart {
         val body = JSONObject()
             .put("device_id", deviceId)
             .put("device_name", deviceName)
             .put("credential_hash", MessageDigest.getInstance("SHA-256").digest(secret.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) })
+        if (code.isNotBlank()) body.put("code", code.trim())
         val payload = send("POST", "/v1/pairing/sessions", mapOf("Content-Type" to "application/json"), body.toString().toByteArray(Charsets.UTF_8),
             setOf(HttpURLConnection.HTTP_OK, HttpURLConnection.HTTP_CREATED, HttpURLConnection.HTTP_ACCEPTED))
         val id = required(payload, "pairing_id", "id")
@@ -61,12 +68,18 @@ class TelemetryPairingClient(
         val target = URL(panelUrl)
         require(target.protocol == expected.protocol && target.host == expected.host && target.port == expected.port && target.userInfo == null && target.path == "/panel/") { "Pairing response changed server" }
         require(Uri.parse(panelUrl).getQueryParameter("pair") == id) { "Pairing response changed session" }
-        return PairingStart(id, panelUrl)
+        return PairingStart(id, panelUrl, approved = optional(payload, "status") == "approved")
     }
 
     fun poll(pairingId: String, secret: String): PairingStatus {
-        val payload = send("GET", "/v1/pairing/sessions/${Uri.encode(pairingId)}", mapOf("Authorization" to "Bearer $secret"), null,
-            setOf(HttpURLConnection.HTTP_OK))
+        val payload = try {
+            send("GET", "/v1/pairing/sessions/${Uri.encode(pairingId)}", mapOf("Authorization" to "Bearer $secret"), null,
+                setOf(HttpURLConnection.HTTP_OK))
+        } catch (error: PairingException) {
+            // The server says gone for an expired request or a removed device.
+            if (error.status == 410) return PairingStatus(PairingStatus.State.EXPIRED)
+            throw error
+        }
         val state = when (optional(payload, "status", "state")?.lowercase()) {
             "approved" -> PairingStatus.State.APPROVED
             "denied", "rejected", "revoked" -> PairingStatus.State.DENIED
@@ -130,7 +143,13 @@ class TelemetryPairingClient(
         require(bytes.size <= 65536) { "Pairing response too large" }
         val text = bytes.toString(Charsets.UTF_8)
         if (status !in accepted) {
-            throw PairingException(status, "Telemetry pairing returned HTTP $status")
+            val problem = runCatching { JSONObject(text).optJSONObject("error") }.getOrNull()
+            throw PairingException(
+                status,
+                "Telemetry pairing returned HTTP $status",
+                code = problem?.optString("code")?.takeIf { it.isNotBlank() },
+                detail = problem?.optString("detail")?.takeIf { it.isNotBlank() },
+            )
         }
         return if (text.isBlank()) JSONObject() else JSONObject(text)
     }

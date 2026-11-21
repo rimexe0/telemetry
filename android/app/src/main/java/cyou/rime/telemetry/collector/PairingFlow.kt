@@ -12,9 +12,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Pairs this phone through the owner's Clerk sign-in in the browser, then polls
- * until the server approves. Progress goes to [onStatus]; [onPaired] runs once
- * the credential is stored and delivery is scheduled.
+ * Pairs this phone with the server. With a setup code made in the panel it is
+ * connected at once; without one it asks, and polls until the owner clicks
+ * Connect in the panel. Progress goes to [onStatus], in words that say what
+ * to do next; [onPaired] runs once the credential is stored and delivery is
+ * scheduled.
  */
 class PairingFlow(
     private val context: Context,
@@ -33,29 +35,28 @@ class PairingFlow(
     var approvalUrl: String? = null
         private set
 
-    fun start(serverUrl: String, openBrowser: Boolean = true) {
+    fun start(serverUrl: String, openBrowser: Boolean = true, code: String = "") {
         val config = DeliveryConfig(context)
         if (serverUrl.isBlank()) {
-            onStatus("Enter the private Telemetry server URL first.")
+            onStatus("Enter your Telemetry server's address first.")
             return
         }
         job?.cancel()
-        val secret = try {
-            config.newPairingSecret(serverUrl)
-        } catch (error: Exception) {
-            onStatus("Finish the pending connection before changing servers.")
-            return
-        }
-        onStatus("Creating a secure pairing request…")
+        val secret = config.newPairingSecret(serverUrl)
+        onStatus(if (code.isNotBlank()) "Connecting with the setup code…" else "Asking the server…")
         scope.launch {
             try {
-                val retainedId = config.pairingId
+                val retainedId = config.pairingId.takeIf { code.isBlank() }
                 val start = if (retainedId != null) {
                     PairingStart(retainedId, Uri.parse(serverUrl.trimEnd('/') + "/panel/").buildUpon().appendQueryParameter("pair", retainedId).build().toString())
                 } else withContext(Dispatchers.IO) {
-                    client(serverUrl).start(secret)
+                    client(serverUrl).start(secret, code)
                 }
                 config.savePairing(start.id, secret)
+                if (start.approved) {
+                    connected(config, serverUrl, secret)
+                    return@launch
+                }
                 approvalUrl = start.panelUrl
                 if (openBrowser) {
                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(start.panelUrl)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -66,9 +67,17 @@ class PairingFlow(
                 poll(serverUrl, start.id, secret)
             } catch (error: Exception) {
                 if (error is kotlinx.coroutines.CancellationException) throw error
-                onStatus("Could not reach the server. Check the phone's internet connection. Queued records stay on this phone.")
+                if (error is PairingException && error.code == "invalid_code") config.setupCode = ""
+                onStatus(explain(error, serverUrl))
             }
         }
+    }
+
+    private fun connected(config: DeliveryConfig, serverUrl: String, secret: String) {
+        config.completePairing(serverUrl, secret)
+        BackgroundJobs.scheduleDelivery(context)
+        onStatus("Phone connected.")
+        onPaired()
     }
 
     /** Continues a pairing that was started before the app was left. */
@@ -108,10 +117,7 @@ class PairingFlow(
                             if (result.deviceId != DeviceIdentity.get(context.applicationContext)) {
                                 throw IllegalStateException("pairing approval was for another device")
                             }
-                            config.completePairing(serverUrl, secret)
-                            BackgroundJobs.scheduleDelivery(context)
-                            onStatus("Phone connected.")
-                            onPaired()
+                            connected(config, serverUrl, secret)
                             return@launch
                         }
                         PairingStatus.State.DENIED -> {
@@ -121,27 +127,47 @@ class PairingFlow(
                         }
                         PairingStatus.State.EXPIRED -> {
                             config.clearPairing()
-                            onStatus(if (resumed) "" else "Pairing expired. Tap Connect to try again.")
+                            onStatus(if (resumed) "" else "Nobody clicked Connect in time, so the request expired. Tap Connect to ask again, or use a setup code from the panel (Devices → Add a device).")
                             return@launch
                         }
                     }
                 } catch (error: PairingException) {
                     if (error.status !in RETRYABLE) {
                         config.clearPairing()
-                        onStatus(if (resumed) "" else "Pairing could not be continued; start it again when ready.")
+                        onStatus(if (resumed) "" else explain(error, serverUrl))
                         return@launch
                     }
-                    onStatus("Waiting for the private Telemetry server…")
+                    onStatus("The server is busy (HTTP ${error.status}); still trying…")
                 } catch (error: IllegalStateException) {
                     if (error is kotlinx.coroutines.CancellationException) throw error
                     onStatus("Pairing response was invalid; start it again when ready.")
                     return@launch
                 } catch (error: Exception) {
                     if (error is kotlinx.coroutines.CancellationException) throw error
-                    onStatus("Waiting for the private Telemetry server…")
+                    onStatus("Can't reach the server right now; still trying. Is Tailscale on?")
                 }
                 delay(POLL_INTERVAL_MS)
             }
+        }
+    }
+
+    /** What went wrong, in words that say what to do about it. */
+    private fun explain(error: Throwable, serverUrl: String): String {
+        if (error is PairingException) return when {
+            error.code == "invalid_code" -> "That setup code is wrong, already used or expired. Make a new one in the panel: Devices → Add a device."
+            error.status == 404 -> "$serverUrl answered, but it does not accept new devices yet: its TELEMETRY_PUBLIC_URL is not set. Running install-server.sh again sets it."
+            error.status == 429 -> "Too many tries. Wait ten minutes, then try again."
+            error.code == "device_already_registered" -> "The server refused this phone's ID. Remove the old phone in the panel under Devices, then try again."
+            else -> "The server refused this (HTTP ${error.status}${error.detail?.let { ": $it" } ?: ""})."
+        }
+        val message = error.message.orEmpty()
+        return when {
+            message.contains("changed server") -> "The server calls itself by another address than $serverUrl. Use the exact address from the server setup, or scan the QR in the panel."
+            message.contains("private HTTPS origin") -> "That address doesn't look right. It should look like https://server.your-tailnet.ts.net:8443, with nothing after the port."
+            error is java.net.UnknownHostException -> "This phone can't find $serverUrl. Turn on Tailscale on this phone, signed in to the same account as the server, then try again."
+            error is javax.net.ssl.SSLException -> "The connection to $serverUrl wasn't secure. Check the address, and that the server's HTTPS is on (tailscale serve)."
+            error is java.io.IOException -> "Could not reach $serverUrl. Is Tailscale on on this phone? Queued records stay here meanwhile."
+            else -> "Connecting failed: ${message.ifBlank { error.javaClass.simpleName }}"
         }
     }
 

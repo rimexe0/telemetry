@@ -177,7 +177,9 @@ class MainActivity : ComponentActivity() {
         state = state.copy(missing = SetupStep.missing(SetupActivity.syncDone(this)))
         showBlocking()
         if (token == null) {
-            if (!showCached()) problem("This phone is not paired yet", "Finish setting it up to see your plan.")
+            if (DeliveryConfig(this).removed) {
+                problem("This phone was removed from Telemetry", "It was removed in the panel. Tap Set up and connect it again with a new setup code; what it recorded meanwhile is kept.")
+            } else if (!showCached()) problem("This phone is not paired yet", "Finish setting it up to see your plan.")
             return
         }
         val body = withContext(Dispatchers.IO) { NowCache.refresh(this@MainActivity) }

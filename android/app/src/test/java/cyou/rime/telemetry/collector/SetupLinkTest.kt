@@ -22,6 +22,28 @@ class SetupLinkTest {
     }
 
     @Test
+    fun carriesTheSetupCode() {
+        assertEquals(
+            SetupLink.Addresses("https://server.test:8443", "https://relay.test", key, "K7QM-3XPD"),
+            SetupLink.parse("telemetry://setup?code=K7QM-3XPD&key=$encodedKey&relay=https%3A%2F%2Frelay.test&server=https%3A%2F%2Fserver.test%3A8443"),
+        )
+    }
+
+    @Test
+    fun readsThePastedJoinLink() {
+        assertEquals(
+            SetupLink.Addresses("https://server.test:8443", "https://relay.test", key, "K7QM-3XPD"),
+            SetupLink.parse("  https://te.rime.cyou/join#c=K7QM-3XPD&k=$encodedKey&r=https%3A%2F%2Frelay.test&s=https%3A%2F%2Fserver.test%3A8443 "),
+        )
+        assertEquals(
+            SetupLink.Addresses("https://server.test", "", "", "AAAA-BBBB"),
+            SetupLink.parse("https://te.rime.cyou/join#c=AAAA-BBBB&s=https%3A%2F%2Fserver.test"),
+        )
+        assertNull(SetupLink.parse("https://te.rime.cyou/join#c=AAAA-BBBB&s=http%3A%2F%2Fserver.test"))
+        assertNull(SetupLink.parse("https://server.test:8443"))
+    }
+
+    @Test
     fun refusesAnythingElse() {
         assertNull(SetupLink.parse(null))
         assertNull(SetupLink.parse("https://setup?server=https%3A%2F%2Fserver.test"))

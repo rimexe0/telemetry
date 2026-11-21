@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AddDevice from '$lib/AddDevice.svelte';
   import '$lib/controls.css';
   import { onDestroy, onMount } from 'svelte';
   import TimeSeries from '$lib/TimeSeries.svelte';
@@ -857,7 +858,7 @@
     </nav>
     {#each pendingPairings as item (item.pairing_id)}
       <section class="pairing" aria-label="Device waiting to connect">
-        <div class="pairing-row"><strong>{item.device_name || 'A device'} wants to connect</strong><span>{item.device_id}</span>
+        <div class="pairing-row"><strong>{item.device_name || 'A device'} wants to connect{item.returning ? ' again' : ''}</strong><span>{item.device_id}{item.returning ? ' · was connected before; connecting replaces its old key. Only connect it if you just set it up again.' : ''}</span>
           <button on:click={() => approvePending(item)} disabled={pendingApproving === item.pairing_id}>{pendingApproving === item.pairing_id ? 'Connecting…' : 'Connect'}</button></div>
         {#if pendingError}<p class="error" role="alert">{pendingError}</p>{/if}
       </section>
@@ -901,6 +902,7 @@
     {:else if view === 'rules'}
       <RulesView {activities} {planningSettings} onupdatesettings={handleUpdatePlanningSettings} onleave={() => { view = 'now'; void refresh(); }} />
     {:else if view === 'devices'}
+      <AddDevice onconnected={refreshDevices} />
       <section class="devices" aria-labelledby="devices-heading">
         <div class="section-title"><h2 id="devices-heading">Devices</h2><button class="quiet-button" on:click={refreshDevices} disabled={devicesLoading}>{devicesLoading ? 'Refreshing…' : 'Refresh'}</button></div>
         {#if devicesError}<p class="error" role="alert">{devicesError}</p>{/if}
@@ -908,7 +910,7 @@
           {#each devices as device (device.device_id)}
             <div class:revoked={device.revoked_at} class="device-row">
               <div><strong>{device.device_name}</strong><span>{device.device_id}</span></div>
-              {#if device.revoked_at}<span class="muted">Revoked</span>{:else}<button class="quiet-button" on:click={() => revoke(device)}>Revoke</button>{/if}
+              {#if device.revoked_at}<span class="muted">Removed · add it again with a setup code</span>{:else}<button class="quiet-button" on:click={() => revoke(device)}>Remove</button>{/if}
             </div>
           {:else}<p class="empty">No devices</p>{/each}
         </div>

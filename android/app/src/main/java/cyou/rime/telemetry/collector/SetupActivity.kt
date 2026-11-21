@@ -100,6 +100,8 @@ class SetupActivity : ComponentActivity() {
     private lateinit var why: TextView
     private lateinit var status: TextView
     private lateinit var server: EditText
+    private lateinit var code: EditText
+    private var codeTried = ""
     private lateinit var primary: Button
     private lateinit var skip: Button
     private lateinit var approveHere: Button
@@ -140,6 +142,15 @@ class SetupActivity : ComponentActivity() {
             setHintTextColor(MUTED)
             visibility = View.GONE
         }
+        // The one-time code from the panel's Devices → Add a device.
+        code = EditText(this).apply {
+            hint = "Setup code, like K7QM-3XPD (optional)"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            setSingleLine()
+            setTextColor(FOREGROUND)
+            setHintTextColor(MUTED)
+            visibility = View.GONE
+        }
         primary = Button(this).apply { setOnClickListener { act() } }
         skip = Button(this).apply {
             text = "Skip for now"
@@ -159,6 +170,7 @@ class SetupActivity : ComponentActivity() {
             addView(title)
             addView(why)
             addView(server)
+            addView(code)
             addView(primary)
             addView(skip)
             addView(status)
@@ -172,6 +184,15 @@ class SetupActivity : ComponentActivity() {
         super.onResume()
         pairingFlow.resume()
         refresh()
+    }
+
+    // A setup link opened while setup is showing.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (SetupLink.apply(this, intent)) {
+            server.setText(DeliveryConfig(this).serverUrl)
+            refresh()
+        }
     }
 
     private fun skipped(): Set<SetupStep> = preferences(this).getStringSet(KEY_SKIPPED, emptySet())!!
@@ -211,6 +232,7 @@ class SetupActivity : ComponentActivity() {
             skip.visibility = View.GONE
             approveHere.visibility = View.GONE
             server.visibility = View.GONE
+            code.visibility = View.GONE
             return
         }
         val total = SetupStep.entries.size
@@ -220,21 +242,40 @@ class SetupActivity : ComponentActivity() {
         primary.text = step.action
         skip.visibility = if (step.required) View.GONE else View.VISIBLE
         server.visibility = if (step == SetupStep.PAIR) View.VISIBLE else View.GONE
-        if (step == SetupStep.PAIR && server.text.isBlank()) server.setText(DeliveryConfig(this).serverUrl)
+        code.visibility = server.visibility
         approveHere.visibility = if (step == SetupStep.PAIR && pairingFlow.approvalUrl != null) View.VISIBLE else View.GONE
+        if (step != SetupStep.PAIR) return
+        val config = DeliveryConfig(this)
+        if (server.text.isBlank()) server.setText(config.serverUrl)
+        if (config.removed && status.text.isBlank()) {
+            status.text = "This phone was removed from Telemetry in the panel. Connect it again with a new setup code; what it recorded meanwhile is still here."
+        }
+        // Opened from the panel's QR: connect with its code straight away, once.
+        val pending = config.setupCode
+        if (pending.isNotBlank() && pending != codeTried) {
+            code.setText(pending)
+            codeTried = pending
+            act()
+        }
     }
 
     private fun act() {
         val step = current ?: run { finish(); return }
         when (step) {
             SetupStep.PAIR -> {
+                // The whole setup link pasted into the address field works too.
+                SetupLink.parse(server.text.toString())?.let { link ->
+                    SetupLink.applyLink(this, server.text.toString())
+                    server.setText(link.server)
+                    if (link.code.isNotBlank()) code.setText(link.code)
+                }
                 val address = server.text.toString().trim().trimEnd('/')
                 if (!address.startsWith("https://")) {
-                    status.text = "Enter your Telemetry server's address, starting with https://. It is printed at the end of the server setup."
+                    status.text = "Enter your Telemetry server's address, starting with https://. The panel shows it under Devices → Add a device."
                     return
                 }
                 DeliveryConfig(this).serverUrl = address
-                pairingFlow.start(address, openBrowser = false)
+                pairingFlow.start(address, openBrowser = false, code = code.text.toString())
             }
             SetupStep.NOTIFICATIONS -> if (Build.VERSION.SDK_INT >= 33) {
                 permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))

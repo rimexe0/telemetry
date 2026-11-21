@@ -641,7 +641,7 @@ export async function rejectReplanProposal(planDate: string, proposalId: number,
   });
 }
 
-export type PendingPairing = { pairing_id: string; device_id: string; device_name?: string; status: string; expires_at: string };
+export type PendingPairing = { pairing_id: string; device_id: string; device_name?: string; status: string; expires_at: string; returning?: boolean };
 
 export async function listPendingPairings(): Promise<PendingPairing[]> {
   const result = await request<{ sessions: PendingPairing[] | null }>('/v1/pairing/sessions');
@@ -838,4 +838,44 @@ export async function previewOpeningRule(rule: OpeningRule): Promise<RulePreview
 
 export async function previewMorningRule(rule: MorningRule): Promise<RulePreview> {
   return request<RulePreview>('/v1/morning?preview=1', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rule) });
+}
+
+// Setup codes: made by the owner, used once by a new device to connect
+// without a second approval step.
+export type SetupCode = {
+  invite_id: string;
+  code: string;
+  status: string;
+  expires_at: string;
+  server_url: string;
+  relay_url?: string;
+  join_url: string;
+  setup_link: string;
+  commands: Record<string, string>;
+  qr: string;
+};
+export type SetupInvite = { invite_id: string; status: 'open' | 'used' | 'cancelled' | 'expired'; created_at: string; expires_at: string; used_at?: string; used_by_device?: string; used_by_name?: string };
+export type PairingSettings = { server_url: string; relay_url: string; relay_key: string; relay_available: boolean };
+
+const jsonPost = (body: unknown = {}): RequestInit => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+export async function createSetupCode(): Promise<SetupCode> {
+  return request<SetupCode>('/v1/pairing/invites', jsonPost());
+}
+
+export async function listSetupInvites(): Promise<SetupInvite[]> {
+  const result = await request<{ invites: SetupInvite[] | null }>('/v1/pairing/invites');
+  return result.invites ?? [];
+}
+
+export async function cancelSetupInvite(inviteId: string): Promise<void> {
+  await request(`/v1/pairing/invites/${encodeURIComponent(inviteId)}/cancel`, jsonPost());
+}
+
+export async function getPairingSettings(): Promise<PairingSettings> {
+  return request<PairingSettings>('/v1/pairing/settings');
+}
+
+export async function savePairingSettings(relayURL: string): Promise<PairingSettings> {
+  return request<PairingSettings>('/v1/pairing/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ relay_url: relayURL }) });
 }

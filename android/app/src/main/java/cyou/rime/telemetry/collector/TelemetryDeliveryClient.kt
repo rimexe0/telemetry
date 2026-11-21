@@ -29,6 +29,8 @@ enum class DeliveryFailureKind {
     INVALID_PAYLOAD,
     INVALID_RECEIPT,
     LOCAL_ACKNOWLEDGEMENT,
+    /** The server says this phone was removed in the panel. */
+    DEVICE_REMOVED,
 }
 
 open class DeliveryException(
@@ -276,7 +278,7 @@ class TelemetryDeliveryClient(
                 null
             }
             if (answer != null) {
-                checkReceipt(payload, answer.status) { answer.body.inputStream() }
+                checkReceipt(payload, answer.status, answer.body) { answer.body.inputStream() }
                 return
             }
         }
@@ -306,10 +308,23 @@ class TelemetryDeliveryClient(
             connection.setRequestProperty("X-Telemetry-Device-ID", deviceId)
             connection.outputStream.use { it.write(body) }
             val responseCode = connection.responseCode
+            var refusal: ByteArray? = null
             if (responseCode != HttpURLConnection.HTTP_ACCEPTED) {
+                refusal = runCatching {
+                    connection.errorStream?.use { stream ->
+                        val buffer = ByteArray(4096)
+                        var size = 0
+                        while (size < buffer.size) {
+                            val read = stream.read(buffer, size, buffer.size - size)
+                            if (read < 0) break
+                            size += read
+                        }
+                        buffer.copyOf(size)
+                    }
+                }.getOrNull()
                 closeQuietly(connection.errorStream)
             }
-            checkReceipt(payload, responseCode) { connection.inputStream }
+            checkReceipt(payload, responseCode, refusal) { connection.inputStream }
         } catch (error: DeliveryException) {
             throw error
         } catch (error: Exception) {
@@ -326,8 +341,18 @@ class TelemetryDeliveryClient(
     }
 
     /** Accepts only a 202 whose receipt names this batch and its row count. */
-    private fun checkReceipt(payload: DeliveryPayload, responseCode: Int, receiptStream: () -> InputStream) {
+    private fun checkReceipt(payload: DeliveryPayload, responseCode: Int, refusal: ByteArray?, receiptStream: () -> InputStream) {
         val bodyBytes = payload.body.size.toLong()
+        if (responseCode == HttpURLConnection.HTTP_UNAUTHORIZED &&
+            refusal?.toString(Charsets.UTF_8)?.contains("\"device_removed\"") == true
+        ) {
+            throw DeliveryException(
+                status = responseCode,
+                message = "This phone was removed from Telemetry",
+                kind = DeliveryFailureKind.DEVICE_REMOVED,
+                bodyBytes = bodyBytes,
+            )
+        }
         if (responseCode != HttpURLConnection.HTTP_ACCEPTED) {
             throw DeliveryException(
                 status = responseCode,
