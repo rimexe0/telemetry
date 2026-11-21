@@ -113,17 +113,25 @@
   }
 
   // Big silly numbers that never stop, until you stare at them too long:
-  // then the box spins up like a washing machine, stops dead and fades.
+  // then the box spins up like a washing machine, overheats, smokes, and
+  // dies. Nobody likes how that ends. That's the point.
   const stats = document.querySelector('.stats');
   if (stats) {
+    const grid = stats.parentElement;
     const tiles = [...stats.querySelectorAll('.stat')];
     const numbers = [...stats.querySelectorAll('b')];
+    const ending = stats.querySelector('.spin-done');
+    const restart = stats.querySelector('.restart');
     let scrolled = 0, lastY = scrollY, frozen = false;
     addEventListener('scroll', () => { scrolled += Math.abs(scrollY - lastY); lastY = scrollY; }, { passive: true });
     const format = (value, digits) => value.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
-    const draw = () => {
+    let speedup = 1, extra = 0, lastDraw = performance.now();
+    const draw = (now) => {
       if (frozen) return;
-      const t = (performance.now() - started) / 1000;
+      // While it overheats the numbers race ahead too.
+      extra += ((now - lastDraw) / 1000) * (speedup - 1);
+      lastDraw = now;
+      const t = (now - started) / 1000 + extra;
       for (const b of numbers) {
         const digits = Number(b.dataset.digits || 0);
         let value = 0;
@@ -136,34 +144,103 @@
     };
     requestAnimationFrame(draw);
 
-    const LINGER = 6000, RAMP = 9000, PEAK = 1300;
+    // Smoke rises from the box but doesn't shake with it.
+    const smoke = document.createElement('div');
+    smoke.className = 'smoke';
+    smoke.setAttribute('aria-hidden', 'true');
+    grid.style.position = 'relative';
+    grid.appendChild(smoke);
+    const placeSmoke = () => {
+      smoke.style.left = `${stats.offsetLeft}px`;
+      smoke.style.top = `${stats.offsetTop}px`;
+      smoke.style.width = `${stats.offsetWidth}px`;
+      smoke.style.height = `${tiles[0] ? tiles[tiles.length - 1].offsetTop + tiles[tiles.length - 1].offsetHeight : stats.offsetHeight}px`;
+    };
+    const puff = (strength) => {
+      const p = document.createElement('span');
+      p.className = 'puff';
+      const x = 8 + Math.random() * 84;
+      p.style.left = `${x}%`;
+      p.style.bottom = `${72 + Math.random() * 30}%`;
+      p.style.setProperty('--d', `${(2.2 + Math.random() * 1.6).toFixed(2)}s`);
+      p.style.setProperty('--dx', `${((Math.random() - 0.5) * 80).toFixed(0)}px`);
+      p.style.setProperty('--rise', `${(-140 - Math.random() * 160 - strength * 120).toFixed(0)}px`);
+      p.style.setProperty('--s', (2 + Math.random() * 2 + strength * 1.5).toFixed(2));
+      p.style.setProperty('--o', (0.45 + strength * 0.5).toFixed(2));
+      p.addEventListener('animationend', () => p.remove());
+      smoke.appendChild(p);
+    };
+    let smoking = 0, nextPuff = 0;
+    const smokeLoop = (now) => {
+      if (smoking > 0.02 && now >= nextPuff) {
+        puff(smoking);
+        nextPuff = now + 260 - 225 * smoking + Math.random() * 60;
+      }
+      if (state === 'spinning' || smoking > 0.02 || smoke.childElementCount) requestAnimationFrame(smokeLoop);
+    };
+
+    const LINGER = 6000, RAMP = 9000, PEAK = 1600;
     let seen = 0, visible = false, last = performance.now(), state = 'idle';
     if ('IntersectionObserver' in window) {
       new IntersectionObserver(([entry]) => { visible = entry.intersectionRatio >= 0.5; }, { threshold: [0, 0.5, 1] }).observe(stats);
     }
-    const finish = () => {
+    const die = () => {
       state = 'done';
       frozen = true;
-      stats.style.transition = 'filter 1400ms ease, opacity 1400ms ease';
+      speedup = 1;
+      stats.style.transition = 'none';
       stats.style.transform = 'none';
       tiles.forEach((tile) => { tile.style.transform = ''; });
-      const done = stats.querySelector('.spin-done');
-      if (done) done.hidden = false;
-      requestAnimationFrame(() => requestAnimationFrame(() => stats.classList.add('spent')));
+      // Lights go out one by one, in no particular order.
+      const order = tiles.map((tile) => tile).sort(() => Math.random() - 0.5);
+      order.forEach((tile, i) => setTimeout(() => tile.classList.add('off'), 120 + i * 210 + Math.random() * 90));
+      // The smoke keeps going for a while after it stops.
+      const fade = performance.now();
+      const taper = (now) => {
+        smoking = Math.max(0, 0.75 * (1 - (now - fade) / 4200));
+        if (smoking > 0) requestAnimationFrame(taper);
+      };
+      requestAnimationFrame(taper);
+      // A heart monitor across the dead screens: two beats, weaker, then flat.
+      const line = stats.querySelector('.flatline');
+      const lastTile = tiles[tiles.length - 1];
+      if (line && lastTile) {
+        const w = stats.offsetWidth, h = lastTile.offsetTop + lastTile.offsetHeight;
+        const firstRow = tiles[0].offsetTop + tiles[0].offsetHeight;
+        const y = tiles.length > 2 ? (firstRow + tiles[2].offsetTop) / 2 : h / 2;
+        const beat = (x, a) => `L${x} ${y} l6 ${-a * 0.18} l6 ${a * 0.18} l8 0 l5 ${a * 0.25} l7 ${-a * 1.25} l8 ${a * 1.6} l6 ${-a * 0.6} l10 0 l9 ${-a * 0.3} l9 ${a * 0.3}`;
+        line.setAttribute('viewBox', `0 0 ${w} ${h}`);
+        line.style.height = `${h}px`;
+        line.querySelector('path').setAttribute('d', `M0 ${y} ${beat(w * 0.14, 46)} ${beat(w * 0.38, 26)} L${w} ${y}`);
+      }
+      setTimeout(() => stats.classList.add('dead'), 1300);
+      setTimeout(() => {
+        if (!ending) return;
+        ending.hidden = false;
+        requestAnimationFrame(() => requestAnimationFrame(() => ending.classList.add('shown')));
+      }, 4300);
     };
     const spin = (startedAt) => {
       let phase = 0, jolt = 0, prev = startedAt;
+      // Near the end it stalls and catches again, twice, like it's struggling.
+      const stalls = [RAMP + 250, RAMP + 900];
       stats.style.transition = 'none';
+      placeSmoke();
+      requestAnimationFrame(smokeLoop);
       const step = (now) => {
         const elapsed = now - startedAt;
         const dt = Math.min(0.05, (now - prev) / 1000);
         prev = now;
-        if (elapsed > RAMP + PEAK) { finish(); return; }
+        if (elapsed > RAMP + PEAK) { die(); return; }
         const p = Math.min(1, elapsed / RAMP);
-        const amp = 0.6 + 11 * Math.pow(p, 1.7);           // px
-        const freq = 1.5 + 15 * Math.pow(p, 1.3);          // Hz: the drum spinning up
+        stats.style.setProperty('--heat', Math.min(1, Math.max(0, (p - 0.25) / 0.65)).toFixed(3));
+        smoking = Math.max(0, Math.min(1, (p - 0.3) / 0.6));
+        speedup = 1 + 6 * Math.pow(p, 2);
+        const stalled = stalls.some((at) => elapsed > at && elapsed < at + 160);
+        const amp = stalled ? 0 : 0.6 + 12 * Math.pow(p, 1.7);
+        const freq = 1.5 + 15 * Math.pow(p, 1.3);
         phase += 2 * Math.PI * freq * dt;
-        if (Math.random() < 0.02 + 0.12 * p) jolt = (Math.random() - 0.5) * amp * 1.6; // an off-balance thump
+        if (Math.random() < 0.02 + 0.14 * p) jolt = (Math.random() - 0.5) * amp * 1.7;
         jolt *= 0.86;
         const x = amp * Math.sin(phase) + jolt;
         const y = amp * 0.45 * Math.sin(phase * 2 + 0.7);
@@ -184,13 +261,31 @@
         if (visible && document.visibilityState === 'visible') seen += dt;
         if (seen >= LINGER) {
           state = 'spinning';
-          if (reduce) finish(); else spin(now);
+          if (reduce) {
+            stats.style.setProperty('--heat', '1');
+            die();
+          } else spin(now);
           return;
         }
       }
       requestAnimationFrame(watch);
     };
     requestAnimationFrame(watch);
+
+    // You can turn it back on. It'll do the same thing again.
+    restart?.addEventListener('click', () => {
+      ending.classList.remove('shown');
+      ending.hidden = true;
+      stats.classList.remove('dead');
+      stats.style.setProperty('--heat', '0');
+      tiles.forEach((tile) => tile.classList.remove('off'));
+      seen = 0;
+      state = 'idle';
+      frozen = false;
+      lastDraw = last = performance.now();
+      requestAnimationFrame(draw);
+      requestAnimationFrame(watch);
+    });
   }
 
   // Copy buttons on code blocks.

@@ -253,11 +253,54 @@ code, kbd, pre { font-family: var(--mono); }
 .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-content: start; }
 .stat { border: 2px dashed var(--ink); padding: 10px 12px; background: hsl(var(--bg-hue) var(--pastel-s) var(--pastel-l) / 50%); }
 .stat b { display: block; font-family: var(--display); font-size: 2.1rem; line-height: 1.05; letter-spacing: -0.03em; font-weight: 800; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.stats { will-change: transform; transition: filter 1400ms ease, opacity 1400ms ease; }
-.stats.spent { filter: grayscale(1) contrast(0.85); opacity: 0.55 !important; }
-.stats.spent .stat { border-style: dotted; }
-.why-grid .spin-done { grid-column: 1 / -1; margin: 0; font-family: var(--mono); font-size: 0.8rem; opacity: 0; transition: opacity 900ms ease 600ms; }
-.spent + .spin-done, .stats.spent .spin-done { opacity: 1; filter: none; }
+.stats { position: relative; will-change: transform; --heat: 0; }
+.stats .stat { transition: background-color 900ms ease, border-color 600ms ease; border-color: color-mix(in srgb, #e5322d calc(var(--heat) * 100%), var(--ink)); }
+.stats .stat b { color: color-mix(in srgb, #e5322d calc(var(--heat) * 100%), var(--ink)); }
+
+/* the washing machine dies: each tile switches off like an old TV */
+.stats .stat.off { background: rgba(0, 0, 0, 0.72); border-color: rgba(0, 0, 0, 0.6); border-style: dotted; }
+.stats .stat.off b, .stats .stat.off span { animation: crt-off 520ms ease-in forwards; transform-origin: 50% 50%; }
+@keyframes crt-off {
+  0% { opacity: 1; }
+  15% { opacity: 0.15; }
+  28% { opacity: 1; filter: brightness(1.6); }
+  60% { opacity: 1; transform: scale(1, 0.06); filter: brightness(3); }
+  100% { opacity: 0; transform: scale(0, 0.02); }
+}
+.stats .flatline {
+  position: absolute; left: 0; top: 0; width: 100%;
+  pointer-events: none; overflow: visible; display: none;
+}
+.stats .flatline path {
+  fill: none; stroke: #ff3b30; stroke-width: 2.5; stroke-linejoin: round;
+  stroke-dasharray: 1; stroke-dashoffset: 1; filter: drop-shadow(0 0 4px #ff3b30);
+}
+.stats.dead .flatline { display: block; }
+.stats.dead .flatline path { animation: flatline 2.4s linear forwards, flat-cool 1.6s ease 2.6s forwards; }
+@keyframes flatline { to { stroke-dashoffset: 0; } }
+@keyframes flat-cool { to { stroke: #8a8d91; filter: none; } }
+.why-grid .spin-done { grid-column: 1 / -1; margin: 2px 0 0; font-family: var(--mono); font-size: 0.82rem; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; opacity: 0; transition: opacity 1200ms ease; }
+.why-grid .spin-done p { margin: 0; font-size: inherit; }
+.why-grid .spin-done[hidden] { display: none; }
+.why-grid .spin-done.shown { opacity: 1; }
+.restart { font-size: 0.75rem; cursor: pointer; font-family: var(--sans); }
+
+/* smoke */
+.smoke { position: absolute; pointer-events: none; z-index: 3; overflow: visible; }
+.puff {
+  position: absolute; bottom: 0; width: 64px; height: 64px; margin-left: -32px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(80, 80, 84, 0.42) 0%, rgba(80, 80, 84, 0.18) 45%, rgba(80, 80, 84, 0) 70%);
+  filter: blur(5px); opacity: 0;
+  animation: puff var(--d, 2.8s) cubic-bezier(.2, .6, .4, 1) forwards;
+}
+@media (prefers-color-scheme: dark) {
+  .puff { background: radial-gradient(circle, rgba(210, 210, 210, 0.42) 0%, rgba(210, 210, 210, 0.18) 45%, rgba(210, 210, 210, 0) 70%); }
+}
+@keyframes puff {
+  0% { opacity: 0; transform: translate(0, 10px) scale(0.5); }
+  15% { opacity: var(--o, 0.9); }
+  100% { opacity: 0; transform: translate(var(--dx, 0px), var(--rise, -200px)) scale(var(--s, 3)); }
+}
 .stat span { font-size: 0.85rem; display: block; margin-top: 4px; }
 .stats .note { grid-column: 1 / -1; font-family: var(--mono); font-size: 0.72rem; opacity: 0.75; margin: 0; }
 
@@ -347,14 +390,13 @@ dialog.lightbox button { background: #fff; color: #000; border: 0; font: inherit
 
 /* ---------- faq ---------- */
 
-.faq { padding: 2px 14px 10px; }
+.faq { padding: 2px 14px 10px; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(24rem, 100%), 1fr)); column-gap: 48px; align-items: start; }
 .faq details { border-top: 2px dashed color-mix(in srgb, var(--ink) 35%, transparent); padding: 10px 0; }
-.faq details:first-child { border-top: 0; }
 .faq summary { cursor: pointer; font-weight: 600; font-size: 1.08rem; list-style: none; display: flex; justify-content: space-between; gap: 12px; }
 .faq summary::-webkit-details-marker { display: none; }
 .faq summary::after { content: "+"; font-family: var(--mono); transition: transform 300ms var(--ease); }
 .faq details[open] summary::after { transform: rotate(45deg); }
-.faq details p { margin: 8px 0 2px; max-width: 70ch; }
+.faq details p { margin: 8px 0 2px; }
 
 /* ---------- top nav ---------- */
 

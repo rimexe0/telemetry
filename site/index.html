@@ -106,7 +106,11 @@
             <div class="stat"><b data-here="seconds" data-digits="1">0</b><span>seconds you've spent reading this instead of doing the thing</span></div>
             <div class="stat"><b data-here="scroll" data-digits="2">0</b><span>centimeters you've scrolled to get here</span></div>
             <p class="note">Rough maths: about 5 billion people on social media for about 2 h 20 min a day (DataReportal, 2024), and about 500 hours uploaded to YouTube every minute (YouTube, 2019). The other two are you.</p>
-            <p class="spin-done" hidden>Spin cycle finished. Maybe go do the thing now.</p>
+            <svg class="flatline" viewBox="0 0 400 60" aria-hidden="true"><path pathLength="1" d="M0 30 H96 L104 30 L112 8 L122 52 L130 20 L136 34 L142 30 H400" /></svg>
+            <div class="spin-done" hidden>
+              <p>It never stops on its own. That's the part Telemetry is for.</p>
+              <button type="button" class="btn white restart">turn it back on</button>
+            </div>
           </div>
         </div>
       </article>
