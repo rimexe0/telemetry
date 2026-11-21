@@ -6,6 +6,11 @@
 #
 #   curl -fsSL https://github.com/rimexe0/telemetry/releases/latest/download/install.sh | bash
 #   curl -fsSL .../install.sh | TELEMETRY_SERVER=https://server.example.ts.net:8443 bash
+#   curl -fsSL .../install.sh | bash -s -- 'https://te.rime.cyou/join#c=…&s=…'
+#
+# The last form is what the panel shows under Devices → Add a device: it
+# carries the server's address and a one-time setup code, so this computer is
+# connected without approving it again.
 set -euo pipefail
 
 repo="${TELEMETRY_REPO:-rimexe0/telemetry}"
@@ -21,9 +26,31 @@ for command in curl ssh-keygen "$shell"; do
   command -v "$command" >/dev/null || fail "$command is missing; install it and run this again."
 done
 
+urldecode() { local value="${1//+/ }"; printf '%b' "${value//%/\\x}"; }
+connected() { [[ -f "$config" ]] && grep -q '"approved":true' "$config"; }
+
+# A setup link from the panel: its details come after the #.
+code="${TELEMETRY_CODE:-}"
+server="${TELEMETRY_SERVER:-}"
+if [[ "${1:-}" == *"#"* ]]; then
+  IFS='&' read -r -a fields <<< "${1#*#}"
+  for field in "${fields[@]}"; do
+    value=$(urldecode "${field#*=}")
+    case "${field%%=*}" in
+      s) server="$value" ;;
+      c) code="$value" ;;
+      r) export TELEMETRY_RELAY="$value" ;;
+      k) export TELEMETRY_RELAY_KEY="$value" ;;
+    esac
+  done
+  [[ -n "$server" && -n "$code" ]] || fail "that setup link is incomplete; copy the whole command from the panel again."
+elif [[ -n "${1:-}" ]]; then
+  server="$1"
+fi
+
 # The server's address, unless this computer is already connected.
-server="${TELEMETRY_SERVER:-${1:-}}"
-if [[ -z "$server" && ! -f "$config" ]]; then
+if [[ -z "$server" ]] && ! connected; then
+  echo "Tip: in the panel, Devices → Add a device shows one command that does all of this."
   echo "The address of your Telemetry server is printed at the end of install-server.sh"
   echo "(and kept in ~/telemetry/setup.txt on the server), such as https://server.your-tailnet.ts.net:8443"
   read -r -p "Telemetry server address: " server </dev/tty
@@ -48,5 +75,5 @@ grep " $script\$" SHA256SUMS | $checksum -c --quiet -
 echo "$script from $tag verified"
 
 # Strangers have no relay: an empty TELEMETRY_RELAY skips its question.
-export TELEMETRY_REPO="$repo" TELEMETRY_SERVER="$server" TELEMETRY_RELAY="${TELEMETRY_RELAY-}"
+export TELEMETRY_REPO="$repo" TELEMETRY_SERVER="$server" TELEMETRY_CODE="$code" TELEMETRY_RELAY="${TELEMETRY_RELAY-}" TELEMETRY_RELAY_KEY="${TELEMETRY_RELAY_KEY-}"
 "$shell" "$work/$script"

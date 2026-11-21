@@ -35,7 +35,9 @@ if [[ -z "$relay" && -f "$job" ]]; then
     esac
   done
 fi
-if [[ ! -f "$config" && -z "$server" ]]; then
+# Connected means a pairing the server approved; a half-finished one is redone.
+connected() { [[ -f "$config" ]] && grep -q '"approved":true' "$config"; }
+if ! connected && [[ -z "$server" ]]; then
   server=$(ask "Telemetry server address (https://…:8443)")
 fi
 # A relay is optional (devices reach the server over Tailscale without one);
@@ -77,9 +79,15 @@ mv new/extension "$root/extension"
 install -m 755 telemetry-update-macos.sh "$root/bin/telemetry-update"
 collector="$desktop/Contents/MacOS/telemetry-desktop"
 
-if [[ ! -f "$config" ]]; then
-  say "Connecting this Mac: open the link and approve it in the panel"
-  "$collector" login -server "$server" -config "$config"
+if ! connected; then
+  login=(login -server "$server" -config "$config")
+  if [[ -n "${TELEMETRY_CODE:-}" ]]; then
+    say "Connecting this Mac with the setup code"
+    login+=(-code "$TELEMETRY_CODE")
+  else
+    say "Connecting this Mac: click Connect on the banner in the panel"
+  fi
+  "$collector" $login
 fi
 [[ -z "$server" ]] || defaults write cyou.rime.telemetry.panel PanelAddress "$server/panel/"
 

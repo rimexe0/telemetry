@@ -37,11 +37,18 @@ install -m 644 telemetry-extension.crx "$dir/extension.crx"
 mkdir -p jobs
 tar -xzf telemetry-linux-jobs.tar.gz -C jobs
 
-if [[ ! -f "$dir/device.json" ]]; then
+# Connected means a pairing the server approved; a half-finished one is redone.
+if ! grep -qs '"approved":true' "$dir/device.json"; then
   server="${TELEMETRY_SERVER:-}"
   [[ -n "$server" ]] || read -r -p "Telemetry server address (https://…:8443): " server </dev/tty
-  echo "Connecting this machine: open the link and approve it in the panel"
-  "$dir/telemetry-desktop" login -server "$server" -config "$dir/device.json"
+  login=(login -server "$server" -config "$dir/device.json")
+  if [[ -n "${TELEMETRY_CODE:-}" ]]; then
+    echo "Connecting this machine with the setup code"
+    login+=(-code "$TELEMETRY_CODE")
+  else
+    echo "Connecting this machine: click Connect on the banner in the panel"
+  fi
+  "$dir/telemetry-desktop" "${login[@]}"
 fi
 
 printf 'KIND=collector\nDIR=$HOME/telemetry-collector\nSERVICE=telemetry-collector\n' > "$config_dir/collector.env"

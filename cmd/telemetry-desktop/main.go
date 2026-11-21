@@ -86,11 +86,12 @@ func login(arguments []string) {
 	id := flags.String("device", "", "existing device ID to keep, for example mac-00000001")
 	name := flags.String("name", "", "device name shown in the panel")
 	path := flags.String("config", deviceauth.DefaultPath(), "owner-only device configuration")
+	code := flags.String("code", "", "setup code from the panel (Devices → Add a device); connects without approving again")
 	flags.Parse(arguments)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
-	config, err := (deviceauth.Client{}).Login(ctx, *path, *server, *id, *name, func(address string) {
-		fmt.Printf("Open this link and approve the device:\n%s\n", address)
+	config, err := (deviceauth.Client{}).LoginWithCode(ctx, *path, *server, *id, *name, *code, func(address string) {
+		fmt.Printf("Open the Telemetry panel and click Connect on the \"wants to connect\" banner, or open this link:\n%s\n", address)
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -320,6 +321,17 @@ func run(arguments []string) error {
 					problem = "flush: " + err.Error()
 				} else if client != nil {
 					problem = deliver(ctx, localQueue, *client, *deviceID)
+					if strings.Contains(problem, "device_removed") {
+						// Removed in the panel: say so plainly, and mark the
+						// saved pairing so running the installer again
+						// connects this computer again.
+						problem = "This computer was removed from Telemetry in the panel. Records stay queued here. To connect it again, make a setup code in the panel (Devices → Add a device) and run the command it shows."
+						if *configPath != "" {
+							if err := deviceauth.MarkRemoved(*configPath); err != nil {
+								log.Printf("marking the removed pairing: %v", err)
+							}
+						}
+					}
 				}
 				if problem != lastProblem {
 					if problem == "" {

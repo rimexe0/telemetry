@@ -15,6 +15,9 @@ type Config struct {
 	Secret     string `json:"secret"`
 	PairingID  string `json:"pairing_id,omitempty"`
 	Approved   bool   `json:"approved"`
+	// Removed is set when the server said this device was removed in the
+	// panel; the next login pairs it again.
+	Removed bool `json:"removed,omitempty"`
 }
 
 func DefaultPath() string {
