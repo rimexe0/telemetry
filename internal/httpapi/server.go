@@ -31,13 +31,21 @@ type Config struct {
 	PanelCookieSecure  bool
 	MaxRequestSize     int64
 	// OwnerAuthorized verifies an external owner session. It must reject all other accounts.
-	OwnerAuthorized     func(*http.Request) bool
-	DeviceAuthorized    func(context.Context, string, string) (bool, bool, error)
+	OwnerAuthorized  func(*http.Request) bool
+	DeviceAuthorized func(context.Context, string, string) (bool, bool, error)
 	// DeviceRemoved reports a device that was removed in the panel and still
 	// uses its old key, so it is told so instead of failing quietly.
-	DeviceRemoved func(context.Context, string, string) bool
+	DeviceRemoved       func(context.Context, string, string) bool
 	ClerkPublishableKey string
-	PairingEnabled      bool
+	// PanelTokenEnabled, when set, says whether the panel token may sign the
+	// owner in right now, from the sign-in settings. It also lets the panel
+	// token work beside OwnerAuthorized. When nil, an OwnerAuthorized
+	// configured from the environment turns panel sessions off, as before.
+	PanelTokenEnabled func() bool
+	// ClerkPublishableKeyFunc, when set, replaces ClerkPublishableKey with
+	// the key in force now.
+	ClerkPublishableKeyFunc func() string
+	PairingEnabled          bool
 	// DeviceSessions, when set, lets paired devices open owner panel views.
 	DeviceSessions *DeviceSessions
 	// Changes, when set, wakes devices waiting on /v1/device/now as soon as
@@ -67,7 +75,7 @@ func New(repository store.Repository, config Config) (*Server, error) {
 	server.mux.HandleFunc("GET /healthz", server.health)
 	server.mux.HandleFunc("GET /v1/auth/config", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		writeJSON(w, http.StatusOK, map[string]any{"publishable_key": config.ClerkPublishableKey, "pairing_enabled": config.PairingEnabled})
+		writeJSON(w, http.StatusOK, map[string]any{"publishable_key": server.clerkPublishableKey(), "pairing_enabled": config.PairingEnabled, "panel_token_enabled": server.panelSessionsEnabled()})
 	})
 	server.mux.HandleFunc("POST /v1/ingest/batches", server.ingest)
 	server.mux.HandleFunc("GET /v1/observations", server.observations)
@@ -272,7 +280,25 @@ func (s *Server) ingestAuthorized(request *http.Request, deviceID string) bool {
 	return s.authorized(request, s.config.IngestToken)
 }
 
+func (s *Server) clerkPublishableKey() string {
+	if s.config.ClerkPublishableKeyFunc != nil {
+		return s.config.ClerkPublishableKeyFunc()
+	}
+	return s.config.ClerkPublishableKey
+}
+
+// settingsSignIn reports whether sign-in follows the stored settings rather
+// than an environment Clerk configuration.
+func (s *Server) settingsSignIn() bool { return s.config.PanelTokenEnabled != nil }
+
+func (s *Server) externalOwner(request *http.Request) bool {
+	return s.config.OwnerAuthorized != nil && s.config.OwnerAuthorized(request)
+}
+
 func (s *Server) readAuthorized(request *http.Request) bool {
+	if s.settingsSignIn() {
+		return s.authorized(request, s.config.ReadToken) || s.panelSessionAuthorized(request) || s.externalOwner(request)
+	}
 	if s.config.OwnerAuthorized != nil {
 		return s.authorized(request, s.config.ReadToken) || s.ownerAuthorized(request)
 	}
@@ -280,7 +306,8 @@ func (s *Server) readAuthorized(request *http.Request) bool {
 }
 
 // PanelOwner reports whether the request carries a panel session started with
-// the panel token. It is always false when an external sign-in is configured.
+// the panel token while the panel token is on. It is always false when an
+// external sign-in is configured in the environment.
 func (s *Server) PanelOwner(request *http.Request) bool {
 	return s.panelSessionAuthorized(request)
 }
@@ -291,11 +318,19 @@ func (s *Server) PanelSessionsEnabled() bool {
 }
 
 func (s *Server) panelSessionsEnabled() bool {
+	if s.settingsSignIn() {
+		return s.config.PanelToken != "" && s.config.PanelSessionSecret != "" && s.config.PanelTokenEnabled()
+	}
 	return s.config.OwnerAuthorized == nil && s.config.PanelToken != "" && s.config.PanelSessionSecret != ""
 }
 
 func (s *Server) panelSessionStatus(writer http.ResponseWriter, request *http.Request) {
-	if s.config.OwnerAuthorized != nil {
+	if s.settingsSignIn() && (s.panelSessionsEnabled() || s.clerkPublishableKey() != "") {
+		writer.Header().Set("Cache-Control", "no-store")
+		writeJSON(writer, http.StatusOK, map[string]bool{"authenticated": s.panelSessionAuthorized(request) || s.externalOwner(request)})
+		return
+	}
+	if s.config.OwnerAuthorized != nil && !s.settingsSignIn() {
 		writer.Header().Set("Cache-Control", "no-store")
 		writeJSON(writer, http.StatusOK, map[string]bool{"authenticated": s.ownerAuthorized(request)})
 		return
@@ -339,7 +374,9 @@ func (s *Server) startPanelSession(writer http.ResponseWriter, request *http.Req
 }
 
 func (s *Server) endPanelSession(writer http.ResponseWriter, request *http.Request) {
-	if !s.panelSessionsEnabled() {
+	// With stored settings the cookie can outlive the panel token being on;
+	// signing out still clears it.
+	if !s.panelSessionsEnabled() && !s.settingsSignIn() {
 		writeError(writer, http.StatusNotFound, "panel_unavailable", "panel sessions are not configured")
 		return
 	}

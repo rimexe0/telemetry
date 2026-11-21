@@ -25,6 +25,7 @@ import (
 	"github.com/rimexe0/telemetry/internal/mcpapi"
 	"github.com/rimexe0/telemetry/internal/panelui"
 	"github.com/rimexe0/telemetry/internal/sealed"
+	"github.com/rimexe0/telemetry/internal/signin"
 	"github.com/rimexe0/telemetry/internal/store"
 )
 
@@ -39,6 +40,7 @@ func main() {
 		panelDir          = flag.String("panel-dir", os.Getenv("TELEMETRY_PANEL_DIR"), "SvelteKit static build directory")
 		panelCookieSecure = flag.Bool("panel-cookie-secure", envBool("TELEMETRY_PANEL_COOKIE_SECURE", true), "mark panel session cookies secure")
 		migrate           = flag.Bool("migrate", false, "apply embedded migrations and exit")
+		resetSignIn       = flag.Bool("reset-sign-in", false, "turn panel token sign-in back on in the stored sign-in settings and exit")
 		outreachPreview   = flag.Bool("outreach-preview", false, "print what would be written to the owner now, send nothing, and exit")
 		intentsBackfill   = flag.String("intents-backfill", "", "make the readings of what the owner was trying to do from this date (YYYY-MM-DD, UTC) until now, and exit")
 		relayListen       = flag.String("relay-listen", os.Getenv("TELEMETRY_RELAY_LISTEN"), "listen address for sealed device requests from a relay such as a Cloudflare Tunnel")
@@ -61,6 +63,11 @@ func main() {
 		log.Fatal(err)
 	}
 	defer devices.Close()
+	signInStore, err := signin.OpenStore(context, *databaseURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer signInStore.Close()
 	if *migrate {
 		if err := database.ApplyMigrations(context); err != nil {
 			log.Fatal(err)
@@ -68,7 +75,16 @@ func main() {
 		if err := devices.Migrate(context); err != nil {
 			log.Fatal(err)
 		}
+		if err := signInStore.Migrate(context); err != nil {
+			log.Fatal(err)
+		}
 		fmt.Println("migrations applied")
+		return
+	}
+	if *resetSignIn {
+		if err := runResetSignIn(context, signInStore, os.Stdout, os.Getenv); err != nil {
+			log.Fatal(err)
+		}
 		return
 	}
 	if *outreachPreview {
@@ -114,6 +130,21 @@ func main() {
 			log.Print("Clerk sign-in setup only: owner API access disabled until TELEMETRY_CLERK_OWNER_ID is configured")
 		}
 	}
+	// Without a Clerk configuration in the environment, sign-in follows the
+	// settings the owner keeps in the panel: the panel token, their own Clerk
+	// application, or both, swapped in while the server runs.
+	var signInSettings *signin.Manager
+	if clerkKey == "" {
+		signInSettings, err = signin.NewManager(signInStore, signin.ManagerConfig{PublicURL: publicURL})
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := signInSettings.Reload(context); err != nil {
+			log.Printf("sign-in settings unavailable, using the panel token only: %v (run telemetryd -migrate)", err)
+		}
+		go signInSettings.Watch(context, 15*time.Second)
+		ownerAuthorized = signInSettings.ClerkOwner
+	}
 	// A fresh key per start: the app requests a new device session each time
 	// it opens the panel, so a restart only invalidates open in-app views.
 	deviceSessionKey := make([]byte, 32)
@@ -125,12 +156,17 @@ func main() {
 	// Clerk by whoever signed in with the panel token. Either needs the public
 	// HTTPS origin the devices and the panel use.
 	clerkPairing, panelPairing := pairingMode(clerkKey, ownerID, *panelToken, *panelSecret, publicURL)
+	if signInSettings != nil && publicURL != "" {
+		// The stored settings may turn Clerk on later, so pairing stays
+		// available whenever the server knows its origin.
+		panelPairing = true
+	}
 	if clerkKey == "" && *panelToken != "" && publicURL == "" {
 		log.Print("TELEMETRY_PUBLIC_URL is not set: devices cannot pair until it names this server's HTTPS address")
 	}
 	// Changes wake devices waiting for their next decision.
 	feed := changes.New()
-	server, err := httpapi.New(database, httpapi.Config{
+	serverConfig := httpapi.Config{
 		IngestToken:         *ingestToken,
 		OwnerAuthorized:     ownerAuthorized,
 		DeviceAuthorized:    devices.AuthorizeDevice,
@@ -145,9 +181,21 @@ func main() {
 		PanelToken:          *panelToken,
 		PanelSessionSecret:  *panelSecret,
 		PanelCookieSecure:   *panelCookieSecure,
-	})
+	}
+	if signInSettings != nil {
+		serverConfig.PanelTokenEnabled = signInSettings.PanelTokenEnabled
+		serverConfig.ClerkPublishableKeyFunc = signInSettings.PublishableKey
+	}
+	server, err := httpapi.New(database, serverConfig)
 	if err != nil {
 		log.Fatal(err)
+	}
+	// The owner, for approving devices and changing sign-in: the Clerk owner
+	// from the environment, or, with stored settings, a panel token session
+	// or the linked Clerk account, whichever are on.
+	settingsOwner := ownerAuthorized
+	if signInSettings != nil {
+		settingsOwner = func(r *http.Request) bool { return server.PanelOwner(r) || signInSettings.ClerkOwner(r) }
 	}
 	publicHosts := []string{}
 	if parsed, err := url.Parse(publicURL); err == nil && parsed.Hostname() != "" {
@@ -175,6 +223,9 @@ func main() {
 		if panelPairing {
 			verifyOwner = server.PanelOwner
 		}
+		if signInSettings != nil {
+			verifyOwner = settingsOwner
+		}
 		relayPublic := ""
 		if relayKey != nil {
 			relayPublic = relayKey.Public()
@@ -187,8 +238,25 @@ func main() {
 		router.Handle("/v1/devices", pairing)
 		router.Handle("/v1/devices/", pairing)
 	}
+	signInConfig := signin.HandlerConfig{VerifyOwner: settingsOwner, PublicURL: publicURL, PanelTokenConfigured: *panelToken != "" && *panelSecret != ""}
+	if signInSettings != nil {
+		signInConfig.Manager = signInSettings
+	} else {
+		signInConfig.Environment = &signin.Environment{PublishableKey: clerkKey, Issuer: clerkIssuer, OwnerLinked: ownerID != ""}
+	}
+	signInHandler, err := signin.NewHandler(signInConfig)
+	if err != nil {
+		log.Fatal(err)
+	}
+	router.Handle("/v1/settings/sign-in", signInHandler)
+	router.Handle("/v1/settings/sign-in/", signInHandler)
 	if *panelDir != "" {
-		panel, err := panelui.NewWithClerk(*panelDir, clerkIssuer)
+		var panel http.Handler
+		if signInSettings != nil {
+			panel, err = panelui.NewWithClerkFunc(*panelDir, signInSettings.Issuer)
+		} else {
+			panel, err = panelui.NewWithClerk(*panelDir, clerkIssuer)
+		}
 		if err != nil {
 			log.Fatalf("load panel: %v", err)
 		}

@@ -252,3 +252,32 @@ func TestRejectsPendingAndImpersonatedSessions(t *testing.T) {
 		}
 	}
 }
+
+// Linking an owner account accepts any subject but keeps every other check.
+func TestAnySubjectKeepsIssuerAndPartyChecks(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = writer.Write([]byte(jwksJSON("owner-key", key)))
+	}))
+	defer server.Close()
+	if _, err := New(Config{JWKSURL: server.URL, Issuer: "https://owner.clerk.accounts.dev", AuthorizedParties: []string{"https://telemetry.example"}, OwnerUserID: "user_owner", AnySubject: true}); err == nil {
+		t.Fatal("accepted an owner ID together with any subject")
+	}
+	verifier, err := New(Config{JWKSURL: server.URL, Issuer: "https://owner.clerk.accounts.dev", AuthorizedParties: []string{"https://telemetry.example"}, AnySubject: true, Now: func() time.Time { return time.Unix(1_800_000_000, 0) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims := validClaims(time.Unix(1_800_000_000, 0))
+	claims["sub"] = "user_someone"
+	got, err := verifier.Verify(t.Context(), signToken(t, key, claims))
+	if err != nil || got.Subject != "user_someone" {
+		t.Fatalf("any subject: %+v %v", got, err)
+	}
+	claims["azp"] = "https://attacker.example"
+	if _, err := verifier.Verify(t.Context(), signToken(t, key, claims)); err == nil {
+		t.Fatal("accepted a wrong authorized party")
+	}
+}

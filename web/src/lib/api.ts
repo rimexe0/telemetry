@@ -37,6 +37,8 @@ export type CollectionHealth = {
 export type AuthConfig = {
   publishable_key?: string;
   pairing_enabled?: boolean;
+  /** Whether the panel token signs in; absent on older servers. */
+  panel_token_enabled?: boolean;
 };
 
 export type Device = {
@@ -111,6 +113,39 @@ export async function startPanelSession(token: string): Promise<void> {
 
 export async function endPanelSession(): Promise<void> {
   await request('/v1/panel/session', { method: 'DELETE' });
+}
+
+/** How the owner signs in, from Settings → Sign-in. Nothing here is secret. */
+export type SignInSettings = {
+  managed_by: 'environment' | 'settings';
+  public_url: string;
+  can_change: boolean;
+  blocked?: string;
+  panel_token: { enabled: boolean; configured: boolean };
+  clerk: { enabled: boolean; publishable_key?: string; issuer?: string; linked: boolean; owner_user_id?: string; development: boolean };
+  changes: Array<{ changed_at: string; change: string }>;
+};
+
+const jsonBody = (value: unknown): RequestInit => ({ headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) });
+
+export async function getSignInSettings(): Promise<SignInSettings> {
+  return request<SignInSettings>('/v1/settings/sign-in');
+}
+
+export async function setSignInMethods(panelTokenEnabled: boolean, clerkEnabled: boolean): Promise<SignInSettings> {
+  return request<SignInSettings>('/v1/settings/sign-in', { method: 'PUT', ...jsonBody({ panel_token_enabled: panelTokenEnabled, clerk_enabled: clerkEnabled }) });
+}
+
+export async function setClerkKey(publishableKey: string): Promise<SignInSettings> {
+  return request<SignInSettings>('/v1/settings/sign-in/clerk', { method: 'PUT', ...jsonBody({ publishable_key: publishableKey }) });
+}
+
+export async function linkClerk(sessionToken: string): Promise<SignInSettings> {
+  return request<SignInSettings>('/v1/settings/sign-in/clerk/link', { method: 'POST', ...jsonBody({ session_token: sessionToken }) });
+}
+
+export async function unlinkClerk(): Promise<SignInSettings> {
+  return request<SignInSettings>('/v1/settings/sign-in/clerk/unlink', { method: 'POST', ...jsonBody({}) });
 }
 
 export async function listDevices(): Promise<Device[]> {

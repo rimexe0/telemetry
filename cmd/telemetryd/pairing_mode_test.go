@@ -4,9 +4,9 @@ import "testing"
 
 func TestPairingMode(t *testing.T) {
 	for _, tc := range []struct {
-		name                                         string
+		name                                        string
 		clerkKey, ownerID, token, secret, publicURL string
-		clerk, panel                                 bool
+		clerk, panel                                bool
 	}{
 		{"clerk owner", "pk_test_x", "user_1", "", "", "https://t.example", true, false},
 		{"clerk without owner", "pk_test_x", "", "", "", "https://t.example", false, false},

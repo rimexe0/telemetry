@@ -1,10 +1,11 @@
 package main
 
 import (
-	"encoding/base64"
 	"errors"
 	"net/url"
 	"strings"
+
+	"github.com/rimexe0/telemetry/internal/signin"
 )
 
 // Clerk is opt-in and single-owner. Empty owner ID permits only sign-in setup;
@@ -16,15 +17,10 @@ func validateClerkConfig(key, issuer, origin string) error {
 		}
 		return nil
 	}
-	encoded := strings.TrimPrefix(strings.TrimPrefix(key, "pk_test_"), "pk_live_")
-	if encoded == key {
-		return errors.New("invalid Clerk publishable key prefix")
+	host, err := signin.FrontendHost(key)
+	if err != nil {
+		return err
 	}
-	raw, err := base64.RawStdEncoding.DecodeString(strings.TrimRight(encoded, "="))
-	if err != nil || !strings.HasSuffix(string(raw), "$") {
-		return errors.New("invalid Clerk publishable key")
-	}
-	host := strings.TrimSuffix(string(raw), "$")
 	if issuer != "https://"+host {
 		return errors.New("Clerk issuer must match publishable key frontend host")
 	}
