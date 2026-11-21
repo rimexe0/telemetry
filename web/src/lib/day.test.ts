@@ -73,3 +73,13 @@ test('event list flattens lanes newest first and keeps the lane name', async () 
     expect(rows.map(row => `${row.lane}:${row.segment.label}`)).toEqual(['Computer:Browser', 'Phone:Chat', 'Computer:Editor']);
     expect(eventRows([{ name: 'Phone', note: '', segments: [segment(2, 'b'), segment(1, 'a')] }], 'oldest').map(row => row.segment.label)).toEqual(['a', 'b']);
 });
+
+test('a day that starts at the wake time runs 24 hours from it',()=>{
+ const before=aw('window',at('08:00'),at('09:00'),{app:'Night'});
+ const after=aw('window',at('11:00'),at('12:00'),{app:'Morning'});
+ const late=aw('window','2026-09-08T09:00:00+03:00','2026-09-08T10:30:00+03:00',{app:'Next morning'});
+ const d=deriveDay([before,after,late],[],'2026-09-07',Date.parse(at('10:00')));
+ expect(d.apps.map(a=>a.name)).toEqual(['Morning','Next morning']);
+ const late2=d.lanes.find(l=>l.name.startsWith('Computer'))!.segments.at(-1)!;
+ expect(late2.end).toBe(Date.parse('2026-09-08T10:00:00+03:00'));
+});

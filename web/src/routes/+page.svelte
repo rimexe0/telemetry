@@ -2,6 +2,7 @@
   import AddDevice from '$lib/AddDevice.svelte';
   import '$lib/controls.css';
   import { onDestroy, onMount } from 'svelte';
+  import { replaceState } from '$app/navigation';
   import TimeSeries from '$lib/TimeSeries.svelte';
   import HealthHistory from '$lib/HealthHistory.svelte';
   import DayTimeline from '$lib/DayTimeline.svelte';
@@ -23,6 +24,7 @@
     createActivity,
     endPanelSession,
     getAuthConfig,
+    getWakeTime,
     getCurrentAlignment,
     getCurrentAttendedExecutionSession,
     getCurrentPrimaryExecutionSession,
@@ -73,6 +75,24 @@
   const snapshotMode = import.meta.env.VITE_TELEMETRY_SNAPSHOT === '1';
   let view: 'now' | 'activity' | 'day' | 'plan' | 'rules' | 'health' | 'collection' | 'devices' | 'sign-in' = 'now';
   let selectedDay = dayKey(Date.now());
+  // Where the Day timeline starts: when you woke that day, else midnight.
+  let dayWindowStart: number | undefined;
+
+  // The open tab, and the day for Day and Plan, live in the address
+  // (#day/2026-11-19), so a refresh comes back to the same place.
+  const viewNames = ['now', 'activity', 'day', 'plan', 'rules', 'health', 'collection', 'devices', 'sign-in'];
+  let locationReady = false;
+  function readLocation(): void {
+    const [name, day] = window.location.hash.slice(1).split('/');
+    if (viewNames.includes(name)) view = name as typeof view;
+    if ((name === 'day' || name === 'plan') && /^\d{4}-\d{2}-\d{2}$/.test(day ?? '') && day <= dayKey(Date.now())) selectedDay = day;
+  }
+  function writeLocation(current: string, day: string): void {
+    const hash = `#${current}${(current === 'day' || current === 'plan') && day !== dayKey(Date.now()) ? `/${day}` : ''}`;
+    if (window.location.hash === hash) return;
+    try { replaceState(`${window.location.pathname}${window.location.search}${hash}`, {}); } catch {}
+  }
+  $: if (locationReady) writeLocation(view, selectedDay);
   let dayObservations: Observation[] = [];
   let dayLoading = false;
   let dayError = '';
@@ -621,11 +641,23 @@
       const requestedDay = selectedDay;
       const lo = dayStart(requestedDay);
       if (!Number.isFinite(lo)) throw new Error('Choose a valid date.');
-      const from = new Date(lo - 86_400_000);
-      const to = new Date(Math.min(lo + 86_400_000, Date.now()));
-      if (to.getTime() <= lo) throw new Error('Choose today or an earlier day.');
-      const available = sources.filter(s => ['activitywatch', 'health_connect', 'android_usage'].includes(s.source_kind));
-      if (available.length > 16) throw new Error('This view supports up to 16 sources. Source selection is needed for larger installations.');
+      if (lo >= Date.now()) throw new Error('Choose today or an earlier day.');
+      // The day starts when you woke, not at midnight: the server finds the
+      // end of the last long quiet stretch before 18:00 that day.
+      const wake = await getWakeTime(new Date(Math.min(lo + 18 * 3_600_000, Date.now())), request.signal).catch(() => null);
+      const wakeAt = wake ? Date.parse(wake) : NaN;
+      dayWindowStart = Number.isFinite(wakeAt) && wakeAt >= lo - 6 * 3_600_000 && wakeAt < lo + 18 * 3_600_000 ? wakeAt : lo;
+      const start = dayWindowStart;
+      const from = new Date(start - 6 * 3_600_000);
+      const to = new Date(Math.min(start + 86_400_000, Date.now()));
+      // Only sources that sent anything since the window began: old phones
+      // and one-off imports would otherwise crowd out the ones in use.
+      const kinds = ['activitywatch', 'health_connect', 'android_usage'];
+      const candidates = sources
+        .filter(s => kinds.includes(s.source_kind) && (!s.last_collected_at || Date.parse(s.last_collected_at) >= from.getTime()))
+        .sort((a, b) => Date.parse(b.last_collected_at ?? '') - Date.parse(a.last_collected_at ?? ''));
+      const available = candidates.slice(0, 16);
+      const skipped = candidates.length - available.length;
       const sourceKeys = available.map(source => source.source_instance_key);
       const cached = force ? undefined : cachedHistory(requestedDay, sourceKeys, from.getTime(), to.getTime());
       if (cached) {
@@ -644,7 +676,8 @@
       if (request.signal.aborted || !authenticated || selectedDay !== requestedDay) return;
       dayObservations = rows;
       saveHistory(requestedDay, sourceKeys, from.getTime(), to.getTime(), rows);
-      dayStatus = `Loaded ${rows.length.toLocaleString()} records for ${requestedDay} at ${date(new Date().toISOString())}. UTC+03:00. Gaps mean unknown activity.`;
+      const began = start === lo ? 'Starts at midnight: no wake time was found.' : `Starts when you woke, at ${new Date(start).toLocaleTimeString('en-GB', { timeZone: 'Europe/Istanbul', hour: '2-digit', minute: '2-digit' })}.`;
+      dayStatus = `Loaded ${rows.length.toLocaleString()} records for ${requestedDay} at ${date(new Date().toISOString())}. ${began} UTC+03:00. Gaps mean unknown activity.${skipped > 0 ? ` ${skipped} less active source${skipped === 1 ? ' was' : 's were'} left out.` : ''}`;
     } catch (cause) {
       if (request.signal.aborted) return;
       const detail = cause instanceof Error ? cause.message.replace(/ No partial totals are shown\.$/, '') : 'Unable to load the day.';
@@ -740,6 +773,8 @@
     themeQuery = window.matchMedia('(prefers-color-scheme: dark)');
     themeQuery.addEventListener('change', applyTheme);
     applyTheme();
+    readLocation();
+    locationReady = true;
     try {
       pairingId = new URLSearchParams(window.location.search).get('pair') ?? '';
       try {
@@ -890,7 +925,7 @@
       <ActivityView date={selectedDay} />
     {:else if view === 'day'}
       {#if error}<p class="error" role="alert">{error}</p>{/if}
-      <DayTimeline observations={dayObservations} {sources} bind:date={selectedDay} loading={dayLoading} error={dayError || error} status={dayStatus} ondatechange={refresh} onrefresh={() => refresh(true)} oninspect={(o) => selectedObservation = o} />
+      <DayTimeline observations={dayObservations} {sources} start={dayWindowStart} bind:date={selectedDay} loading={dayLoading} error={dayError || error} status={dayStatus} ondatechange={refresh} onrefresh={() => refresh(true)} oninspect={(o) => selectedObservation = o} />
     {:else if view === 'health'}
       <div class="health-toolbar">
         {#if healthSources.length > 1}

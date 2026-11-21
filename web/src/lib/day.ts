@@ -48,8 +48,9 @@ export function partitionSegments(rows:DaySegment[]):DaySegment[] {
 }
 const packageName=(p:string)=>({'org.mozilla.firefox':'Firefox','tw.nekomimi.nekogram':'Nekogram','com.ichi2.anki':'Anki','com.android.settings':'Settings','com.google.android.apps.nexuslauncher':'Launcher','com.openai.chatgpt':'ChatGPT','com.google.android.apps.tasks':'Google Tasks','com.opennutritracker.ont.opennutritracker':'OpenNutriTracker','com.sec.android.app.shealth':'Samsung Health','com.android.chrome':'Chrome','com.google.android.calendar':'Calendar','com.google.android.apps.wellbeing':'Digital Wellbeing'}[p] ?? p);
 
-export function deriveDay(observations:Observation[],sources:SourceSummary[],date:string) {
- const lo=dayStart(date),hi=lo+dayLength;
+export function deriveDay(observations:Observation[],sources:SourceSummary[],date:string,start?:number) {
+ // The day runs 24 hours from when you woke, or from midnight.
+ const lo=start!==undefined&&Number.isFinite(start)?start:dayStart(date),hi=lo+dayLength;
  const lanes:Lane[]=[],chapters:DaySegment[]=[],facts:string[]=[],warnings:string[]=[];
  const appTimes=new Map<string,number>();
  if(!Number.isFinite(lo))return {lanes,chapters,apps:[],facts,warnings:['Choose a valid day.']};

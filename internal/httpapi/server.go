@@ -79,6 +79,7 @@ func New(repository store.Repository, config Config) (*Server, error) {
 	})
 	server.mux.HandleFunc("POST /v1/ingest/batches", server.ingest)
 	server.mux.HandleFunc("GET /v1/observations", server.observations)
+	server.mux.HandleFunc("GET /v1/activity/wake", server.wakeTime)
 	server.mux.HandleFunc("GET /v1/sources", server.sources)
 	server.mux.HandleFunc("GET /v1/collection/health", server.collectionHealth)
 	server.mux.HandleFunc("GET /v1/panel/session", server.panelSessionStatus)

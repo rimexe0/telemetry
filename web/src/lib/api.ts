@@ -914,3 +914,10 @@ export async function getPairingSettings(): Promise<PairingSettings> {
 export async function savePairingSettings(relayURL: string): Promise<PairingSettings> {
   return request<PairingSettings>('/v1/pairing/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ relay_url: relayURL }) });
 }
+
+// When the owner last woke before `at`: the end of the last long quiet
+// stretch across all devices. Null when the server finds none.
+export async function getWakeTime(at: Date, signal?: AbortSignal): Promise<string | null> {
+  const result = await request<{ wake_at: string | null }>(`/v1/activity/wake?at=${encodeURIComponent(at.toISOString())}`, { signal });
+  return result.wake_at ?? null;
+}

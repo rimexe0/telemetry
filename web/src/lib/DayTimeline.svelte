@@ -9,6 +9,8 @@
   export let observations: Observation[] = [];
   export let sources: SourceSummary[] = [];
   export let date = '';
+  // When the shown day starts (ms): when you woke. Midnight when unset.
+  export let start: number | undefined = undefined;
   export let loading = false;
   export let error = '';
   export let status = '';
@@ -63,8 +65,9 @@
 
 
   $: displayedDateTitle = dateTitle(date);
-  $: model = deriveDay(observations, sources, date) as DayModel;
-  $: dayStart = Date.parse(`${date}T00:00:00+03:00`);
+  $: midnight = Date.parse(`${date}T00:00:00+03:00`);
+  $: dayStart = start !== undefined && Number.isFinite(start) && Math.abs(start - midnight) < dayLength ? start : midnight;
+  $: model = deriveDay(observations, sources, date, dayStart) as DayModel;
   $: dayEnd = dayStart + dayLength;
   $: if (date !== previousDate) {
     previousDate = date;
@@ -104,14 +107,16 @@
   function hourTicks(dayLo: number, lo: number, hi: number, zoom: number) {
     if (!Number.isFinite(dayLo)) return [] as number[];
     const step = zoom <= 1/60 ? 15_000 : zoom <= 5/60 ? 60_000 : zoom <= 0.25 ? 300_000 : zoom <= 1 ? 15 * 60_000 : zoom <= 3 ? 30 * 60_000 : zoom <= 6 ? hour : zoom <= 12 ? 2 * hour : 4 * hour;
-    const first = dayLo + Math.ceil((lo - dayLo) / step) * step;
+    // On whole local hours (UTC+03:00), whenever the day starts.
+    const offset = 3 * hour;
+    const first = Math.ceil((lo + offset) / step) * step - offset;
     const ticks: number[] = [];
     for (let value = first; value <= hi + 1; value += step) ticks.push(value);
     return ticks;
   }
 
   function tickLabel(time: number) {
-    if(time === dayEnd) return '24:00';
+    if(time === dayEnd && dayStart === midnight) return '24:00';
     return new Date(time).toLocaleTimeString('en-GB', { timeZone: 'Europe/Istanbul', hour: '2-digit', minute: '2-digit', ...(zoomHours <= 5/60 ? {second:'2-digit' as const} : {}) });
   }
 
@@ -437,7 +442,7 @@
                 <rect class="brush-handle" data-edge={edge} x={clamp((value-dayStart)/dayLength*1000-(edge==='start'?10:0),0,990)} y="0" width="10" height="42" tabindex="0" role="slider" aria-label={edge==='start'?'Range start':'Range end'} aria-valuemin="0" aria-valuemax="24" aria-valuenow={(value-dayStart)/hour} aria-valuetext={tickLabel(value)} on:keydown={(event)=>brushKey(event,edge as 'start'|'end')} />
               {/each}
             </svg>
-            <div class="overview-times"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div>
+            <div class="overview-times">{#each [0, 6, 12, 18, 24] as offset}<span>{offset === 24 && dayStart === midnight ? '24:00' : clock(dayStart + offset * hour)}</span>{/each}</div>
           </div>
 
         </div>
