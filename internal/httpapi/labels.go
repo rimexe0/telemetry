@@ -216,7 +216,7 @@ func (s *Server) deviceDay(writer http.ResponseWriter, request *http.Request) {
 	if at.After(now) {
 		at = now
 	}
-	if wake, err := store.LoadWakeTime(ctx, s.repository, at); err == nil && wake != nil && !wake.Before(from.Add(-6*time.Hour)) && wake.Before(from.Add(18*time.Hour)) {
+	if wake, err := store.LoadShownWakeTime(ctx, s.repository, at); err == nil && wake != nil && !wake.Before(from.Add(-6*time.Hour)) && wake.Before(from.Add(18*time.Hour)) {
 		woke = wake
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{

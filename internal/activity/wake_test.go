@@ -23,6 +23,11 @@ func TestWakeTimeIsTheFirstUseAfterALongQuietStretch(t *testing.T) {
 	if got := WakeTime(result, at(1, 18, 0), at(2, 14, 0)); got != nil {
 		t.Fatalf("missing data must not be read as sleep: %v", got)
 	}
+	// For showing the day, the quiet stretch on the devices that did record
+	// is enough: the computer was used until 01:30, then nothing until 08:26.
+	if got := ShownWakeTime(result, at(1, 18, 0), at(2, 14, 0)); got == nil || !got.Equal(at(2, 8, 26)) {
+		t.Fatalf("shown wake without phone data = %v", got)
+	}
 	// A glance at 07:00 in the night is part of sleep; waking is at 09:01,
 	// once the use goes on.
 	night := []Segment{phone(at(5, 22, 0), at(6, 1, 0)), phone(at(6, 7, 0), at(6, 7, 0).Add(5*time.Second)), phone(at(6, 9, 1), at(6, 9, 1).Add(20*time.Second))}

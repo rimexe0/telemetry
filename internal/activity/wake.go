@@ -27,13 +27,25 @@ const WakeLookback = 20 * time.Hour
 // when the quiet stretch is one the phone has no data for: a collector that
 // was off is not a person asleep.
 func WakeTime(result Result, from, to time.Time) *time.Time {
+	return wakeTime(result, true)
+}
+
+// ShownWakeTime is WakeTime for showing a day, not for acting on it: a quiet
+// stretch on the devices that did record is enough, even when the phone was
+// not recording (after a format, say). Morning rules and messages keep using
+// WakeTime, so a stopped phone collector never opens the morning.
+func ShownWakeTime(result Result, from, to time.Time) *time.Time {
+	return wakeTime(result, false)
+}
+
+func wakeTime(result Result, needPhone bool) *time.Time {
 	segments := append([]Segment(nil), result.Segments...)
 	sort.SliceStable(segments, func(i, j int) bool { return segments[i].Start.Before(segments[j].Start) })
 	var wake *time.Time
 	// What came before the first record is not known, so it is not a quiet stretch.
 	var quiet time.Time
 	for index, segment := range segments {
-		if index > 0 && segment.Start.Sub(quiet) >= sleepGap && !missing(result.Gaps, quiet, segment.Start) {
+		if index > 0 && segment.Start.Sub(quiet) >= sleepGap && (!needPhone || !missing(result.Gaps, quiet, segment.Start)) {
 			if !sustained(segments[index:], segment.Start) {
 				// A glance: the quiet stretch goes on.
 				continue

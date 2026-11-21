@@ -8,7 +8,7 @@ import (
 )
 
 // wakeTime answers when the owner last woke before ?at= (RFC 3339): the end
-// of the last long quiet stretch across all devices, as morning rules use it.
+// of the last long quiet stretch on the devices that recorded.
 // The panel's day timeline starts there instead of at midnight. wake_at is
 // null when no such stretch is found.
 func (s *Server) wakeTime(writer http.ResponseWriter, request *http.Request) {
@@ -27,7 +27,7 @@ func (s *Server) wakeTime(writer http.ResponseWriter, request *http.Request) {
 			at = parsed.UTC()
 		}
 	}
-	wake, err := store.LoadWakeTime(request.Context(), s.repository, at)
+	wake, err := store.LoadShownWakeTime(request.Context(), s.repository, at)
 	if err != nil {
 		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
 		return

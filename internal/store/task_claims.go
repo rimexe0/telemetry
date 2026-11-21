@@ -69,6 +69,17 @@ func LoadWakeTime(ctx context.Context, repository Repository, at time.Time) (*ti
 	return activity.WakeTime(activity.Build(records, from, at), from, at), nil
 }
 
+// LoadShownWakeTime is LoadWakeTime for showing a day: see
+// activity.ShownWakeTime.
+func LoadShownWakeTime(ctx context.Context, repository Repository, at time.Time) (*time.Time, error) {
+	from := at.Add(-activity.WakeLookback)
+	records, _, err := repository.ActivityRecords(ctx, from, at)
+	if err != nil {
+		return nil, err
+	}
+	return activity.ShownWakeTime(activity.Build(records, from, at), from, at), nil
+}
+
 func LoadDayInput(ctx context.Context, repository Repository, planDate, from, to time.Time, withSegments bool) (activity.DayInput, *Plan, error) {
 	return loadDayInput(ctx, repository, planDate, from, to, withSegments, true)
 }
