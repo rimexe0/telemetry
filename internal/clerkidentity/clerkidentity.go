@@ -49,17 +49,23 @@ type Config struct {
 	Issuer            string
 	AuthorizedParties []string
 	OwnerUserID       string
-	Audience          string
-	HTTPClient        *http.Client
-	JWKSCacheTTL      time.Duration
-	JWKSFetchTimeout  time.Duration
-	UnknownKeyRetry   time.Duration
-	ClockSkew         time.Duration
-	Now               func() time.Time
+	// AnySubject accepts a token for any Clerk user instead of OwnerUserID.
+	// It exists only to link an owner account: the caller verifies one fresh
+	// token from a signed-in owner session and stores its subject. It must
+	// never authorize data access.
+	AnySubject       bool
+	Audience         string
+	HTTPClient       *http.Client
+	JWKSCacheTTL     time.Duration
+	JWKSFetchTimeout time.Duration
+	UnknownKeyRetry  time.Duration
+	ClockSkew        time.Duration
+	Now              func() time.Time
 }
 
 // Claims contains the verified identity and the standard time claims used by
-// the verifier. Subject is guaranteed to equal Config.OwnerUserID.
+// the verifier. Subject is guaranteed to equal Config.OwnerUserID unless the
+// verifier was built with AnySubject.
 type Claims struct {
 	Subject         string
 	Issuer          string
@@ -98,7 +104,10 @@ func New(config Config) (*Verifier, error) {
 	if strings.TrimSpace(config.Issuer) == "" {
 		return nil, errors.New("issuer is required")
 	}
-	if strings.TrimSpace(config.OwnerUserID) == "" {
+	if config.AnySubject && config.OwnerUserID != "" {
+		return nil, errors.New("owner user id and any subject are exclusive")
+	}
+	if !config.AnySubject && strings.TrimSpace(config.OwnerUserID) == "" {
 		return nil, errors.New("owner user id is required")
 	}
 	if len(config.AuthorizedParties) == 0 {
@@ -223,7 +232,7 @@ func (v *Verifier) parseClaims(payload []byte, keyID string) (Claims, error) {
 		return Claims{}, ErrInvalidToken
 	}
 	subject, err := stringClaim("sub", true)
-	if err != nil || !sameString(subject, v.config.OwnerUserID) {
+	if err != nil || (!v.config.AnySubject && !sameString(subject, v.config.OwnerUserID)) {
 		return Claims{}, ErrInvalidToken
 	}
 	issuer, err := stringClaim("iss", true)

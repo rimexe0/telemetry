@@ -11,6 +11,7 @@
   import Openings from '$lib/Openings.svelte';
   import RulesView from '$lib/RulesView.svelte';
   import ActivityView from '$lib/ActivityView.svelte';
+  import SignInSettings from '$lib/SignInSettings.svelte';
   import { performNowAction, type NowAction, type NowSnapshot, type NowView } from '$lib/execution';
   import { dayKey, dayStart } from '$lib/health';
   import { clearClerk, loadClerk, type ClerkClient } from '$lib/clerk';
@@ -69,7 +70,7 @@
 
   const fixtureMode = import.meta.env.VITE_TELEMETRY_FIXTURE === '1';
   const snapshotMode = import.meta.env.VITE_TELEMETRY_SNAPSHOT === '1';
-  let view: 'now' | 'activity' | 'day' | 'plan' | 'rules' | 'health' | 'collection' | 'devices' = 'now';
+  let view: 'now' | 'activity' | 'day' | 'plan' | 'rules' | 'health' | 'collection' | 'devices' | 'sign-in' = 'now';
   let selectedDay = dayKey(Date.now());
   let dayObservations: Observation[] = [];
   let dayLoading = false;
@@ -110,7 +111,7 @@
   let authenticated = false;
   let checkingSession = true;
   let loading = false;
-  let loadingView: 'now' | 'activity' | 'day' | 'plan' | 'rules' | 'health' | 'collection' | 'devices' | undefined;
+  let loadingView: 'now' | 'activity' | 'day' | 'plan' | 'rules' | 'health' | 'collection' | 'devices' | 'sign-in' | undefined;
   let refreshQueued = false;
   let refreshQueuedForceDay = false;
   let error = '';
@@ -831,11 +832,17 @@
           {:else}<p class="error" role="alert">{pairingError || 'Pairing session unavailable.'}</p>{/if}
           {#if pairingError && pairing}<p class="error" role="alert">{pairingError}</p>{/if}
         </div>
-      {:else if authConfig?.publishable_key && clerk}
+      {:else if authConfig?.publishable_key && clerk && !authConfig.panel_token_enabled}
         <button type="button" on:click={signInWithClerk} disabled={clerkLoading}>{clerkLoading ? 'Loading Clerk…' : 'Sign in with Clerk'}</button>
         {#if clerkAccessBlocked && clerkUserId}<p class="access-note">Signed in as <code>{clerkUserId}</code></p>{/if}
         {#if clerkError}<p class="error" role="alert">{clerkError}</p>{/if}
       {:else}
+        {#if authConfig?.publishable_key && clerk}
+          <button type="button" on:click={signInWithClerk} disabled={clerkLoading}>{clerkLoading ? 'Loading Clerk…' : 'Sign in with Clerk'}</button>
+          {#if clerkAccessBlocked && clerkUserId}<p class="access-note">Signed in as <code>{clerkUserId}</code></p>{/if}
+          {#if clerkError}<p class="error" role="alert">{clerkError}</p>{/if}
+          <p class="access-note">or with the panel token</p>
+        {/if}
         <form on:submit|preventDefault={signIn}>
           <label for="panel-token">Panel token</label>
           <input id="panel-token" bind:value={token} type="password" autocomplete="current-password" required />
@@ -854,6 +861,7 @@
       <button class:active={view === 'health'} aria-pressed={view === 'health'} on:click={() => { view = 'health'; void refresh(); }}>Health</button>
       <button class:active={view === 'collection'} aria-pressed={view === 'collection'} on:click={() => { view = 'collection'; void refresh(); }}>Sources</button>
       <button class:active={view === 'devices'} aria-pressed={view === 'devices'} on:click={() => { view = 'devices'; void refresh(); }}>Devices</button>
+      <button class:active={view === 'sign-in'} aria-pressed={view === 'sign-in'} on:click={() => { view = 'sign-in'; }}>Sign-in</button>
     </nav>
     {#each pendingPairings as item (item.pairing_id)}
       <section class="pairing" aria-label="Device waiting to connect">
@@ -900,6 +908,8 @@
         oncreateactivity={handleCreateActivity} onupdateactivity={handleUpdateActivity} />
     {:else if view === 'rules'}
       <RulesView {activities} {planningSettings} onupdatesettings={handleUpdatePlanningSettings} onleave={() => { view = 'now'; void refresh(); }} />
+    {:else if view === 'sign-in'}
+      <SignInSettings />
     {:else if view === 'devices'}
       <section class="devices" aria-labelledby="devices-heading">
         <div class="section-title"><h2 id="devices-heading">Devices</h2><button class="quiet-button" on:click={refreshDevices} disabled={devicesLoading}>{devicesLoading ? 'Refreshing…' : 'Refresh'}</button></div>
