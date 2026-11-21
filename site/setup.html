@@ -79,6 +79,9 @@
     <section id="before" class="deck">
       <article class="card wide reveal" data-hue="Before you start">
         <div class="card-head"><h2>Before you start</h2><span class="num">00</span></div>
+        <div class="selfhost">
+          <p><strong>You host everything yourself.</strong> Telemetry isn't a service: there's no account to make, no cloud, and nobody else holding your data. The server runs on a machine you control, and your devices talk only to it. This website is a static page and never sees your data or your setup codes.</p>
+        </div>
         <p>Plan on about 15 minutes. Here's what you need:</p>
         <table class="table body">
           <thead><tr><th>What</th><th>Why</th></tr></thead>
@@ -154,6 +157,11 @@
             <h3>Open the panel</h3>
             <p>Open the panel address on any device in your tailnet and paste the token. The panel stays empty until a device reports in.</p>
           </li>
+          <li class="body">
+            <h3>Pick how you sign in (optional)</h3>
+            <p>The panel token works on its own. If you'd rather sign in with an account, open <b>Sign-in</b> in the panel and bring your own <a href="https://clerk.com">Clerk</a> keys: make a free Clerk application, paste its <b>Publishable key</b> (the one starting with <code>pk_</code>, never the secret key), sign in once to link your account, and turn Clerk on. A Development key is enough for one person. Clerk only sees your sign-ins, never what Telemetry records.</p>
+            <p class="aside">Locked out? <code>telemetryd -reset-sign-in</code> on the server turns the panel token back on.</p>
+          </li>
         </ol>
       </article>
     </section>
@@ -163,16 +171,16 @@
         <div class="card-head"><h2>2 · Your computers</h2><span class="num">02</span></div>
         <ol class="steps">
           <li class="body">
-            <h3>Run the installer</h3>
+            <h3>Make a setup code</h3>
+            <p>In the panel, open <b>Devices → Add a device</b>. It shows a one-time setup code and a command for each computer with the code built in. Copy the one for this computer and run it. The computer connects straight away: there's nothing to approve afterwards. Each code works once, for an hour.</p>
+          </li>
+          <li class="body">
+            <h3>Or run the installer without a code</h3>
             <p>On each Mac:</p>
             <div class="code"><pre><span class="prompt">$ </span><span data-copy>curl -fsSL https://te.rime.cyou/i/mac | bash</span></pre></div>
             <p>On each Linux PC:</p>
             <div class="code"><pre><span class="prompt">$ </span><span data-copy>curl -fsSL https://te.rime.cyou/i/linux | bash</span></pre></div>
-            <p class="aside">Paste the server address when it asks, or set <code>TELEMETRY_SERVER=</code> before running it. It checks the release signature, installs the collector as a background service and keeps it updated from then on.</p>
-          </li>
-          <li class="body">
-            <h3>Approve the device</h3>
-            <p>The panel shows a banner saying <b>"… wants to connect"</b>. Click <b>Connect</b>. Each device gets its own key, and you can revoke it under <b>Devices</b> at any time.</p>
+            <p class="aside">Paste the server address when it asks, or set <code>TELEMETRY_SERVER=</code> before running it. Then click <b>Connect</b> on the <b>"… wants to connect"</b> banner in the panel. Either way, it checks the release signature, installs the collector as a background service and keeps it updated from then on. Each device gets its own key, and you can remove it under <b>Devices</b> at any time.</p>
           </li>
           <li class="body">
             <h3>Mac only: two permissions</h3>
@@ -189,14 +197,15 @@
         <ol class="steps">
           <li class="body">
             <h3>Install the app</h3>
-            <p>Install Tailscale from the Play Store and sign in. Then download the Telemetry APK on the phone and open it. Android will ask you to allow installs from your browser once.</p>
-            <p>On the phone, open <a href="i/android/"><code>te.rime.cyou/i/android</code></a>. It offers <b>Open in Obtainium</b>, which installs the app and keeps it updated, or the plain APK.</p>
+            <p>Install Tailscale from the Play Store and sign in. Then, in the panel on your computer, open <b>Devices → Add a device</b> and scan its QR code with the phone's camera. The page it opens offers the app if it isn't installed yet, then opens it with the code.</p>
+            <p>To get the app first: on the phone, open <a href="i/android/"><code>te.rime.cyou/i/android</code></a>. It offers <b>Open in Obtainium</b>, which installs the app and keeps it updated, or the plain APK. Android asks once to allow installs from your browser.</p>
             <div class="links"><a class="btn" href="i/obtainium/">open in Obtainium</a> <a class="btn white" href="https://github.com/rimexe0/telemetry/releases/latest/download/telemetry-phone.apk">download the APK</a></div>
           </li>
           <li class="body">
             <img class="phone-shot" src="img/phone-setup.jpg" width="600" height="667" alt="The Telemetry phone app on step 1 of 12, Connect this phone, with a server address typed in and a Connect button.">
             <h3>Pair it</h3>
-            <p>Open the app, type your server address (the same <code>https://…</code> one the server printed) and tap <b>Connect</b>. Then click <b>Connect</b> on the "wants to connect" banner in the panel.</p>
+            <p>Scanning the QR fills everything in and connects at once. Without the QR, type your server address and the setup code from the panel into the app and tap <b>Connect</b>. If you leave the code empty, click <b>Connect</b> on the "wants to connect" banner in the panel instead.</p>
+            <p class="aside">If something goes wrong, the app says what: a wrong or used code, a server that can't be reached, or Tailscale being off.</p>
           </li>
           <li class="body">
             <h3>Grant what it asks for</h3>
@@ -275,6 +284,10 @@
           <details>
             <summary>The phone stopped reporting</summary>
             <p>Some phones put background apps to sleep. Set Telemetry's battery use to <b>Unrestricted</b>, and keep Tailscale connected. Everything collected in the meantime is delivered once it can reach the server again.</p>
+          </details>
+          <details>
+            <summary>A device won't connect</summary>
+            <p>Make a fresh setup code under <b>Devices → Add a device</b>; codes work once and expire after an hour. Check that Tailscale is on on that device, signed in to the same account. A device you removed, wiped or reinstalled can connect again: it keeps its history, and its old key stops working.</p>
           </details>
           <details>
             <summary>How do I update?</summary>

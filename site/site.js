@@ -279,6 +279,33 @@
     requestAnimationFrame(watch);
   }
 
+  // The download for the device reading this, so nobody hunts for it.
+  const get = document.getElementById('get');
+  if (get) {
+    const ua = navigator.userAgent || '';
+    const platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
+    let kind = 'other';
+    let name = 'device';
+    let other = '';
+    if (/Android/i.test(ua)) { kind = 'android'; name = 'phone'; }
+    else if (/iPhone|iPad|iPod/i.test(ua) || (/Mac/i.test(platform) && navigator.maxTouchPoints > 1)) {
+      other = "There's no iPhone or iPad app: iOS doesn't let an app see what you use. Telemetry runs on Mac, Linux and Android.";
+    } else if (/CrOS/.test(ua)) {
+      other = "Chromebooks aren't supported. Telemetry runs on Mac, Linux and Android.";
+    } else if (/Mac/i.test(platform) || /Macintosh/.test(ua)) { kind = 'mac'; name = 'Mac'; }
+    else if (/Linux|X11/i.test(platform + ' ' + ua)) { kind = 'linux'; name = 'Linux PC'; }
+    else if (/Win/i.test(platform + ' ' + ua)) {
+      other = "There's no Windows version yet. Telemetry runs on Mac, Linux and Android.";
+    }
+    if (kind !== 'other' || other) {
+      get.querySelector('[data-get-name]').textContent = name;
+      const part = get.querySelector(`[data-get="${kind}"]`);
+      if (kind === 'other') part.textContent = other;
+      part.hidden = false;
+      get.hidden = false;
+    }
+  }
+
   // Copy buttons on code blocks.
   document.querySelectorAll('.code').forEach((block) => {
     const pre = block.querySelector('pre');

@@ -19,6 +19,7 @@ Tell them this, in your own words:
 - **On each computer:** which app is in front and its window title, minute by minute; whether they are at the keyboard; every website they visit (address and page title, from a browser extension); and about 90 days of their browser's own history. If they use coding agents (T3 Code, Codex), it sees those threads too.
 - **On the phone:** which apps they use and when; **their notifications, including the title and text**, so message previews from WhatsApp, Telegram and the like end up in it; their calendar; their location (places, and home or away); steps, heart rate, sleep and workouts from Health Connect. SMS only if they turn it on later.
 - **Kept forever:** nothing is ever deleted, and that is by design. The server also takes nightly backups, which contain all of it.
+- **Nothing is hosted for them.** There's no Telemetry account or cloud: they run the server themselves, and every device talks only to it. Whoever controls that server controls the data.
 - **Their assistant:** if they connect an AI assistant over MCP (step 6), that assistant can read all of the above, and so can its provider.
 
 ### 2. Tell them how important securing these devices is
@@ -74,6 +75,16 @@ curl -fsSL https://te.rime.cyou/i/server | bash
 
 ### 5b. Each Mac or Linux computer
 
+The easy way: the **person** opens the panel, goes to **Devices → Add a device**, and gives you the command it shows for this computer. It looks like this and carries a one-time setup code, so the computer connects without anyone approving it afterwards:
+
+```sh
+curl -fsSL https://te.rime.cyou/i/mac | bash -s -- 'https://te.rime.cyou/join#c=XXXX-XXXX&s=https%3A%2F%2F…'
+```
+
+Run it as given. The code works once and expires after an hour; for another computer, ask for another code. Treat it like a password: don't save it anywhere.
+
+Without a code:
+
 ```sh
 curl -fsSL https://te.rime.cyou/i/mac | bash      # macOS
 curl -fsSL https://te.rime.cyou/i/linux | bash    # Linux (window tracking needs KDE Plasma)
@@ -86,7 +97,7 @@ The script asks for the server address. Then:
 
 ### 5c. The phone (the person does this)
 
-They install Tailscale from the Play Store and sign in. Then on the phone they open https://te.rime.cyou/i/android, which offers the APK and an Obtainium link that keeps the app updated. In the app they type the server address, tap Connect, approve it in the panel, and grant the permissions it asks for. You can't do this part for them unless the phone is connected to a Mac with USB debugging on, in which case `install-phone.sh` from the release can grant permissions over adb.
+They install Tailscale from the Play Store and sign in. Then, in the panel on a computer, they open **Devices → Add a device** and scan the QR with the phone's camera. The page it opens offers the app (Obtainium, which keeps it updated, or the APK) and then opens it with the code, so it connects at once. They grant the permissions it asks for. Without the QR, they type the server address and the setup code into the app. You can't do this part for them unless the phone is connected to a Mac with USB debugging on, in which case `install-phone.sh` from the release can grant permissions over adb.
 
 ### 6. Connecting an assistant (optional, recommended)
 
@@ -115,4 +126,5 @@ Nothing is blocked until the person decides. Don't make up a list of "bad" apps.
 - Don't print the panel token or the read token more often than needed. Don't save them in memory files, notes or commits.
 - Steps that need the person (passwords, macOS permissions, approving devices, anything on the phone) are theirs. Tell them exactly what to click.
 - If something fails, say what failed and what you tried. Don't invent workarounds that change how the system is secured.
+- Sign-in: the panel token works on its own. If the person wants account sign-in, they can bring their own Clerk keys under **Sign-in** in the panel (only the publishable key, never the secret key). `telemetryd -reset-sign-in` on the server turns the panel token back on if they get locked out.
 - To uninstall: revoke the device in the panel under Devices, then remove the services the installers added (the README lists them). The server's data lives in its Docker volume until it is deleted.

@@ -85,9 +85,30 @@
         <a class="btn" href="https://github.com/rimexe0/telemetry">github</a>
         <a class="btn white" href="#why">why bother?</a>
       </div>
+      <!-- Filled in for the device reading this; see site.js. -->
+      <div class="get" id="get" hidden>
+        <p class="get-for">on this <span data-get-name>device</span></p>
+        <div data-get="android" hidden>
+          <div class="links"><a class="btn big" href="i/obtainium/">get it with Obtainium</a> <a class="btn white big" href="https://github.com/rimexe0/telemetry/releases/latest/download/telemetry-phone.apk">download the APK</a></div>
+          <p class="aside">Obtainium keeps the app updated. Then, in the panel on your computer, open <b>Devices → Add a device</b> and scan the QR with this phone.</p>
+        </div>
+        <div data-get="mac" hidden>
+          <div class="code"><pre><span class="prompt">$ </span><span data-copy>curl -fsSL https://te.rime.cyou/i/mac | bash</span></pre></div>
+          <p class="aside">Your server comes first (<a href="setup.html">setup guide</a>). Once it runs, <b>Devices → Add a device</b> in its panel gives you this command with a setup code built in.</p>
+        </div>
+        <div data-get="linux" hidden>
+          <div class="code"><pre><span class="prompt">$ </span><span data-copy>curl -fsSL https://te.rime.cyou/i/linux | bash</span></pre></div>
+          <p class="aside">The server comes first: <code>curl -fsSL https://te.rime.cyou/i/server | bash</code> on the machine that stays on. Then <b>Devices → Add a device</b> in its panel gives you this command with a setup code built in.</p>
+        </div>
+        <p class="aside" data-get="other" hidden></p>
+      </div>
       </div>
       <p class="scroll-hint" aria-hidden="true">scroll ↓</p>
     </header>
+
+    <aside class="selfhost reveal" aria-label="Nothing is hosted for you">
+      <p><strong>Nothing here is hosted for you.</strong> There's no account, no cloud, and no company holding your data. You run the server yourself, on a machine you control, and every device talks only to it. This website is a static page: it never sees your data or your setup codes.</p>
+    </aside>
 
     <!-- why -->
     <section id="why" class="deck" aria-labelledby="why-title">
@@ -363,10 +384,10 @@
             <h3>Or do it by hand</h3>
             <p>The server, on the always-on machine:</p>
             <div class="code"><pre><span class="prompt">$ </span><span data-copy>curl -fsSL https://te.rime.cyou/i/server | bash</span></pre></div>
-            <p>Each computer. Then click <b>Connect</b> in the panel:</p>
+            <p>Then add each device from the panel: <b>Devices → Add a device</b> shows a QR for the phone and a one-line command for each computer, with a one-time setup code built in, so there's nothing to approve afterwards. Without a code, run these and click <b>Connect</b> in the panel:</p>
             <div class="code"><pre><span class="prompt">$ </span><span data-copy>curl -fsSL https://te.rime.cyou/i/mac | bash</span></pre></div>
             <div class="code"><pre><span class="prompt">$ </span><span data-copy>curl -fsSL https://te.rime.cyou/i/linux | bash</span></pre></div>
-            <p>The phone: open <a href="i/android/"><code>te.rime.cyou/i/android</code></a> on it.</p>
+            <p>The phone: scan the QR from the panel, or open <a href="i/android/"><code>te.rime.cyou/i/android</code></a> on it.</p>
             <div class="links"><a class="btn" href="i/obtainium/">open in Obtainium</a> <a class="btn white" href="https://github.com/rimexe0/telemetry/releases/latest/download/telemetry-phone.apk">download the APK</a></div>
           </li>
         </ol>

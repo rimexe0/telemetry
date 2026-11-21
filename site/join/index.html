@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Join Telemetry</title>
+  <meta name="description" content="Connect a device to your own Telemetry server with a setup code from its panel.">
+  <meta name="robots" content="noindex">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#111213">
+  <link rel="icon" href="/logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+  <script>document.documentElement.classList.add('js')</script>
+  <style>
+    .join-code { font-family: var(--mono); font-size: 2rem; letter-spacing: 0.1em; margin: 4px 0 0; }
+    .join-server { font-family: var(--mono); font-size: 0.85rem; overflow-wrap: anywhere; }
+    .join [hidden] { display: none; }
+  </style>
+</head>
+<body>
+  <div class="bg" aria-hidden="true"><div class="noise"></div><div class="lanes"></div></div>
+  <main class="page join">
+    <header class="page-head">
+      <h1 class="sr-only">Join Telemetry</h1>
+      <div class="wordmark" aria-hidden="true"><span class="letter">j</span><span class="letter">o</span><span class="letter">i</span><span class="letter">n</span><span class="caret"></span></div>
+    </header>
+    <section class="deck">
+      <article class="card wide reveal" data-hue="Join">
+        <div class="card-head"><h2 id="join-title">Connect this device</h2><span class="num">setup code</span></div>
+
+        <div class="body" id="broken" hidden>
+          <p>This link is missing its setup details. Make a new code in your panel under <b>Devices → Add a device</b> and scan its QR again.</p>
+        </div>
+
+        <div class="body" id="details" hidden>
+          <p class="join-code" id="code"></p>
+          <p>for your server <span class="join-server" id="server"></span>. It works once, for about an hour.</p>
+        </div>
+
+        <ol class="steps" id="android" hidden>
+          <li class="body">
+            <h3>Get the app, if it isn't installed yet</h3>
+            <p id="missing" hidden><b>The app isn't installed on this phone yet.</b></p>
+            <div class="links"><a class="btn big" href="/i/obtainium/">get it with Obtainium</a> <a class="btn white big" href="https://github.com/rimexe0/telemetry/releases/latest/download/telemetry-phone.apk">download the APK</a></div>
+            <p class="aside">Obtainium keeps it updated. With the APK, Android asks once to allow installs from your browser. Then come back to this page.</p>
+          </li>
+          <li class="body">
+            <h3>Open it with this code</h3>
+            <div class="links"><a class="btn big" id="open" href="#">open in Telemetry</a></div>
+            <p class="aside">The app fills in the server and the code, and connects straight away. Then it walks you through its permissions.</p>
+          </li>
+        </ol>
+
+        <div class="body" id="elsewhere" hidden>
+          <p>Open this on the phone you're setting up: scan the QR in the panel with its camera. Or, in the app, type the server address and the code above.</p>
+          <p>For this computer, paste this into a terminal. It installs Telemetry and connects with the code:</p>
+          <div class="code"><pre><span class="prompt">$ </span><span data-copy id="command"></span></pre></div>
+        </div>
+
+        <p class="aside body">This page is static. The setup details travel after the <code>#</code> in its address, which browsers never send to any server, so this site never sees them. Nothing here is hosted for you: your devices talk only to your own server.</p>
+      </article>
+    </section>
+  </main>
+  <script>
+    (() => {
+      const fields = new URLSearchParams(location.hash.slice(1));
+      const server = fields.get('s') || '';
+      const code = fields.get('c') || '';
+      const relay = fields.get('r') || '';
+      const key = fields.get('k') || '';
+      const valid = /^https:\/\/[^\s/?#]+\/?$/.test(server) && /^[0-9A-Za-z -]{8,12}$/.test(code) && (!relay || /^https:\/\//.test(relay));
+      const show = (id) => { document.getElementById(id).hidden = false; };
+      if (!valid) { show('broken'); return; }
+      show('details');
+      document.getElementById('code').textContent = code;
+      document.getElementById('server').textContent = server;
+
+      const link = new URLSearchParams({ server, code });
+      if (relay && key) { link.set('relay', relay); link.set('key', key); }
+      if (/Android/i.test(navigator.userAgent)) {
+        show('android');
+        if (fields.get('missing')) show('missing');
+        // Back here, flagged, when the app is not installed.
+        const back = location.href.split('#')[0] + '#' + fields.toString() + '&missing=1';
+        document.getElementById('open').href = 'intent://setup?' + link.toString() +
+          '#Intent;scheme=telemetry;package=cyou.rime.telemetry.collector;S.browser_fallback_url=' + encodeURIComponent(back) + ';end';
+      } else {
+        show('elsewhere');
+        const join = location.href.split('#')[0] + '#' + fields.toString().replace(/&missing=1$/, '');
+        const os = /Macintosh|Mac OS X/.test(navigator.userAgent) || /^Mac/.test(navigator.platform || '') ? 'mac' : 'linux';
+        document.getElementById('command').textContent = `curl -fsSL https://te.rime.cyou/i/${os} | bash -s -- '${join}'`;
+      }
+    })();
+  </script>
+  <script src="/site.js" defer></script>
+</body>
+</html>
