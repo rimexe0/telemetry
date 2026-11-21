@@ -12,21 +12,21 @@
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Telemetry">
   <meta property="og:url" content="https://telemetry.rime.cyou/">
-  <meta property="og:title" content="Telemetry: screen time that does something about it">
+  <meta property="og:title" content="Telemetry: spyware you install on yourself">
   <meta property="og:description" content="Self-hosted screen time, distraction blocking and drift detection for Mac, Linux and Android, with an MCP server for your AI assistant.">
   <meta property="og:image" content="https://telemetry.rime.cyou/og.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="The word telemetry over rows of drifting t logos">
+  <meta property="og:image:alt" content="The word telemetry over drifting timeline bars, a REC light, and the line: Spyware you install on yourself.">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Telemetry: screen time that does something about it">
+  <meta name="twitter:title" content="Telemetry: spyware you install on yourself">
   <meta name="twitter:description" content="Self-hosted screen time, distraction blocking and drift detection for Mac, Linux and Android.">
   <meta name="twitter:image" content="https://telemetry.rime.cyou/og.png">
   <link rel="icon" href="logo.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="img/icon-180.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
   <script>document.documentElement.classList.add('js')</script>
   <script type="application/ld+json">
@@ -52,13 +52,10 @@
 
   <div class="bg" aria-hidden="true">
     <div class="noise"></div>
-    <div class="drift">
-      <div class="row a"></div>
-      <div class="row b"></div>
-    </div>
+    <div class="lanes"></div>
   </div>
 
-  <nav class="side-nav hidden" aria-label="Sections">
+  <nav class="top-nav hidden" aria-label="Sections">
     <a href="#top">top</a>
     <a href="#why">why</a>
     <a href="#how">how</a>
@@ -71,12 +68,10 @@
   <main class="page">
     <header class="hero" id="top">
       <h1 class="sr-only">Telemetry: self-hosted screen time and distraction blocking for Mac, Linux and Android</h1>
-      <div class="wordmark" aria-hidden="true">
-        <span class="layer back"><span class="letter">t</span><span class="letter">e</span><span class="letter">l</span><span class="letter">e</span><span class="letter">m</span><span class="letter">e</span><span class="letter">t</span><span class="letter">r</span><span class="letter">y</span></span>
-        <span class="layer front"><span class="letter">t</span><span class="letter">e</span><span class="letter">l</span><span class="letter">e</span><span class="letter">m</span><span class="letter">e</span><span class="letter">t</span><span class="letter">r</span><span class="letter">y</span></span>
-      </div>
+      <div class="wordmark" aria-hidden="true"><span class="letter">t</span><span class="letter">e</span><span class="letter">l</span><span class="letter">e</span><span class="letter">m</span><span class="letter">e</span><span class="letter">t</span><span class="letter">r</span><span class="letter">y</span><span class="caret"></span></div>
+      <p class="rec" aria-hidden="true"><span class="dot"></span>REC <span class="rec-time">00:00:00</span> · watching you read this</p>
       <div class="intro">
-      <p class="lead">Screen time that does something about it.</p>
+      <p class="lead">Spyware you install on yourself.</p>
       <p class="sub">Telemetry watches your Mac, Linux PC and Android phone, keeps the feeds closed when you can't, and tells your AI assistant what you're actually doing, so it can help you get back to it. It runs on your own machine, and it's free and open source.</p>
       <div class="chips" aria-label="Runs on">
         <span class="chip light">macOS</span>
@@ -86,7 +81,7 @@
         <span class="chip mcp">MCP</span>
       </div>
       <div class="links">
-        <a class="btn" href="setup.html"><span class="rainbow">set it up</span> <span class="arrow">→</span></a>
+        <a class="btn" href="setup.html">set it up <span class="arrow">→</span></a>
         <a class="btn" href="https://github.com/rimexe0/telemetry">github</a>
         <a class="btn white" href="#why">why bother?</a>
       </div>
@@ -105,12 +100,13 @@
             <p>Telemetry takes the decision out of the moment. You decide once, while you're calm. After that the system holds the line: feeds stay shut, making a rule looser waits until tomorrow, and the PIN can live with a friend.</p>
             <p>It's built for people who know exactly what they want to do and still can't start it, or can't come back to it after a detour. Call it ADHD, burnout or just living in 2026. The tool is the same.</p>
           </div>
-          <div class="stats body">
-            <div class="stat"><b>2.3 h</b><span>a day on YouTube, X and Reddit</span></div>
-            <div class="stat"><b>24%</b><span>of all computer time went to feeds</span></div>
-            <div class="stat"><b>43</b><span>feed sittings longer than an hour</span></div>
-            <div class="stat"><b>1 in 3</b><span>minutes of a coding agent's run that I was even looking at it</span></div>
-            <p class="note">The author's own first six weeks, measured by Telemetry. That's why the blocking exists.</p>
+          <div class="stats body" aria-live="off">
+            <div class="stat"><b data-rate="8340000" data-digits="0">0</b><span>minutes humanity has spent scrolling since you opened this page</span></div>
+            <div class="stat"><b data-rate="8.33" data-digits="1">0</b><span>hours of video uploaded to YouTube since you got here</span></div>
+            <div class="stat"><b data-here="seconds" data-digits="1">0</b><span>seconds you've spent reading this instead of doing the thing</span></div>
+            <div class="stat"><b data-here="scroll" data-digits="2">0</b><span>centimeters you've scrolled to get here</span></div>
+            <p class="note">Rough maths: about 5 billion people on social media for about 2 h 20 min a day (DataReportal, 2024), and about 500 hours uploaded to YouTube every minute (YouTube, 2019). The other two are you.</p>
+            <p class="spin-done" hidden>Spin cycle finished. Maybe go do the thing now.</p>
           </div>
         </div>
       </article>
@@ -139,35 +135,38 @@
           </div>
         </div>
 
-        <p><b>A real reading</b>, written by the assistant from two hours of the author's evening. It has no plan to work from and nobody asked it anything. It works this out from the records alone.</p>
+        <p><b>A real reading</b>, written by the assistant from two hours of the author's afternoon, across the Mac, the phone and the watch. It has no plan to work from and nobody asked it anything. It works this out from the records alone. A few aims are left out here because they're private.</p>
         <div class="reading body" role="figure" aria-label="Example reading of what the owner was doing">
-          <div class="meta"><span>what_owner_is_doing</span><span>19 Nov · 17:55 → 19:55 · Mac, phone, 5 agent threads</span></div>
-          <p class="note">They edited otuz.ecproj and watched two YouTube videos before 18:15, then the evening went to T3 Code, where the meva Waterfall, sillyCastle lighting and open-issue agents are still working while the meva media-library agent stopped.</p>
+          <div class="meta"><span>what_owner_is_doing</span><span>16 Nov · 15:05 → 17:05 · Mac, phone, watch</span></div>
+          <p class="note">A phone-heavy stretch: offline map downloads […], with the A4 frame painting in CrealityPrint and a Claude session running in between.</p>
           <div class="aim">
-            <span class="t"><span class="now-mark">▸ now</span> meva: Waterfall Timing for Launch and Search</span>
-            <span class="tags"><span class="chip wait">waiting</span></span>
-            <span class="ev">meva agent: 2 sent, last 19:39, agent working now</span>
+            <span class="t"><span class="now-mark">▸ now</span> Downloading offline maps on the phone</span>
+            <span class="tags"><span class="chip">life</span><span class="chip ok">active</span></span>
+            <span class="ev">phone Maps 16:42–16:47, 16:51–16:53 and 16:58–17:00 · notification: "Map downloaded"</span>
+            <span class="next">next: confirm the downloaded map covers the area they need, then start navigating</span>
           </div>
           <div class="aim">
-            <span class="t">Editing an EffectCraft motion graphics project</span>
+            <span class="t">Painting the A4 photo frame model for 3D printing</span>
             <span class="tags"><span class="chip">work</span><span class="chip ok">active</span></span>
-            <span class="ev">EffectCraft otuz.ecproj open 17:55–17:57 and 17:59–18:15</span>
-            <span class="next">next: keep editing otuz.ecproj in EffectCraft</span>
+            <span class="ev">mac CrealityPrint "painting_frame" 15:56–16:12 · makerworld.com glance 87 s</span>
+            <span class="next">next: finish painting the frame in CrealityPrint, then slice it</span>
           </div>
           <div class="aim">
-            <span class="t">Follow up on sillyCastle lighting issue</span>
-            <span class="tags"><span class="chip">work</span><span class="chip wait">waiting</span></span>
-            <span class="ev">sillycastle agent: 4 sent, last 19:37, agent working now</span>
+            <span class="t">Asking Claude for help (purpose not visible)</span>
+            <span class="tags"><span class="chip pause">low confidence</span><span class="chip ok">active</span></span>
+            <span class="ev">mac Claude 16:28–16:45 · notification: "Claude responded"</span>
+            <span class="next">next: read what Claude replied, then send the next question</span>
           </div>
           <div class="aim">
-            <span class="t">Running the media library from B2 on mobile (meva)</span>
-            <span class="tags"><span class="chip">work</span><span class="chip pause">paused</span></span>
-            <span class="ev">T3 Code thread 18:16–18:19 · agent: 10 sent, stopped 19:53, so it's your turn</span>
+            <span class="t">Opening the Meva desktop app's Library</span>
+            <span class="tags"><span class="chip pause">low confidence</span><span class="chip ok">active</span></span>
+            <span class="ev">mac Meva Desktop "Library" 16:40–16:47</span>
+            <span class="next">next: look through what the Meva Library actually lists</span>
           </div>
           <div class="aim">
-            <span class="t">Watching YouTube: RTE 31</span>
-            <span class="tags"><span class="chip">leisure</span><span class="chip pause">paused</span></span>
-            <span class="ev">Helium, 17:58–17:59</span>
+            <span class="t">Phone housekeeping: watch sync and contacts backup</span>
+            <span class="tags"><span class="chip pause">paused</span></span>
+            <span class="ev">notification: "Galaxy Watch6 Classic disconnected" · "Can't back up watch" · "Google Contacts backing up"</span>
           </div>
         </div>
       </article>
@@ -387,7 +386,8 @@
         <div class="faq body">
           <details>
             <summary>Isn't this just spyware?</summary>
-            <p>It's surveillance you point at yourself, on a server you own. Nothing leaves your machines unless you connect an assistant, and then it reads only what you allow. It never stores page contents or message text.</p>
+            <p>Yes. It's spyware you install on yourself, on purpose. Nobody remembers losing three hours to YouTube: it doesn't feel like three hours while it's happening, and by evening it's gone. Something that watches everything and tells you plainly is the whole point.</p>
+            <p>The difference from the other kind is who it reports to. It runs on your machines, tells only you (and the assistant you choose), and never stores page contents or message text.</p>
           </details>
           <details>
             <summary>Do I need an AI assistant?</summary>

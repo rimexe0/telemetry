@@ -18,7 +18,7 @@
   <link rel="icon" href="logo.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
   <script>document.documentElement.classList.add('js')</script>
   <script type="application/ld+json">
@@ -44,13 +44,10 @@
 
   <div class="bg" aria-hidden="true">
     <div class="noise"></div>
-    <div class="drift">
-      <div class="row a"></div>
-      <div class="row b"></div>
-    </div>
+    <div class="lanes"></div>
   </div>
 
-  <nav class="side-nav" aria-label="Steps">
+  <nav class="top-nav" aria-label="Steps">
     <a href="index.html">home</a>
     <a href="#before">before</a>
     <a href="#server">server</a>
@@ -64,10 +61,7 @@
   <main class="page">
     <header class="page-head" id="top">
       <h1 class="sr-only">Set up Telemetry</h1>
-      <div class="wordmark" aria-hidden="true">
-        <span class="layer back"><span class="letter">s</span><span class="letter">e</span><span class="letter">t</span><span class="letter">u</span><span class="letter">p</span></span>
-        <span class="layer front"><span class="letter">s</span><span class="letter">e</span><span class="letter">t</span><span class="letter">u</span><span class="letter">p</span></span>
-      </div>
+      <div class="wordmark" aria-hidden="true"><span class="letter">s</span><span class="letter">e</span><span class="letter">t</span><span class="letter">u</span><span class="letter">p</span><span class="caret"></span></div>
       <div class="links back-home" style="justify-content:center"><a class="btn" href="index.html">← telemetry</a></div>
       <div class="toc" aria-label="On this page">
         <a class="chip light" href="#before">before you start</a>
