@@ -66,7 +66,7 @@ jobs:
           go build -trimpath -o dist/telemetry-places ./cmd/telemetry-places
           go build -trimpath -ldflags "-X main.collectorVersion=telemetry-desktop/$TAG" -o dist/telemetry-desktop ./cmd/telemetry-desktop
           tar -C web -czf dist/panel.tar.gz build
-          ls internal/store/migrations > dist/migrations.txt
+          ls internal/store/migrations internal/enrollment/migrations > dist/migrations.txt
           cp deploy/linux/telemetry-update.sh dist/
           cp deploy/macos/telemetry-update.sh dist/telemetry-update-macos.sh
           cp deploy/install.sh deploy/install-server.sh deploy/macos/install-mac.sh deploy/macos/install-phone.sh deploy/linux/install-linux.sh dist/

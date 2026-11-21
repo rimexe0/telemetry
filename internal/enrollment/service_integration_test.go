@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -26,11 +27,11 @@ func TestPostgresPairingLifecycle(t *testing.T) {
 	if err := opened.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := opened.pool.Exec(ctx, `TRUNCATE telemetry_devices, telemetry_pairing_sessions`); err != nil {
+	if _, err := opened.pool.Exec(ctx, `TRUNCATE telemetry_devices, telemetry_pairing_sessions, telemetry_pairing_invites, telemetry_device_credential_history`); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if _, err := opened.pool.Exec(context.Background(), `TRUNCATE telemetry_devices, telemetry_pairing_sessions`); err != nil {
+		if _, err := opened.pool.Exec(context.Background(), `TRUNCATE telemetry_devices, telemetry_pairing_sessions, telemetry_pairing_invites, telemetry_device_credential_history`); err != nil {
 			t.Error(err)
 		}
 	})
@@ -92,10 +93,6 @@ func TestPostgresPairingLifecycle(t *testing.T) {
 	if registered, authorized, err := service.AuthorizeDevice(ctx, "phone-main", "legacy-global-token"); err != nil || !registered || authorized {
 		t.Fatalf("wrong active credential = registered:%v authorized:%v err:%v", registered, authorized, err)
 	}
-	if _, err := service.Start(ctx, "phone-main", "replacement", hash); !errors.Is(err, ErrAlreadyRegistered) {
-		t.Fatalf("replacement start error = %v", err)
-	}
-
 	if _, err := service.Revoke(ctx, "phone-main"); err != nil {
 		t.Fatal(err)
 	}
@@ -111,6 +108,47 @@ func TestPostgresPairingLifecycle(t *testing.T) {
 	devices, err := service.ListDevices(ctx)
 	if err != nil || len(devices) != 1 || devices[0].Status != "revoked" {
 		t.Fatalf("device audit list = %+v, %v", devices, err)
+	}
+
+	// The removed device is told so, but only with its own key.
+	if !service.Removed(ctx, "phone-main", secret) {
+		t.Fatal("removed device with its own key was not reported as removed")
+	}
+	if service.Removed(ctx, "phone-main", "someone-else") {
+		t.Fatal("removed reported for a key that was never the device's")
+	}
+
+	// Set up again (a wiped phone keeps its device ID): it asks again, is
+	// marked as returning, and approval replaces its key and keeps the record.
+	newSecret := "collector-secret-beta"
+	newHash, _ := ParseCredentialHash(CredentialHash(newSecret))
+	again, err := service.Start(ctx, "phone-main", "Main phone", newHash)
+	if err != nil || again.Status != "pending" {
+		t.Fatalf("pairing again = %+v, %v", again, err)
+	}
+	pending, err := service.ListPending(ctx)
+	if err != nil || len(pending) != 1 || !pending[0].Returning {
+		t.Fatalf("returning device pending list = %+v, %v", pending, err)
+	}
+	if _, err := service.Approve(ctx, again.PairingID); err != nil {
+		t.Fatalf("approve returning device = %v", err)
+	}
+	if registered, authorized, err := service.AuthorizeDevice(ctx, "phone-main", newSecret); err != nil || !registered || !authorized {
+		t.Fatalf("new key = registered:%v authorized:%v err:%v", registered, authorized, err)
+	}
+	if registered, authorized, err := service.AuthorizeDevice(ctx, "phone-main", secret); err != nil || !registered || authorized {
+		t.Fatalf("replaced key = registered:%v authorized:%v err:%v", registered, authorized, err)
+	}
+	if service.Removed(ctx, "phone-main", secret) {
+		t.Fatal("an active device was reported as removed")
+	}
+	var replaced int
+	if err := opened.pool.QueryRow(ctx, `SELECT COUNT(*) FROM telemetry_device_credential_history WHERE device_id='phone-main' AND previous_status='revoked' AND previous_pairing_id=$1`, session.PairingID).Scan(&replaced); err != nil || replaced != 1 {
+		t.Fatalf("replaced key history = %d, %v", replaced, err)
+	}
+	devices, err = service.ListDevices(ctx)
+	if err != nil || len(devices) != 1 || devices[0].Status != "active" || devices[0].PairingID != again.PairingID {
+		t.Fatalf("device after pairing again = %+v, %v", devices, err)
 	}
 }
 
@@ -128,11 +166,11 @@ func TestPostgresPairingExpiryAllowsRetryAndApprovalRaceBindsOneCredential(t *te
 	if err := opened.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := opened.pool.Exec(ctx, `TRUNCATE telemetry_devices, telemetry_pairing_sessions`); err != nil {
+	if _, err := opened.pool.Exec(ctx, `TRUNCATE telemetry_devices, telemetry_pairing_sessions, telemetry_pairing_invites, telemetry_device_credential_history`); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if _, err := opened.pool.Exec(context.Background(), `TRUNCATE telemetry_devices, telemetry_pairing_sessions`); err != nil {
+		if _, err := opened.pool.Exec(context.Background(), `TRUNCATE telemetry_devices, telemetry_pairing_sessions, telemetry_pairing_invites, telemetry_device_credential_history`); err != nil {
 			t.Error(err)
 		}
 	})
@@ -166,8 +204,8 @@ func TestPostgresPairingExpiryAllowsRetryAndApprovalRaceBindsOneCredential(t *te
 	}
 
 	// Two collectors may race to approve different pending credentials for one
-	// device ID. Both pending sessions are retained, but the unique approved
-	// device row and advisory lock allow exactly one credential to win.
+	// device ID. The owner approved both, so both succeed one after the other,
+	// and the device ends up with exactly one working credential.
 	firstRaceSecret := "race-secret-first"
 	firstRaceHash, _ := ParseCredentialHash(CredentialHash(firstRaceSecret))
 	firstRace, err := service.Start(ctx, "desktop-race", "Race desktop", firstRaceHash)
@@ -199,21 +237,16 @@ func TestPostgresPairingExpiryAllowsRetryAndApprovalRaceBindsOneCredential(t *te
 	}
 	wait.Wait()
 	close(results)
-	var winner string
-	approvals := 0
 	for result := range results {
-		if result.err == nil {
-			approvals++
-			winner = result.pairingID
-			continue
-		}
-		if !errors.Is(result.err, ErrAlreadyRegistered) {
+		if result.err != nil {
 			t.Fatalf("concurrent approval error = %v", result.err)
 		}
 	}
-	if approvals != 1 || winner == "" {
-		t.Fatalf("concurrent approvals succeeded %d times, winner = %q", approvals, winner)
+	devices0, err := service.ListDevices(ctx)
+	if err != nil || len(devices0) != 1 {
+		t.Fatalf("race device list = %+v, %v", devices0, err)
 	}
+	winner := devices0[0].PairingID
 	devices, err := service.ListDevices(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -231,5 +264,114 @@ func TestPostgresPairingExpiryAllowsRetryAndApprovalRaceBindsOneCredential(t *te
 	}
 	if registered, authorized, err := service.AuthorizeDevice(ctx, "desktop-race", losingSecret); err != nil || !registered || authorized {
 		t.Fatalf("losing race credential = registered:%v authorized:%v err:%v", registered, authorized, err)
+	}
+}
+
+func TestPostgresSetupCodes(t *testing.T) {
+	databaseURL := os.Getenv("TELEMETRY_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TELEMETRY_TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	opened, err := Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(opened.Close)
+	if err := opened.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	reset := func() {
+		if _, err := opened.pool.Exec(context.Background(), `TRUNCATE telemetry_devices, telemetry_pairing_sessions, telemetry_pairing_invites, telemetry_device_credential_history`); err != nil {
+			t.Error(err)
+		}
+	}
+	reset()
+	t.Cleanup(reset)
+	clock := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	service := New(opened.pool, Options{MaxOpenInvites: 3, Now: func() time.Time { return clock }})
+
+	invite, err := service.CreateInvite(ctx)
+	if err != nil || invite.Status != "open" || len(invite.Code) != 9 || invite.Code[4] != '-' {
+		t.Fatalf("invite = %+v, %v", invite, err)
+	}
+	var stored []byte
+	if err := opened.pool.QueryRow(ctx, `SELECT code_hash FROM telemetry_pairing_invites WHERE invite_id=$1`, invite.InviteID).Scan(&stored); err != nil || strings.Contains(string(stored), invite.Code[:4]) {
+		t.Fatalf("stored code = %x, %v", stored, err)
+	}
+	secret := "phone-secret-with-code"
+	hash, _ := ParseCredentialHash(CredentialHash(secret))
+	if _, err := service.StartWithCode(ctx, "android-1", "Phone", hash, "ZZZZ-ZZZZ"); !errors.Is(err, ErrInvalidCode) {
+		t.Fatalf("wrong code error = %v", err)
+	}
+	// Typed loosely: lower case, a space instead of the dash.
+	typed := strings.ToLower(strings.Replace(invite.Code, "-", " ", 1))
+	session, err := service.StartWithCode(ctx, "android-1", "Phone", hash, typed)
+	if err != nil || session.Status != "approved" {
+		t.Fatalf("start with code = %+v, %v", session, err)
+	}
+	if registered, authorized, err := service.AuthorizeDevice(ctx, "android-1", secret); err != nil || !registered || !authorized {
+		t.Fatalf("code-paired device = registered:%v authorized:%v err:%v", registered, authorized, err)
+	}
+	if polled, err := service.Poll(ctx, session.PairingID, secret); err != nil || polled.Status != "approved" {
+		t.Fatalf("poll after code = %+v, %v", polled, err)
+	}
+	// The answer was lost and the phone asks again with the same key and code.
+	retry, err := service.StartWithCode(ctx, "android-1", "Phone", hash, invite.Code)
+	if err != nil || retry.Status != "approved" || retry.PairingID != session.PairingID {
+		t.Fatalf("retry with used code = %+v, %v", retry, err)
+	}
+	otherHash, _ := ParseCredentialHash(CredentialHash("someone-else"))
+	if _, err := service.StartWithCode(ctx, "laptop-x", "Laptop", otherHash, invite.Code); !errors.Is(err, ErrInvalidCode) {
+		t.Fatalf("second use of a code = %v", err)
+	}
+	invites, err := service.ListInvites(ctx)
+	if err != nil || len(invites) != 1 || invites[0].Status != "used" || invites[0].UsedByDevice != "android-1" || invites[0].Code != "" {
+		t.Fatalf("invites after use = %+v, %v", invites, err)
+	}
+
+	expiring, _ := service.CreateInvite(ctx)
+	cancelled, _ := service.CreateInvite(ctx)
+	if err := service.CancelInvite(ctx, cancelled.InviteID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.StartWithCode(ctx, "laptop-x", "Laptop", otherHash, cancelled.Code); !errors.Is(err, ErrInvalidCode) {
+		t.Fatalf("cancelled code = %v", err)
+	}
+	if _, err := service.CreateInvite(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CreateInvite(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CreateInvite(ctx); !errors.Is(err, ErrInviteLimit) {
+		t.Fatalf("open invite limit = %v", err)
+	}
+	clock = clock.Add(2 * time.Hour)
+	if _, err := service.StartWithCode(ctx, "laptop-x", "Laptop", otherHash, expiring.Code); !errors.Is(err, ErrInvalidCode) {
+		t.Fatalf("expired code = %v", err)
+	}
+
+	// Guessing stops working after a burst of wrong codes.
+	for i := 0; i < codeFailureAllowed; i++ {
+		_, _ = service.StartWithCode(ctx, "guesser", "Guess", otherHash, "0000-0000")
+	}
+	fresh, _ := service.CreateInvite(ctx)
+	if _, err := service.StartWithCode(ctx, "guesser", "Guess", otherHash, fresh.Code); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("after guesses = %v", err)
+	}
+	clock = clock.Add(codeFailureWindow)
+	if s, err := service.StartWithCode(ctx, "guesser", "Guess", otherHash, fresh.Code); err != nil || s.Status != "approved" {
+		t.Fatalf("after the guess window = %+v, %v", s, err)
+	}
+
+	if err := service.SetRelayURL(ctx, "http://relay.example"); !errors.Is(err, ErrInvalidRelayURL) {
+		t.Fatalf("plain http relay = %v", err)
+	}
+	if err := service.SetRelayURL(ctx, "https://relay.example/"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := service.RelayURL(ctx); err != nil || got != "https://relay.example" {
+		t.Fatalf("relay = %q, %v", got, err)
 	}
 }

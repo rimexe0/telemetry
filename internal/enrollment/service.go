@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -30,6 +31,8 @@ const (
 	defaultMaxStarts       = 128
 	defaultRateWindow      = time.Hour
 	defaultPairingIDBytes  = 32
+	defaultInviteTTL       = time.Hour
+	defaultMaxOpenInvites  = 10
 	ownerIdentity          = "owner"
 	pairingAdvisoryLockKey = int64(0x74656c656d657472) // "telemetr"
 )
@@ -49,6 +52,10 @@ var (
 	ErrUnauthorized          = errors.New("invalid pairing credentials")
 	ErrDeviceNotFound        = errors.New("device not found")
 	ErrDeviceRevoked         = errors.New("device is revoked")
+	ErrInvalidCode           = errors.New("this setup code is wrong, already used or expired")
+	ErrInviteLimit           = errors.New("too many open setup codes; cancel one or let them expire")
+	ErrInviteNotFound        = errors.New("setup code not found")
+	ErrInvalidRelayURL       = errors.New("relay address must be an https:// origin")
 )
 
 // Options controls bounded pairing state. The defaults are deliberately
@@ -59,6 +66,10 @@ type Options struct {
 	MaxStarts      int
 	RateWindow     time.Duration
 	PairingIDBytes int
+	// InviteTTL is how long a setup code made in the panel stays usable.
+	InviteTTL time.Duration
+	// MaxOpenInvites bounds the setup codes that can be used at once.
+	MaxOpenInvites int
 	Now            func() time.Time
 }
 
@@ -78,6 +89,12 @@ func (o Options) withDefaults() Options {
 	if o.PairingIDBytes < 16 {
 		o.PairingIDBytes = defaultPairingIDBytes
 	}
+	if o.InviteTTL <= 0 {
+		o.InviteTTL = defaultInviteTTL
+	}
+	if o.MaxOpenInvites <= 0 {
+		o.MaxOpenInvites = defaultMaxOpenInvites
+	}
 	if o.Now == nil {
 		o.Now = func() time.Time { return time.Now().UTC() }
 	}
@@ -88,6 +105,10 @@ func (o Options) withDefaults() Options {
 type Service struct {
 	pool *pgxpool.Pool
 	opts Options
+
+	// Wrong setup codes, kept to stop guessing.
+	codeMu       sync.Mutex
+	codeFailures []time.Time
 }
 
 // Open opens an enrollment service. Call Migrate explicitly during deployment.
@@ -133,6 +154,9 @@ type PairingSession struct {
 	Status     string     `json:"status"`
 	ExpiresAt  time.Time  `json:"expires_at"`
 	ApprovedAt *time.Time `json:"approved_at,omitempty"`
+	// Returning is set on a pending request from a device ID that was
+	// connected before: approving it replaces that device's old key.
+	Returning bool `json:"returning,omitempty"`
 }
 
 // Device is the owner-facing enrollment record.
@@ -150,6 +174,14 @@ type Device struct {
 
 // Start retains an expiring request separately from the approved device registry.
 func (s *Service) Start(ctx context.Context, deviceID, deviceName string, credentialHash []byte) (PairingSession, error) {
+	return s.StartWithCode(ctx, deviceID, deviceName, credentialHash, "")
+}
+
+// StartWithCode starts pairing. With a setup code made in the panel, the
+// device is connected at once: the owner already approved it by making the
+// code. A device ID that was connected before may pair again; approval then
+// replaces its key and keeps its history.
+func (s *Service) StartWithCode(ctx context.Context, deviceID, deviceName string, credentialHash []byte, code string) (PairingSession, error) {
 	if err := validateDeviceID(deviceID); err != nil {
 		return PairingSession{}, err
 	}
@@ -167,15 +199,11 @@ func (s *Service) Start(ctx context.Context, deviceID, deviceName string, creden
 	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, pairingAdvisoryLockKey); err != nil {
 		return PairingSession{}, err
 	}
-	var exists bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM telemetry_devices WHERE device_id=$1)`, deviceID).Scan(&exists); err != nil {
-		return PairingSession{}, err
-	}
-	if exists {
-		return PairingSession{}, ErrAlreadyRegistered
-	}
 	now := s.now()
 	var value PairingSession
+	if code != "" {
+		return s.redeem(ctx, tx, deviceID, deviceName, credentialHash, code, now)
+	}
 	err = tx.QueryRow(ctx, `SELECT pairing_id,device_id,device_name,status,expires_at,approved_at FROM telemetry_pairing_sessions WHERE device_id=$1 AND credential_hash=$2 AND status='pending' AND expires_at>$3 ORDER BY created_at DESC LIMIT 1`, deviceID, credentialHash, now).Scan(&value.PairingID, &value.DeviceID, &value.DeviceName, &value.Status, &value.ExpiresAt, &value.ApprovedAt)
 	if err == nil {
 		return value, tx.Commit(ctx)
@@ -266,17 +294,14 @@ func (s *Service) Approve(ctx context.Context, pairingID string) (PairingSession
 	}
 	var existingPair, status string
 	err = tx.QueryRow(ctx, `SELECT pairing_id,status FROM telemetry_devices WHERE device_id=$1`, value.DeviceID).Scan(&existingPair, &status)
-	if err == nil {
-		if existingPair != pairingID {
-			return value, ErrAlreadyRegistered
-		}
+	if err == nil && existingPair == pairingID {
 		if status == "revoked" {
 			return value, ErrDeviceRevoked
 		}
 		value.Status = "approved"
 		return value, tx.Commit(ctx)
 	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return value, err
 	}
 	if value.Status != "pending" {
@@ -286,8 +311,7 @@ func (s *Service) Approve(ctx context.Context, pairingID string) (PairingSession
 	if !now.Before(value.ExpiresAt) {
 		return value, ErrPairingExpired
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO telemetry_devices(device_id,device_name,pairing_id,credential_hash,status,owner_id,created_at,approved_at) VALUES($1,$2,$3,$4,'active',$5,$6,$6)`, value.DeviceID, value.DeviceName, pairingID, hash, ownerIdentity, now)
-	if err != nil {
+	if err = register(ctx, tx, value, hash, now); err != nil {
 		return value, err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE telemetry_pairing_sessions SET status='approved',approved_at=$2 WHERE pairing_id=$1`, pairingID, now); err != nil {
@@ -301,7 +325,7 @@ func (s *Service) Approve(ctx context.Context, pairingID string) (PairingSession
 // ListPending returns unexpired pairing requests so the owner can approve a
 // device from any signed-in panel instead of only the link it opened.
 func (s *Service) ListPending(ctx context.Context) ([]PairingSession, error) {
-	rows, err := s.pool.Query(ctx, `SELECT pairing_id,device_id,device_name,status,expires_at,approved_at FROM telemetry_pairing_sessions WHERE status='pending' AND expires_at > $1 ORDER BY created_at DESC LIMIT 20`, s.now())
+	rows, err := s.pool.Query(ctx, `SELECT p.pairing_id,p.device_id,p.device_name,p.status,p.expires_at,p.approved_at,d.device_id IS NOT NULL FROM telemetry_pairing_sessions p LEFT JOIN telemetry_devices d ON d.device_id=p.device_id WHERE p.status='pending' AND p.expires_at > $1 ORDER BY p.created_at DESC LIMIT 20`, s.now())
 	if err != nil {
 		return nil, err
 	}
@@ -309,7 +333,7 @@ func (s *Service) ListPending(ctx context.Context) ([]PairingSession, error) {
 	result := []PairingSession{}
 	for rows.Next() {
 		var v PairingSession
-		if err := rows.Scan(&v.PairingID, &v.DeviceID, &v.DeviceName, &v.Status, &v.ExpiresAt, &v.ApprovedAt); err != nil {
+		if err := rows.Scan(&v.PairingID, &v.DeviceID, &v.DeviceName, &v.Status, &v.ExpiresAt, &v.ApprovedAt, &v.Returning); err != nil {
 			return nil, err
 		}
 		result = append(result, v)

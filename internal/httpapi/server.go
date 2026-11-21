@@ -33,6 +33,9 @@ type Config struct {
 	// OwnerAuthorized verifies an external owner session. It must reject all other accounts.
 	OwnerAuthorized     func(*http.Request) bool
 	DeviceAuthorized    func(context.Context, string, string) (bool, bool, error)
+	// DeviceRemoved reports a device that was removed in the panel and still
+	// uses its old key, so it is told so instead of failing quietly.
+	DeviceRemoved func(context.Context, string, string) bool
 	ClerkPublishableKey string
 	PairingEnabled      bool
 	// DeviceSessions, when set, lets paired devices open owner panel views.
@@ -159,6 +162,11 @@ func (s *Server) ingest(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	if !s.ingestAuthorized(request, batch.DeviceID) {
+		token, _ := strings.CutPrefix(request.Header.Get("Authorization"), "Bearer ")
+		if s.config.DeviceRemoved != nil && s.config.DeviceRemoved(request.Context(), batch.DeviceID, token) {
+			writeError(writer, http.StatusUnauthorized, "device_removed", "this device was removed from Telemetry; set it up again to keep sending")
+			return
+		}
 		writeError(writer, http.StatusUnauthorized, "unauthorized", "valid ingest credentials are required for this device")
 		return
 	}

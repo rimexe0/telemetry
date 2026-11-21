@@ -94,3 +94,69 @@ func TestPairingHTTPApprovalBoundary(t *testing.T) {
 		t.Fatalf("revoke %d", w.Code)
 	}
 }
+
+func TestSetupCodeHTTP(t *testing.T) {
+	address := os.Getenv("TELEMETRY_TEST_DATABASE_URL")
+	if address == "" {
+		t.Skip("requires disposable PostgreSQL")
+	}
+	s, err := Open(t.Context(), address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	h, err := NewHandler(s, HandlerConfig{PublicURL: "https://panel.example:8443", RelayKey: "BRELAYKEY", VerifyOwner: func(r *http.Request) bool { return r.Header.Get("Authorization") == "Bearer owner" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := func(method, path, token, origin, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		if token != "" {
+			r.Header.Set("Authorization", "Bearer "+token)
+		}
+		if origin != "" {
+			r.Header.Set("Origin", origin)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	const origin = "https://panel.example:8443"
+	if w := call("POST", "/v1/pairing/invites", "other", origin, "{}"); w.Code != 401 {
+		t.Fatalf("invite without owner %d", w.Code)
+	}
+	if w := call("POST", "/v1/pairing/invites", "owner", "https://attacker.example", "{}"); w.Code != 403 {
+		t.Fatalf("invite from another origin %d", w.Code)
+	}
+	if w := call("PUT", "/v1/pairing/settings", "owner", origin, `{"relay_url":"https://relay.example"}`); w.Code != 200 || !strings.Contains(w.Body.String(), `"relay_key":"BRELAYKEY"`) {
+		t.Fatalf("relay settings %d %s", w.Code, w.Body.String())
+	}
+	w := call("POST", "/v1/pairing/invites", "owner", origin, "{}")
+	if w.Code != 201 {
+		t.Fatalf("invite %d %s", w.Code, w.Body.String())
+	}
+	var code SetupCode
+	if err := json.Unmarshal(w.Body.Bytes(), &code); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(code.JoinURL, DefaultJoinPage+"#") || !strings.Contains(code.JoinURL, "r=https%3A%2F%2Frelay.example") || !strings.HasPrefix(code.SetupLink, "telemetry://setup?") || !strings.HasPrefix(code.QR, "data:image/png;base64,") || !strings.Contains(code.Commands["mac"], "'"+code.JoinURL+"'") {
+		t.Fatalf("setup code %+v", code)
+	}
+	id, _ := randomID(16)
+	secret := "code-http-device-secret"
+	payload, _ := json.Marshal(map[string]string{"device_id": id, "device_name": "Code device", "credential_hash": CredentialHash(secret), "code": code.Code})
+	start := call("POST", "/v1/pairing/sessions", "", "", string(payload))
+	if start.Code != 201 || !strings.Contains(start.Body.String(), `"status":"approved"`) {
+		t.Fatalf("start with code %d %s", start.Code, start.Body.String())
+	}
+	payload, _ = json.Marshal(map[string]string{"device_id": id + "x", "device_name": "Second", "credential_hash": CredentialHash("x"), "code": code.Code})
+	if w := call("POST", "/v1/pairing/sessions", "", "", string(payload)); w.Code != 403 || !strings.Contains(w.Body.String(), "invalid_code") {
+		t.Fatalf("reused code %d %s", w.Code, w.Body.String())
+	}
+	if w := call("GET", "/v1/pairing/invites", "owner", "", ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"used_by_device":"`+id+`"`) || strings.Contains(w.Body.String(), code.Code) {
+		t.Fatalf("invite list %d %s", w.Code, w.Body.String())
+	}
+}

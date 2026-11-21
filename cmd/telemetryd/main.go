@@ -134,6 +134,7 @@ func main() {
 		IngestToken:         *ingestToken,
 		OwnerAuthorized:     ownerAuthorized,
 		DeviceAuthorized:    devices.AuthorizeDevice,
+		DeviceRemoved:       devices.Removed,
 		PairingEnabled:      clerkPairing || panelPairing,
 		DeviceSessions:      deviceSessions,
 		Changes:             feed,
@@ -158,12 +159,27 @@ func main() {
 	}
 	router := http.NewServeMux()
 	router.Handle("/mcp", mcpHandler)
+	// The relay key is loaded before pairing: setup codes carry its public half.
+	var relayKey *sealed.ServerKey
+	if *relayListen != "" {
+		if *relayKeyFile == "" {
+			log.Fatal("TELEMETRY_RELAY_KEY_FILE or -relay-key-file is required with a relay listen address")
+		}
+		relayKey, err = sealed.LoadOrCreateKey(*relayKeyFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
 	if clerkPairing || panelPairing {
 		verifyOwner := ownerAuthorized
 		if panelPairing {
 			verifyOwner = server.PanelOwner
 		}
-		pairing, err := enrollment.NewHandler(devices, enrollment.HandlerConfig{VerifyOwner: verifyOwner, PublicURL: publicURL})
+		relayPublic := ""
+		if relayKey != nil {
+			relayPublic = relayKey.Public()
+		}
+		pairing, err := enrollment.NewHandler(devices, enrollment.HandlerConfig{VerifyOwner: verifyOwner, PublicURL: publicURL, RelayKey: relayPublic, JoinPage: os.Getenv("TELEMETRY_JOIN_PAGE")})
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -192,16 +208,10 @@ func main() {
 		defer shutdownCancel()
 		_ = httpServer.Shutdown(shutdownContext)
 	}()
-	if *relayListen != "" {
+	if relayKey != nil {
 		// Devices reach this door without Tailscale. It only opens requests
 		// sealed to this key and only passes on device paths.
-		if *relayKeyFile == "" {
-			log.Fatal("TELEMETRY_RELAY_KEY_FILE or -relay-key-file is required with a relay listen address")
-		}
-		key, err := sealed.LoadOrCreateKey(*relayKeyFile)
-		if err != nil {
-			log.Fatal(err)
-		}
+		key := relayKey
 		relayServer := &http.Server{
 			Addr:              *relayListen,
 			Handler:           &sealed.Relay{Key: key, Next: handler, MaxBytes: 24 << 20, Window: 5 * time.Minute, PerMinute: 600},
