@@ -158,3 +158,29 @@ func TestRelayCarriesPairingStartAndPollOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestRelaySendsBrowsersToThePanel(t *testing.T) {
+	now := time.Date(2026, 11, 21, 9, 0, 0, 0, time.UTC)
+	r, sealer, seen := relay(t, now)
+	for _, method := range []string{"GET", "HEAD"} {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(method, "/anything?x=1", nil))
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("%s without a panel address = %d", method, w.Code)
+		}
+	}
+	r.Browsers = "https://server.example.ts.net:8443/panel/"
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+	if w.Code != http.StatusFound || w.Header().Get("Location") != r.Browsers {
+		t.Fatalf("browser = %d %q", w.Code, w.Header().Get("Location"))
+	}
+	if len(*seen) != 0 {
+		t.Fatal("a browser reached the server behind the relay")
+	}
+	// Devices are unaffected.
+	message, open, _ := sealer.Seal(Head{Method: "GET", Path: "/v1/device/now", At: now.UnixMilli(), ID: newID()}, nil)
+	if answer, _, err := open(send(t, r, message, "1.2.3.4").Body.Bytes()); err != nil || answer.Status != http.StatusAccepted {
+		t.Fatalf("device after redirect set = %+v %v", answer, err)
+	}
+}

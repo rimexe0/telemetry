@@ -282,7 +282,7 @@ func main() {
 		key := relayKey
 		relayServer := &http.Server{
 			Addr:              *relayListen,
-			Handler:           &sealed.Relay{Key: key, Next: handler, MaxBytes: 24 << 20, Window: 5 * time.Minute, PerMinute: 600},
+			Handler:           &sealed.Relay{Key: key, Next: handler, MaxBytes: 24 << 20, Window: 5 * time.Minute, PerMinute: 600, Browsers: relayBrowsers(publicURL)},
 			ReadHeaderTimeout: 10 * time.Second,
 		}
 		go func() {
@@ -366,4 +366,14 @@ func tokenMapEnv(name string) map[string]string {
 		}
 	}
 	return values
+}
+
+// relayBrowsers is where a browser opening the relay's public address goes:
+// the panel, on the private address only tailnet devices can open. Set
+// TELEMETRY_RELAY_BROWSERS=off to answer them with "not found" instead.
+func relayBrowsers(publicURL string) string {
+	if publicURL == "" || os.Getenv("TELEMETRY_RELAY_BROWSERS") == "off" {
+		return ""
+	}
+	return strings.TrimRight(publicURL, "/") + "/panel/"
 }

@@ -35,6 +35,9 @@ import androidx.health.connect.client.records.HeartRateRecord
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.lifecycle.lifecycleScope
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -101,6 +104,7 @@ class SetupActivity : ComponentActivity() {
     private lateinit var status: TextView
     private lateinit var server: EditText
     private lateinit var code: EditText
+    private lateinit var scan: Button
     private var codeTried = ""
     private lateinit var primary: Button
     private lateinit var skip: Button
@@ -152,6 +156,11 @@ class SetupActivity : ComponentActivity() {
             visibility = View.GONE
         }
         primary = Button(this).apply { setOnClickListener { act() } }
+        scan = Button(this).apply {
+            text = "Scan the QR"
+            visibility = View.GONE
+            setOnClickListener { scanQr() }
+        }
         skip = Button(this).apply {
             text = "Skip for now"
             setOnClickListener { current?.let(::skipStep) }
@@ -169,6 +178,7 @@ class SetupActivity : ComponentActivity() {
             addView(progress)
             addView(title)
             addView(why)
+            addView(scan)
             addView(server)
             addView(code)
             addView(primary)
@@ -233,6 +243,7 @@ class SetupActivity : ComponentActivity() {
             approveHere.visibility = View.GONE
             server.visibility = View.GONE
             code.visibility = View.GONE
+            scan.visibility = View.GONE
             return
         }
         val total = SetupStep.entries.size
@@ -243,6 +254,7 @@ class SetupActivity : ComponentActivity() {
         skip.visibility = if (step.required) View.GONE else View.VISIBLE
         server.visibility = if (step == SetupStep.PAIR) View.VISIBLE else View.GONE
         code.visibility = server.visibility
+        scan.visibility = server.visibility
         approveHere.visibility = if (step == SetupStep.PAIR && pairingFlow.approvalUrl != null) View.VISIBLE else View.GONE
         if (step != SetupStep.PAIR) return
         val config = DeliveryConfig(this)
@@ -307,6 +319,34 @@ class SetupActivity : ComponentActivity() {
             )
             SetupStep.START -> startCollection()
         }
+    }
+
+    /** Reads the panel's setup QR: the server's address and the one-time code. */
+    private fun scanQr() {
+        val options = GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build()
+        GmsBarcodeScanning.getClient(this, options).startScan()
+            .addOnSuccessListener { barcode ->
+                val text = barcode.rawValue
+                val link = SetupLink.parse(text)
+                if (link == null) {
+                    status.text = "That QR isn't a Telemetry setup code. In the panel, open Devices → Add a device and scan the QR it shows."
+                    return@addOnSuccessListener
+                }
+                SetupLink.applyLink(this, text)
+                server.setText(link.server)
+                code.setText(link.code)
+                codeTried = link.code
+                act()
+            }
+            .addOnFailureListener { error ->
+                // The first scan on a phone can come while Play services is
+                // still fetching the scanner.
+                status.text = if (error is com.google.mlkit.common.MlKitException && error.errorCode == com.google.mlkit.common.MlKitException.UNAVAILABLE) {
+                    "The scanner is still being set up on this phone. Try again in a few seconds."
+                } else {
+                    "The scanner couldn't start here; it needs Google Play services. Scan the QR with the camera app instead, or type the address and code below."
+                }
+            }
     }
 
     private fun openSetting(preferred: Intent, fallback: Intent) {

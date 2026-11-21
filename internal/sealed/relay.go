@@ -24,6 +24,10 @@ type Relay struct {
 	Window   time.Duration
 	// PerMinute is how many requests one address may make in a minute.
 	PerMinute int
+	// Browsers, when set, is where a person who opens the relay's address
+	// in a browser is sent: the panel on its private address. Devices only
+	// ever POST sealed requests, so a GET is always a person.
+	Browsers string
 
 	mu      sync.Mutex
 	seen    map[string]time.Time
@@ -50,6 +54,12 @@ func (r *Relay) clock() time.Time {
 }
 
 func (r *Relay) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+	if r.Browsers != "" && (request.Method == http.MethodGet || request.Method == http.MethodHead) {
+		writer.Header().Set("Cache-Control", "no-store")
+		writer.Header().Set("Referrer-Policy", "no-referrer")
+		http.Redirect(writer, request, r.Browsers, http.StatusFound)
+		return
+	}
 	if request.Method != http.MethodPost || request.URL.Path != "/" {
 		http.NotFound(writer, request)
 		return

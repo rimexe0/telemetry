@@ -112,7 +112,7 @@
         <div class="way">
           <h3>Phone</h3>
           <img class="qr" src={code.qr} alt="QR code that sets up the Telemetry phone app" width="220" height="220" />
-          <p>Scan this with the phone's camera. If the app isn't installed yet, the page it opens offers it first.</p>
+          <p>In the Telemetry app, tap <b>Scan the QR</b> and point it here: it reads the server and the code, and connects. No app yet? Scan it with the camera instead; the page it opens offers the app first.</p>
           <p class="muted">Or, in the app, type the server address <code>{code.server_url}</code> and the code above.</p>
           {#if !code.relay_url}<p class="muted">The phone needs Tailscale on to reach your server.</p>{/if}
         </div>

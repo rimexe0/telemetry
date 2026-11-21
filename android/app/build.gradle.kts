@@ -78,4 +78,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.work:work-runtime-ktx:2.10.1")
     implementation("com.google.android.gms:play-services-wearable:19.0.0")
+    // Scans the panel's setup QR; Google Play services shows the camera, so
+    // the app needs no camera permission.
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
 }
