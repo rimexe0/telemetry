@@ -14,9 +14,11 @@ import (
 
 // Planning endpoints are owner-only: activities and plans are personal intent,
 // so neither device tokens nor the read token may touch them. Agents gain a
-// separate scoped path later through the reviewed change loop.
+// separate scoped path later through the reviewed change loop. The owner is
+// the external sign-in (Clerk) when one is configured, otherwise whoever
+// signed in to the panel with the panel token.
 func (s *Server) ownerAuthorized(request *http.Request) bool {
-	return (s.config.OwnerAuthorized != nil && s.config.OwnerAuthorized(request)) || s.config.DeviceSessions.Authorized(request)
+	return (s.config.OwnerAuthorized != nil && s.config.OwnerAuthorized(request)) || s.panelSessionAuthorized(request) || s.config.DeviceSessions.Authorized(request)
 }
 
 func (s *Server) activities(writer http.ResponseWriter, request *http.Request) {

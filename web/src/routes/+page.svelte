@@ -432,7 +432,7 @@
   }
 
   async function refreshPairing(): Promise<void> {
-    if (!pairingId || !clerk?.isSignedIn) return;
+    if (!pairingId || !(clerk?.isSignedIn || authenticated)) return;
     pairingLoading = true;
     pairingError = '';
     try {
@@ -445,7 +445,7 @@
   }
 
   async function connectPairing(): Promise<void> {
-    if (!pairingId || !clerk?.isSignedIn) return;
+    if (!pairingId || !(clerk?.isSignedIn || authenticated)) return;
     pairingLoading = true;
     pairingError = '';
     try {
@@ -688,6 +688,8 @@
       token = '';
       authenticated = true;
       loading = false;
+      // A device's pairing link: show it as soon as the panel token signs in.
+      void refreshPairing();
       await refresh();
     } catch (cause) {
       error = cause instanceof APIError ? cause.message : 'Unable to start a panel session.';
@@ -765,6 +767,7 @@
       }
       if (authenticated) {
         checkingSession = false;
+        if (pairingId && !clerk) void refreshPairing();
         void refresh();
       }
     } catch (cause) {
@@ -866,7 +869,7 @@
         {:else if pairingApproved}<p>{pairing?.device_name ?? 'Device'} connected.</p>
         {:else if pairing}
           <div class="pairing-row"><strong>{pairing.device_name}</strong><span>{pairing.device_id}</span><button on:click={connectPairing} disabled={pairingLoading || pairing.status !== 'pending'}>Connect</button></div>
-        {:else if clerk?.isSignedIn}<p class="error" role="alert">{pairingError || 'Pairing session unavailable.'}</p>
+        {:else if clerk?.isSignedIn || !clerk}<p class="error" role="alert">{pairingError || 'Pairing session unavailable.'}</p>
         {:else}<button on:click={signInWithClerk} disabled={clerkLoading}>{clerkLoading ? 'Loading Clerk…' : 'Sign in to connect'}</button>{/if}
         {#if pairingError && pairing}<p class="error" role="alert">{pairingError}</p>{/if}
       </section>

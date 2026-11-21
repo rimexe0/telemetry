@@ -14,8 +14,10 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.os.Process
 import android.provider.Settings
+import android.text.InputType
 import android.view.View
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -97,6 +99,7 @@ class SetupActivity : ComponentActivity() {
     private lateinit var title: TextView
     private lateinit var why: TextView
     private lateinit var status: TextView
+    private lateinit var server: EditText
     private lateinit var primary: Button
     private lateinit var skip: Button
     private lateinit var approveHere: Button
@@ -127,6 +130,16 @@ class SetupActivity : ComponentActivity() {
         title = text(28f, bold = true)
         why = text(17f)
         status = text(15f, MUTED)
+        // A public build has no server built in: its address is asked here,
+        // unless a setup link or an earlier build already gave it.
+        server = EditText(this).apply {
+            hint = "https://server.your-tailnet.ts.net:8443"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            setSingleLine()
+            setTextColor(FOREGROUND)
+            setHintTextColor(MUTED)
+            visibility = View.GONE
+        }
         primary = Button(this).apply { setOnClickListener { act() } }
         skip = Button(this).apply {
             text = "Skip for now"
@@ -145,6 +158,7 @@ class SetupActivity : ComponentActivity() {
             addView(progress)
             addView(title)
             addView(why)
+            addView(server)
             addView(primary)
             addView(skip)
             addView(status)
@@ -196,6 +210,7 @@ class SetupActivity : ComponentActivity() {
             primary.text = "Go to Now"
             skip.visibility = View.GONE
             approveHere.visibility = View.GONE
+            server.visibility = View.GONE
             return
         }
         val total = SetupStep.entries.size
@@ -204,13 +219,23 @@ class SetupActivity : ComponentActivity() {
         why.text = step.why
         primary.text = step.action
         skip.visibility = if (step.required) View.GONE else View.VISIBLE
+        server.visibility = if (step == SetupStep.PAIR) View.VISIBLE else View.GONE
+        if (step == SetupStep.PAIR && server.text.isBlank()) server.setText(DeliveryConfig(this).serverUrl)
         approveHere.visibility = if (step == SetupStep.PAIR && pairingFlow.approvalUrl != null) View.VISIBLE else View.GONE
     }
 
     private fun act() {
         val step = current ?: run { finish(); return }
         when (step) {
-            SetupStep.PAIR -> pairingFlow.start(DeliveryConfig(this).serverUrl, openBrowser = false)
+            SetupStep.PAIR -> {
+                val address = server.text.toString().trim().trimEnd('/')
+                if (!address.startsWith("https://")) {
+                    status.text = "Enter your Telemetry server's address, starting with https://. It is printed at the end of the server setup."
+                    return
+                }
+                DeliveryConfig(this).serverUrl = address
+                pairingFlow.start(address, openBrowser = false)
+            }
             SetupStep.NOTIFICATIONS -> if (Build.VERSION.SDK_INT >= 33) {
                 permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
             }

@@ -68,14 +68,16 @@ systemctl --user restart telemetry-collector.service
 systemctl --user start telemetry-update@collector.timer
 loginctl enable-linger "$USER" 2>/dev/null || echo "Run: sudo loginctl enable-linger $USER, so Telemetry runs without a login."
 
-# Chromium browsers (Helium among them) read policy from /etc/chromium: it
-# makes every profile install the Telemetry extension from this collector,
+# Chromium browsers read policy from these folders (Helium from /etc/chromium):
+# it makes every profile install the Telemetry extension from this collector,
 # and it cannot be turned off there.
-policy=/etc/chromium/policies/managed/telemetry.json
-if ! cmp -s jobs/telemetry-browser-policy.json "$policy"; then
-  echo "Installing the browser policy that keeps the Telemetry extension installed (asks for your password)"
-  sudo install -D -m 644 jobs/telemetry-browser-policy.json "$policy"
-fi
+for policy_dir in /etc/chromium /etc/opt/chrome /etc/brave /etc/opt/edge; do
+  policy="$policy_dir/policies/managed/telemetry.json"
+  if ! cmp -s jobs/telemetry-browser-policy.json "$policy"; then
+    echo "Installing the browser policy that keeps the Telemetry extension installed in $policy_dir (asks for your password)"
+    sudo install -D -m 644 jobs/telemetry-browser-policy.json "$policy"
+  fi
+done
 
 echo "
 Done. Telemetry now updates itself.

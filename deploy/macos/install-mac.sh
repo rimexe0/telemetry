@@ -38,7 +38,9 @@ fi
 if [[ ! -f "$config" && -z "$server" ]]; then
   server=$(ask "Telemetry server address (https://…:8443)")
 fi
-if [[ -z "$relay" ]]; then
+# A relay is optional (devices reach the server over Tailscale without one);
+# TELEMETRY_RELAY set to nothing, as install.sh does, means none.
+if [[ -z "$relay" && -z "${TELEMETRY_RELAY+set}" ]]; then
   relay=$(ask "Relay address (empty for none)")
   [[ -z "$relay" ]] || relay_key=$(ask "Relay key (from the server log)")
 fi
@@ -118,11 +120,15 @@ say "What is left is yours to grant"
 open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" 2>/dev/null || true
 print -- "
 1. Accessibility: turn on Telemetry Desktop in the settings window just opened.
-2. Helium: restart it once. The extension is installed by browser policy, so
-   chrome://extensions shows it as installed by your administrator and it
-   cannot be removed or switched off there. Remove the copy you loaded
-   unpacked earlier, or it covers pages twice. In its Details, turn on
-   Allow in Incognito.
-3. Phone: connect it by USB with USB debugging on, and run install-phone.sh.
+2. Browser: restart it once. Helium, Chrome, Chromium, Brave and Edge get the
+   extension by browser policy, so chrome://extensions shows it as installed
+   by your administrator. Remove a copy you loaded unpacked earlier, or it
+   covers pages twice. In its Details, turn on Allow in Incognito. If it does
+   not appear, load it yourself: chrome://extensions, Developer mode, Load
+   unpacked, and choose $root/extension.
+3. Phone: install the app from
+   https://github.com/$repo/releases/latest/download/telemetry-phone.apk
+   and enter this server's address in it; or, with the phone connected by USB
+   and USB debugging on, run install-phone.sh, which also grants permissions.
 
 Done. Telemetry now updates itself."

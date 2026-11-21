@@ -61,7 +61,7 @@ class PairingFlow(
                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(start.panelUrl)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                     onStatus("Sign in in the browser and tap Connect, then come back here.")
                 } else {
-                    onStatus("Now open the Telemetry panel on your Mac and click Connect on the \"wants to connect\" banner. This screen moves on by itself.")
+                    onStatus("Now open the Telemetry panel and click Connect on the \"wants to connect\" banner. This screen moves on by itself.")
                 }
                 poll(serverUrl, start.id, secret)
             } catch (error: Exception) {
