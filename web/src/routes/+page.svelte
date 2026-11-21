@@ -901,7 +901,7 @@
     </nav>
     {#each pendingPairings as item (item.pairing_id)}
       <section class="pairing" aria-label="Device waiting to connect">
-        <div class="pairing-row"><strong>{item.device_name || 'A device'} wants to connect{item.returning ? ' again' : ''}</strong><span>{item.device_id}{item.returning ? ' · was connected before; connecting replaces its old key. Only connect it if you just set it up again.' : ''}</span>
+        <div class="pairing-row"><strong>{item.device_name || 'A device'} wants to connect{item.returning ? ' again' : ''}</strong><span>{item.device_id}{item.returning ? ' · was connected before; connecting replaces its old key. Only connect it if you just set it up again.' : ''}{item.continues ? ` · the same phone as ${item.continues}, set up again; it keeps that phone's history` : ''}</span>
           <button on:click={() => approvePending(item)} disabled={pendingApproving === item.pairing_id}>{pendingApproving === item.pairing_id ? 'Connecting…' : 'Connect'}</button></div>
         {#if pendingError}<p class="error" role="alert">{pendingError}</p>{/if}
       </section>

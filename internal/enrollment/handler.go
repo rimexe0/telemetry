@@ -133,6 +133,7 @@ func (h *Handler) start(writer http.ResponseWriter, request *http.Request) {
 		"panel_url":  h.publicURL + "/panel/?pair=" + url.QueryEscape(session.PairingID),
 		"expires_at": session.ExpiresAt,
 		"status":     session.Status,
+		"device_id":  session.DeviceID,
 	})
 }
 

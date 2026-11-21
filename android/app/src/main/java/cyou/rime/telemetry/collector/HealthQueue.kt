@@ -241,6 +241,24 @@ class HealthQueue(context: Context) {
         }
     }
 
+    /**
+     * Moves records not yet sent from one device ID to another, in their
+     * source keys too: after a format the phone continues under the ID the
+     * server already knows it by.
+     */
+    fun reassignDevice(from: String, to: String): Int {
+        if (from == to) return 0
+        return helper.writableDatabase.compileStatement(
+            "UPDATE health_observations SET device_id = ?, source_instance_key = replace(source_instance_key, ?, ?) WHERE device_id = ? AND delivered_at IS NULL",
+        ).use { statement ->
+            statement.bindString(1, to)
+            statement.bindString(2, from)
+            statement.bindString(3, to)
+            statement.bindString(4, from)
+            statement.executeUpdateDelete()
+        }
+    }
+
     fun markDelivered(rowIds: List<Long>, deliveredAt: String): Int {
         if (rowIds.isEmpty()) return 0
         val database = helper.writableDatabase

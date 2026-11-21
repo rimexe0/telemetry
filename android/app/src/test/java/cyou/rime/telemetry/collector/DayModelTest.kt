@@ -63,6 +63,17 @@ class DayModelTest {
     }
 
     @Test
+    fun theTimelineStartsWhenTheOwnerWoke() {
+        // Woke 11:10 local (08:10Z): the strip starts at 11:00, after the 09:20 chunk from the night before.
+        val view = DayModel.parse(json.replace(""""from":""", """"woke_at":"2026-10-01T08:10:00Z","from":"""))
+        assertEquals(Instant.parse("2026-10-01T08:10:00Z"), view.wokeAt)
+        val (start, _) = DayModel.window(view, zone)
+        assertEquals(Instant.parse("2026-10-01T08:00:00Z"), start)
+        // Without a wake time it starts at the first activity, as before.
+        assertEquals(null, DayModel.parse(json.replace(""""from":""", """"woke_at":null,"from":""")).wokeAt)
+    }
+
+    @Test
     fun aFinishedDayEndsAtItsLastActivityAndIsNamed() {
         val finished = DayModel.parse(json.replace(""""to":"2026-10-01T10:30:00Z"""", """"to":"2026-10-01T21:00:00Z"""")
             .replace(""""blocks":[{""", """"blocks":[],"ignored":[{"""))

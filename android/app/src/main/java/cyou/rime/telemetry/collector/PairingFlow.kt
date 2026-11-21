@@ -54,6 +54,7 @@ class PairingFlow(
                 }
                 config.savePairing(start.id, secret)
                 if (start.approved) {
+                    start.deviceId?.let { DeviceIdentity.adopt(context.applicationContext, it) }
                     connected(config, serverUrl, secret)
                     return@launch
                 }
@@ -114,7 +115,12 @@ class PairingFlow(
                     when (result.state) {
                         PairingStatus.State.PENDING -> onStatus("Waiting for approval. Click Connect on the \"wants to connect\" banner in the Telemetry panel.")
                         PairingStatus.State.APPROVED -> {
-                            if (result.deviceId != DeviceIdentity.get(context.applicationContext)) {
+                            // Set up again after a format: the server knows this
+                            // phone by its earlier ID, which it keeps.
+                            val registered = result.deviceId
+                            if (registered != null && registered != DeviceIdentity.get(context.applicationContext) &&
+                                !DeviceIdentity.adopt(context.applicationContext, registered)
+                            ) {
                                 throw IllegalStateException("pairing approval was for another device")
                             }
                             connected(config, serverUrl, secret)

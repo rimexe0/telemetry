@@ -375,3 +375,96 @@ func TestPostgresSetupCodes(t *testing.T) {
 		t.Fatalf("relay = %q, %v", got, err)
 	}
 }
+
+func TestPostgresFormattedPhoneContinuesAsTheSamePhone(t *testing.T) {
+	databaseURL := os.Getenv("TELEMETRY_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TELEMETRY_TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	opened, err := Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(opened.Close)
+	if err := opened.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	reset := func() {
+		if _, err := opened.pool.Exec(context.Background(), `TRUNCATE telemetry_devices, telemetry_pairing_sessions, telemetry_pairing_invites, telemetry_device_credential_history`); err != nil {
+			t.Error(err)
+		}
+	}
+	reset()
+	t.Cleanup(reset)
+	clock := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	service := New(opened.pool, Options{Now: func() time.Time { return clock }})
+	pair := func(id, name, secret string) PairingSession {
+		t.Helper()
+		invite, err := service.CreateInvite(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hash, _ := ParseCredentialHash(CredentialHash(secret))
+		session, err := service.StartWithCode(ctx, id, name, hash, invite.Code)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return session
+	}
+	first := pair("android-1111111111111111", "Nothing A063", "first-install")
+	if first.DeviceID != "android-1111111111111111" {
+		t.Fatalf("first install = %+v", first)
+	}
+	// The same phone, still sending: a second phone of the same model is not merged into it.
+	if _, _, err := service.AuthorizeDevice(ctx, "android-1111111111111111", "first-install"); err != nil {
+		t.Fatal(err)
+	}
+	var seen *time.Time
+	if err := opened.pool.QueryRow(ctx, `SELECT last_seen_at FROM telemetry_devices WHERE device_id='android-1111111111111111'`).Scan(&seen); err != nil || seen == nil {
+		t.Fatalf("last seen not recorded: %v %v", seen, err)
+	}
+	twin := pair("android-2222222222222222", "Nothing A063", "twin")
+	if twin.DeviceID != "android-2222222222222222" {
+		t.Fatalf("a phone in use was taken over: %+v", twin)
+	}
+	// Formatted: quiet for an hour, then set up again with a new Android ID.
+	clock = clock.Add(time.Hour)
+	if _, err := opened.pool.Exec(ctx, `UPDATE telemetry_devices SET last_seen_at=$1 WHERE device_id='android-2222222222222222'`, clock); err != nil {
+		t.Fatal(err)
+	}
+	hash, _ := ParseCredentialHash(CredentialHash("after-format"))
+	pending, err := service.Start(ctx, "android-3333333333333333", "Nothing A063", hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := service.ListPending(ctx)
+	if err != nil || len(list) != 1 || list[0].Continues != "android-1111111111111111" {
+		t.Fatalf("pending continues = %+v, %v", list, err)
+	}
+	approved, err := service.Approve(ctx, pending.PairingID)
+	if err != nil || approved.DeviceID != "android-1111111111111111" {
+		t.Fatalf("approved as = %+v, %v", approved, err)
+	}
+	if again, err := service.Approve(ctx, pending.PairingID); err != nil || again.DeviceID != "android-1111111111111111" {
+		t.Fatalf("approved twice = %+v, %v", again, err)
+	}
+	polled, err := service.Poll(ctx, pending.PairingID, "after-format")
+	if err != nil || polled.DeviceID != "android-1111111111111111" || polled.Status != "approved" {
+		t.Fatalf("poll tells the phone its ID = %+v, %v", polled, err)
+	}
+	if registered, authorized, _ := service.AuthorizeDevice(ctx, "android-1111111111111111", "after-format"); !registered || !authorized {
+		t.Fatal("the continued phone's new key does not work")
+	}
+	if registered, authorized, _ := service.AuthorizeDevice(ctx, "android-1111111111111111", "first-install"); !registered || authorized {
+		t.Fatal("the formatted phone's old key still works")
+	}
+	if registered, _, _ := service.AuthorizeDevice(ctx, "android-3333333333333333", "after-format"); registered {
+		t.Fatal("the new Android ID was registered as its own device")
+	}
+	// A computer keeps its own ID even with a matching name.
+	desktop := pair("desktop-abc", "Nothing A063", "desktop")
+	if desktop.DeviceID != "desktop-abc" {
+		t.Fatalf("desktop = %+v", desktop)
+	}
+}

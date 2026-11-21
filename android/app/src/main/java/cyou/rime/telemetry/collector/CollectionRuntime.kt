@@ -183,6 +183,7 @@ object CollectionRuntime {
         // Reserve the bounded attempt first. A crash may conservatively consume
         // the allowance; it cannot reset it and trigger unlimited retries.
         if (snapshot.networkMetered) check(prefs.edit().putLong("metered_used", used + limit).commit())
+        DeviceIdentity.settle(context)
         return try {
             val result = TelemetryDeliveryClient(queue, DeviceIdentity.get(context), config.serverUrl, token, SealedChannel.configured(context))
                 .drainBounded(maxBatches = if (budget.constrainedReason == null) 10 else 1,

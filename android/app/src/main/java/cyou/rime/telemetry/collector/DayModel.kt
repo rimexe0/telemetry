@@ -73,6 +73,8 @@ data class DayView(
     val scrollingMinutes: Double = 0.0,
     /** Time away from home, from the phone's GPS. */
     val outsideMinutes: Double = 0.0,
+    /** When the owner woke that day, as the server found it; the timeline starts there. */
+    val wokeAt: Instant? = null,
 )
 
 object DayModel {
@@ -88,6 +90,7 @@ object DayModel {
         return DayView(
             date = root.getString("date"),
             from = Instant.parse(root.getString("from")),
+            wokeAt = root.optString("woke_at").takeIf { it.isNotBlank() && it != "null" }?.let { runCatching { Instant.parse(it) }.getOrNull() },
             to = Instant.parse(root.getString("to")),
             blocks = day.optJSONArray("blocks").each {
                 DayBlock(it.getString("title"), Instant.parse(it.getString("start")), Instant.parse(it.getString("end")), it.getString("status"),
@@ -165,7 +168,7 @@ object DayModel {
     /** Whether the answer is for the current day. */
     fun isToday(view: DayView, now: Instant, zone: ZoneId = ZoneId.systemDefault()): Boolean = view.date == today(now, zone)
 
-    /** The hours the timeline spans: from the first activity or block to now or the last block. */
+    /** The hours the timeline spans: from when the owner woke (else the first activity or block) to now or the last block. */
     fun window(view: DayView, zone: ZoneId): Pair<Instant, Instant> {
         val starts = view.chunks.map { it.start } + view.blocks.map { it.start }
         // A finished day ends at its last activity or block, not at midnight.
@@ -175,7 +178,9 @@ object DayModel {
         val dayEnd = view.from.plusSeconds(24 * 3600)
         val ends = view.blocks.map { if (it.end.isAfter(dayEnd)) dayEnd else it.end } + view.chunks.map { it.end } +
             (if (finished && view.chunks.isNotEmpty()) emptyList() else listOf(view.to))
-        val first = (starts.minOrNull() ?: view.from).coerceAtLeast(view.from)
+        // The day starts when the owner woke; use from the night before is
+        // part of the previous day.
+        val first = (view.wokeAt ?: starts.minOrNull() ?: view.from).coerceAtLeast(view.from)
         val start = first.atZone(zone).withMinute(0).withSecond(0).withNano(0).toInstant()
         val last = ends.max()
         val floor = last.atZone(zone).withMinute(0).withSecond(0).withNano(0)

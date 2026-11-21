@@ -209,9 +209,19 @@ func (s *Server) deviceDay(writer http.ResponseWriter, request *http.Request) {
 		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
 		return
 	}
+	// When the owner woke that day, so the timeline starts there and not at
+	// midnight: the last long quiet stretch ending before 18:00.
+	var woke *time.Time
+	at := from.Add(18 * time.Hour)
+	if at.After(now) {
+		at = now
+	}
+	if wake, err := store.LoadWakeTime(ctx, s.repository, at); err == nil && wake != nil && !wake.Before(from.Add(-6*time.Hour)) && wake.Before(from.Add(18*time.Hour)) {
+		woke = wake
+	}
 	writeJSON(writer, http.StatusOK, map[string]any{
 		"date": day.Format("2006-01-02"), "timezone": location.String(), "from": from, "to": to, "generated_at": now, "plan_exists": plan != nil,
-		"day": activity.BuildDay(input),
+		"woke_at": woke, "day": activity.BuildDay(input),
 	})
 }
 

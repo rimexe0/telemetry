@@ -184,7 +184,7 @@ func (s *Service) redeem(ctx context.Context, tx pgx.Tx, deviceID, deviceName st
 	var value PairingSession
 	// The answer to an earlier try with this same key was lost: the device
 	// is already connected with it, so say so again.
-	err := tx.QueryRow(ctx, `SELECT p.pairing_id,p.device_id,p.device_name,p.expires_at,p.approved_at FROM telemetry_pairing_sessions p JOIN telemetry_devices d ON d.pairing_id=p.pairing_id WHERE p.device_id=$1 AND p.credential_hash=$2 AND d.status='active'`, deviceID, credentialHash).Scan(&value.PairingID, &value.DeviceID, &value.DeviceName, &value.ExpiresAt, &value.ApprovedAt)
+	err := tx.QueryRow(ctx, `SELECT p.pairing_id,d.device_id,p.device_name,p.expires_at,p.approved_at FROM telemetry_pairing_sessions p JOIN telemetry_devices d ON d.pairing_id=p.pairing_id WHERE p.device_id=$1 AND p.credential_hash=$2 AND d.status='active'`, deviceID, credentialHash).Scan(&value.PairingID, &value.DeviceID, &value.DeviceName, &value.ExpiresAt, &value.ApprovedAt)
 	if err == nil {
 		value.Status = "approved"
 		return value, tx.Commit(ctx)
@@ -217,7 +217,7 @@ func (s *Service) redeem(ctx context.Context, tx pgx.Tx, deviceID, deviceName st
 	if _, err = tx.Exec(ctx, `INSERT INTO telemetry_pairing_sessions(pairing_id,device_id,device_name,credential_hash,status,created_at,expires_at,approved_at) VALUES($1,$2,$3,$4,'approved',$5,$6,$5)`, id, deviceID, deviceName, credentialHash, now, value.ExpiresAt); err != nil {
 		return PairingSession{}, err
 	}
-	if err = register(ctx, tx, value, credentialHash, now); err != nil {
+	if value.DeviceID, err = register(ctx, tx, value, credentialHash, now); err != nil {
 		return PairingSession{}, err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE telemetry_pairing_invites SET used_at=$2,used_by_device=$3,used_by_name=$4 WHERE invite_id=$1`, inviteID, now, deviceID, deviceName); err != nil {
@@ -226,10 +226,44 @@ func (s *Service) redeem(ctx context.Context, tx pgx.Tx, deviceID, deviceName st
 	return value, tx.Commit(ctx)
 }
 
+// phoneQuietFor is how long a phone must have been silent before a new
+// install with the same name is taken to be the same phone, set up again.
+const phoneQuietFor = 10 * time.Minute
+
+// continued returns the device a new Android install continues: a phone of
+// the same name that has gone quiet, as after a format. Its ID changes with
+// every format, but the owner has one phone, so its history stays together.
+// Anything else keeps its own ID.
+func continued(ctx context.Context, tx pgx.Tx, deviceID, deviceName string, now time.Time) (string, error) {
+	if !strings.HasPrefix(deviceID, "android-") {
+		return deviceID, nil
+	}
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM telemetry_devices WHERE device_id=$1)`, deviceID).Scan(&exists); err != nil || exists {
+		return deviceID, err
+	}
+	var previous string
+	err := tx.QueryRow(ctx, `SELECT device_id FROM telemetry_devices WHERE device_id LIKE 'android-%' AND device_name=$1 AND owner_id=$2 AND (last_seen_at IS NULL OR last_seen_at<$3) ORDER BY COALESCE(last_seen_at,approved_at) DESC LIMIT 1`, deviceName, ownerIdentity, now.Add(-phoneQuietFor)).Scan(&previous)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return deviceID, nil
+	}
+	return previous, err
+}
+
 // register makes the approved session's key the device's only key. A device
 // that was connected before keeps its ID and history; the key it replaced is
-// recorded.
-func register(ctx context.Context, tx pgx.Tx, value PairingSession, hash []byte, now time.Time) error {
+// recorded. A phone set up again after a format continues as the same phone:
+// the ID it is registered under is returned, and the phone adopts it.
+func register(ctx context.Context, tx pgx.Tx, value PairingSession, hash []byte, now time.Time) (string, error) {
+	deviceID, err := continued(ctx, tx, value.DeviceID, value.DeviceName, now)
+	if err != nil {
+		return "", err
+	}
+	value.DeviceID = deviceID
+	return deviceID, registerAs(ctx, tx, value, hash, now)
+}
+
+func registerAs(ctx context.Context, tx pgx.Tx, value PairingSession, hash []byte, now time.Time) error {
 	var previousPair, previousStatus, previousName string
 	err := tx.QueryRow(ctx, `SELECT pairing_id,status,device_name FROM telemetry_devices WHERE device_id=$1 FOR UPDATE`, value.DeviceID).Scan(&previousPair, &previousStatus, &previousName)
 	if errors.Is(err, pgx.ErrNoRows) {

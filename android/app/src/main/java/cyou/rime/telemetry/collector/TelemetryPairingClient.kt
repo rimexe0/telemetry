@@ -11,6 +11,8 @@ data class PairingStart(
     val panelUrl: String,
     /** True when a setup code connected the phone at once. */
     val approved: Boolean = false,
+    /** The ID the server registered the phone as, when approved. */
+    val deviceId: String? = null,
 )
 
 data class PairingStatus(
@@ -68,7 +70,7 @@ class TelemetryPairingClient(
         val target = URL(panelUrl)
         require(target.protocol == expected.protocol && target.host == expected.host && target.port == expected.port && target.userInfo == null && target.path == "/panel/") { "Pairing response changed server" }
         require(Uri.parse(panelUrl).getQueryParameter("pair") == id) { "Pairing response changed session" }
-        return PairingStart(id, panelUrl, approved = optional(payload, "status") == "approved")
+        return PairingStart(id, panelUrl, approved = optional(payload, "status") == "approved", deviceId = optional(payload, "device_id"))
     }
 
     fun poll(pairingId: String, secret: String): PairingStatus {

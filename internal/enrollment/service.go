@@ -157,6 +157,9 @@ type PairingSession struct {
 	// Returning is set on a pending request from a device ID that was
 	// connected before: approving it replaces that device's old key.
 	Returning bool `json:"returning,omitempty"`
+	// Continues names the quiet phone a new Android install will continue
+	// as, keeping one phone across formats.
+	Continues string `json:"continues,omitempty"`
 }
 
 // Device is the owner-facing enrollment record.
@@ -292,12 +295,14 @@ func (s *Service) Approve(ctx context.Context, pairingID string) (PairingSession
 	if err != nil {
 		return value, err
 	}
-	var existingPair, status string
-	err = tx.QueryRow(ctx, `SELECT pairing_id,status FROM telemetry_devices WHERE device_id=$1`, value.DeviceID).Scan(&existingPair, &status)
-	if err == nil && existingPair == pairingID {
+	// Approved already (a repeated click): the device it was registered as.
+	var registeredAs, status string
+	err = tx.QueryRow(ctx, `SELECT device_id,status FROM telemetry_devices WHERE pairing_id=$1`, pairingID).Scan(&registeredAs, &status)
+	if err == nil {
 		if status == "revoked" {
 			return value, ErrDeviceRevoked
 		}
+		value.DeviceID = registeredAs
 		value.Status = "approved"
 		return value, tx.Commit(ctx)
 	}
@@ -311,7 +316,7 @@ func (s *Service) Approve(ctx context.Context, pairingID string) (PairingSession
 	if !now.Before(value.ExpiresAt) {
 		return value, ErrPairingExpired
 	}
-	if err = register(ctx, tx, value, hash, now); err != nil {
+	if value.DeviceID, err = register(ctx, tx, value, hash, now); err != nil {
 		return value, err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE telemetry_pairing_sessions SET status='approved',approved_at=$2 WHERE pairing_id=$1`, pairingID, now); err != nil {
@@ -338,7 +343,21 @@ func (s *Service) ListPending(ctx context.Context) ([]PairingSession, error) {
 		}
 		result = append(result, v)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	for index, v := range result {
+		if v.Returning || !strings.HasPrefix(v.DeviceID, "android-") {
+			continue
+		}
+		var previous string
+		err := s.pool.QueryRow(ctx, `SELECT device_id FROM telemetry_devices WHERE device_id LIKE 'android-%' AND device_name=$1 AND owner_id=$2 AND (last_seen_at IS NULL OR last_seen_at<$3) ORDER BY COALESCE(last_seen_at,approved_at) DESC LIMIT 1`, v.DeviceName, ownerIdentity, s.now().Add(-phoneQuietFor)).Scan(&previous)
+		if err == nil {
+			result[index].Continues = previous
+		}
+	}
+	return result, nil
 }
 
 func (s *Service) ListDevices(ctx context.Context) ([]Device, error) {
@@ -397,7 +416,7 @@ func (s *Service) AuthorizeDevice(ctx context.Context, deviceID, token string) (
 		return true, false, nil
 	}
 	// Diagnostic write; a matching credential alone does not prove a successful upload.
-	_, _ = s.pool.Exec(ctx, `UPDATE telemetry_devices SET last_seen_at=$2 WHERE device_id=$1 AND status='active' AND (last_seen_at IS NULL OR last_seen_at<$2-interval '1 minute')`, deviceID, s.now())
+	_, _ = s.pool.Exec(ctx, `UPDATE telemetry_devices SET last_seen_at=$2 WHERE device_id=$1 AND status='active' AND (last_seen_at IS NULL OR last_seen_at<$2::timestamptz-interval '1 minute')`, deviceID, s.now())
 	return true, true, nil
 }
 
@@ -406,7 +425,7 @@ func (s *Service) session(ctx context.Context, pairingID string) (PairingSession
 		return PairingSession{}, ErrInvalidPairingID
 	}
 	var v PairingSession
-	err := s.pool.QueryRow(ctx, `SELECT p.pairing_id,p.device_id,p.device_name,CASE WHEN d.status='revoked' THEN 'revoked' ELSE p.status END,p.expires_at,p.approved_at FROM telemetry_pairing_sessions p LEFT JOIN telemetry_devices d ON d.pairing_id=p.pairing_id WHERE p.pairing_id=$1`, pairingID).Scan(&v.PairingID, &v.DeviceID, &v.DeviceName, &v.Status, &v.ExpiresAt, &v.ApprovedAt)
+	err := s.pool.QueryRow(ctx, `SELECT p.pairing_id,COALESCE(d.device_id,p.device_id),p.device_name,CASE WHEN d.status='revoked' THEN 'revoked' ELSE p.status END,p.expires_at,p.approved_at FROM telemetry_pairing_sessions p LEFT JOIN telemetry_devices d ON d.pairing_id=p.pairing_id WHERE p.pairing_id=$1`, pairingID).Scan(&v.PairingID, &v.DeviceID, &v.DeviceName, &v.Status, &v.ExpiresAt, &v.ApprovedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return v, ErrPairingNotFound
 	}
