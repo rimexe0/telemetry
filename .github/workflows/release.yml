@@ -9,6 +9,10 @@ name: Release
 on:
   push:
     branches: [main]
+    # The website alone is not a release; pages.yml publishes it.
+    paths-ignore:
+      - "site/**"
+      - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 permissions:

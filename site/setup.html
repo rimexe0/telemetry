@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Set up Telemetry: server, Mac, Linux, Android and your assistant</title>
+  <meta name="description" content="Install Telemetry with your AI agent, or by hand in about 15 minutes: one command for the server, one for each Mac or Linux PC, the Android app through Obtainium, and one command to connect Claude, Codex or any MCP client.">
+  <link rel="canonical" href="https://te.rime.cyou/setup.html">
+  <meta name="robots" content="index, follow">
+  <meta name="theme-color" content="#111213">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="Telemetry">
+  <meta property="og:url" content="https://te.rime.cyou/setup.html">
+  <meta property="og:title" content="Set up Telemetry in about 15 minutes">
+  <meta property="og:description" content="One script for the server, one for each computer, an APK for the phone, one command for your assistant.">
+  <meta property="og:image" content="https://te.rime.cyou/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script>document.documentElement.classList.add('js')</script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "HowTo",
+    "name": "Set up Telemetry",
+    "description": "Install the Telemetry server, the Mac and Linux collectors, the Android app, and connect an AI assistant over MCP.",
+    "totalTime": "PT15M",
+    "tool": [{ "@type": "HowToTool", "name": "Tailscale" }, { "@type": "HowToTool", "name": "Docker" }],
+    "step": [
+      { "@type": "HowToStep", "name": "Start the server", "url": "https://te.rime.cyou/setup.html#server" },
+      { "@type": "HowToStep", "name": "Install on your computers", "url": "https://te.rime.cyou/setup.html#computers" },
+      { "@type": "HowToStep", "name": "Add your phone", "url": "https://te.rime.cyou/setup.html#phone" },
+      { "@type": "HowToStep", "name": "Connect your assistant", "url": "https://te.rime.cyou/setup.html#assistant" },
+      { "@type": "HowToStep", "name": "Set your first rules", "url": "https://te.rime.cyou/setup.html#rules" }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <a class="skip" href="#before">Skip to content</a>
+
+  <div class="bg" aria-hidden="true">
+    <div class="noise"></div>
+    <div class="lanes"></div>
+  </div>
+
+  <nav class="top-nav" aria-label="Steps">
+    <a href="index.html">home</a>
+    <a href="#before">before</a>
+    <a href="#how">agent</a>
+    <a href="#server">server</a>
+    <a href="#computers">computers</a>
+    <a href="#phone">phone</a>
+    <a href="#assistant">assistant</a>
+    <a href="#rules">rules</a>
+    <a href="#trouble">help</a>
+  </nav>
+
+  <main class="page">
+    <header class="page-head" id="top">
+      <h1 class="sr-only">Set up Telemetry</h1>
+      <div class="wordmark" aria-hidden="true"><span class="letter">s</span><span class="letter">e</span><span class="letter">t</span><span class="letter">u</span><span class="letter">p</span><span class="caret"></span></div>
+      <div class="links back-home" style="justify-content:center"><a class="btn" href="index.html">← telemetry</a></div>
+      <div class="toc" aria-label="On this page">
+        <a class="chip light" href="#before">before you start</a>
+        <a class="chip mcp" href="#how">with your agent</a>
+        <a class="chip" href="#server">1 · server</a>
+        <a class="chip" href="#computers">2 · computers</a>
+        <a class="chip android" href="#phone">3 · phone</a>
+        <a class="chip mcp" href="#assistant">4 · assistant</a>
+        <a class="chip" href="#rules">5 · first rules</a>
+        <a class="chip light" href="#trouble">if something's off</a>
+      </div>
+    </header>
+
+    <section id="before" class="deck">
+      <article class="card wide reveal" data-hue="Before you start">
+        <div class="card-head"><h2>Before you start</h2><span class="num">00</span></div>
+        <p>Plan on about 15 minutes. Here's what you need:</p>
+        <table class="table body">
+          <thead><tr><th>What</th><th>Why</th></tr></thead>
+          <tbody>
+            <tr><td><b>An always-on Linux machine</b> with Docker and its Compose plugin: an old laptop, a mini PC, a home server, or a small VPS</td><td>Your devices meet here. The panel and your assistant read from it. If it goes down, devices keep collecting and blocking, then catch up.</td></tr>
+            <tr><td><b><a href="https://tailscale.com/download">Tailscale</a></b> on every device, signed in to the same account (free). In the admin console under <b>DNS</b>, turn on MagicDNS and HTTPS certificates.</td><td>It gives every device a private address, so the server is never exposed to the internet.</td></tr>
+            <tr><td><b>A Chromium-based browser</b>: Chrome, Brave, Edge, Helium, Vivaldi…</td><td>The extension records and covers sites. On a Mac, browsers without it are hidden while sites are blocked.</td></tr>
+            <tr><td><b>An Android phone</b> (optional)</td><td>Phone app use, health, places and phone-side blocking.</td></tr>
+            <tr><td><b>An AI assistant with MCP</b> (optional, recommended): Claude, Codex, ChatGPT…</td><td>It turns raw app names into "what you're doing" and helps you set rules by just talking.</td></tr>
+          </tbody>
+        </table>
+        <div class="callout body">
+          <p><b>Linux window tracking needs KDE Plasma.</b> On other desktops the Linux collector still records browser sites and AFK time, but not which app is in front.</p>
+        </div>
+      </article>
+    </section>
+
+    <section id="how" class="deck">
+      <article class="card wide reveal" data-hue="Pick a way">
+        <div class="card-head"><h2>Pick a way</h2><span class="num">01</span></div>
+        <div class="chooser" role="tablist" aria-label="Setup method">
+          <button type="button" role="tab" id="tab-agent" aria-controls="agent" aria-selected="true"><b>With your agent</b><span>Your AI agent does the typing. You read and decide.</span></button>
+          <button type="button" role="tab" id="tab-manual" aria-controls="manual" aria-selected="false"><b>By hand</b><span>Four commands and some clicking. About 15 minutes.</span></button>
+        </div>
+        <div id="agent" role="tabpanel" aria-labelledby="tab-agent">
+          <ol class="steps">
+            <li class="body">
+              <h3>Paste this into your agent</h3>
+              <p>Use Claude Code, Codex, or any agent that can run commands on your computer:</p>
+              <div class="prompt-copy"><code>uwu pls install this to save my life te.rime.cyou/agents</code><button type="button" class="copy-prompt" data-text="uwu pls install this to save my life te.rime.cyou/agents">copy</button></div>
+            </li>
+            <li class="body">
+              <h3>It stops and tells you what you're getting into</h3>
+              <p>Before it touches anything, it tells you everything Telemetry will record, including your notifications' text and your location, and how to lock down the machines it goes on. Read this part. It's a complete record of your life, so whoever gets those machines gets your life.</p>
+            </li>
+            <li class="body">
+              <h3>It offers to read the code first</h3>
+              <p>If you're unsure, say yes. It reads the install scripts and tells you what they do, where your data goes and what runs as root.</p>
+            </li>
+            <li class="body">
+              <h3>Only after you say yes, it installs</h3>
+              <p>First the server, then each computer. You still do the parts only you can do: passwords, the macOS permission, clicking <b>Connect</b> in the panel, and the phone (open <a href="i/android/"><code>te.rime.cyou/i/android</code></a> on it).</p>
+              <p class="aside">Your agent sees your panel token while it installs. If you connect it over MCP afterwards, it and its provider can read everything Telemetry records. Want to see exactly what it's told? <a href="agents/">Read the agent instructions</a>.</p>
+            </li>
+          </ol>
+        </div>
+      </article>
+    </section>
+
+    <div id="manual" role="tabpanel" aria-labelledby="tab-manual">
+    <section id="server" class="deck">
+      <article class="card wide reveal" data-hue="Start the server">
+        <div class="card-head"><h2>1 · Start the server</h2><span class="num">01</span></div>
+        <ol class="steps">
+          <li class="body">
+            <h3>Run one script</h3>
+            <p>On the always-on machine, as your normal user (not root):</p>
+            <div class="code"><pre><span class="prompt">$ </span><span data-copy>curl -fsSL https://te.rime.cyou/i/server | bash</span></pre></div>
+            <p class="aside">It checks what it needs and tells you how to fix anything missing. It creates every password and token, starts Postgres in Docker and the server as a background service, turns on nightly backups and self-updates, and publishes the server on your tailnet with <code>tailscale serve</code>. Running it again is safe: it keeps your data and secrets.</p>
+            <div class="callout"><p>If Tailscale says <b>access denied</b>, run this once, then run the script again:</p><div class="code"><pre><span class="prompt">$ </span><span data-copy>sudo tailscale set --operator=$USER</span></pre></div></div>
+          </li>
+          <li class="body">
+            <h3>Keep what it prints</h3>
+            <p>At the end you get:</p>
+            <ul>
+              <li>the <b>panel address</b>, like <code>https://your-server.your-tailnet.ts.net:8443/panel/</code></li>
+              <li>your <b>panel token</b>. It works like a password, so put it in your password manager.</li>
+              <li>the exact commands for steps 2–4, with your address already filled in.</li>
+              <li>a copy of all of it in <code>~/telemetry/setup.txt</code>, in case you close the terminal.</li>
+            </ul>
+          </li>
+          <li class="body">
+            <h3>Open the panel</h3>
+            <p>Open the panel address on any device in your tailnet and paste the token. The panel stays empty until a device reports in.</p>
+          </li>
+        </ol>
+      </article>
+    </section>
+
+    <section id="computers" class="deck">
+      <article class="card wide reveal" data-hue="Install on your computers">
+        <div class="card-head"><h2>2 · Your computers</h2><span class="num">02</span></div>
+        <ol class="steps">
+          <li class="body">
+            <h3>Run the installer</h3>
+            <p>On each Mac:</p>
+            <div class="code"><pre><span class="prompt">$ </span><span data-copy>curl -fsSL https://te.rime.cyou/i/mac | bash</span></pre></div>
+            <p>On each Linux PC:</p>
+            <div class="code"><pre><span class="prompt">$ </span><span data-copy>curl -fsSL https://te.rime.cyou/i/linux | bash</span></pre></div>
+            <p class="aside">Paste the server address when it asks, or set <code>TELEMETRY_SERVER=</code> before running it. It checks the release signature, installs the collector as a background service and keeps it updated from then on.</p>
+          </li>
+          <li class="body">
+            <h3>Approve the device</h3>
+            <p>The panel shows a banner saying <b>"… wants to connect"</b>. Click <b>Connect</b>. Each device gets its own key, and you can revoke it under <b>Devices</b> at any time.</p>
+          </li>
+          <li class="body">
+            <h3>Mac only: two permissions</h3>
+            <p>Grant <b>Accessibility</b> to Telemetry Desktop when macOS asks (System Settings → Privacy &amp; Security → Accessibility). That's how it reads the window in front and hides blocked apps. Then open your browser: the extension is installed by policy and turns itself on.</p>
+            <p class="aside">Chrome on a Mac that isn't company-managed may refuse an extension installed by policy. If it doesn't show up, the installer tells you how to load it yourself in two clicks.</p>
+          </li>
+        </ol>
+      </article>
+    </section>
+
+    <section id="phone" class="deck">
+      <article class="card wide reveal" data-hue="Add your phone">
+        <div class="card-head"><h2>3 · Your phone</h2><span class="num">03</span></div>
+        <ol class="steps">
+          <li class="body">
+            <h3>Install the app</h3>
+            <p>Install Tailscale from the Play Store and sign in. Then download the Telemetry APK on the phone and open it. Android will ask you to allow installs from your browser once.</p>
+            <p>On the phone, open <a href="i/android/"><code>te.rime.cyou/i/android</code></a>. It offers <b>Open in Obtainium</b>, which installs the app and keeps it updated, or the plain APK.</p>
+            <div class="links"><a class="btn" href="i/obtainium/">open in Obtainium</a> <a class="btn white" href="https://github.com/rimexe0/telemetry/releases/latest/download/telemetry-phone.apk">download the APK</a></div>
+          </li>
+          <li class="body">
+            <img class="phone-shot" src="img/phone-setup.jpg" width="600" height="667" alt="The Telemetry phone app on step 1 of 12, Connect this phone, with a server address typed in and a Connect button.">
+            <h3>Pair it</h3>
+            <p>Open the app, type your server address (the same <code>https://…</code> one the server printed) and tap <b>Connect</b>. Then click <b>Connect</b> on the "wants to connect" banner in the panel.</p>
+          </li>
+          <li class="body">
+            <h3>Grant what it asks for</h3>
+            <p>The app walks you through each permission: Usage access (app time), Accessibility (blocking), Notifications, and Health Connect if you want sleep and steps. Skip anything you don't want. The panel shows what's missing.</p>
+            <p class="aside">Have a Mac and a USB cable? <code>install-phone.sh</code> grants everything adb can grant in one go, grayscale included.</p>
+          </li>
+        </ol>
+      </article>
+    </section>
+
+    <section id="assistant" class="deck">
+      <article class="card wide reveal" data-hue="Connect your assistant">
+        <div class="card-head"><h2>4 · Your assistant <small>recommended</small></h2><span class="num">04</span></div>
+        <p>Telemetry speaks MCP, so any assistant that supports MCP can read your day, propose labels and rules, and help you get back on track. The server prints these commands with your address and token filled in.</p>
+        <ol class="steps">
+          <li class="body">
+            <h3>Claude Code</h3>
+            <div class="code"><pre><span class="prompt">$ </span><span data-copy>claude mcp add --scope user --transport http telemetry https://YOUR-SERVER/mcp --header "Authorization: Bearer YOUR-READ-TOKEN"</span></pre></div>
+          </li>
+          <li class="body">
+            <h3>Codex</h3>
+            <div class="code"><pre><span class="prompt">$ </span><span data-copy>export TELEMETRY_MCP_TOKEN=YOUR-READ-TOKEN</span>
+<span class="prompt">$ </span><span data-copy>codex mcp add telemetry --url https://YOUR-SERVER/mcp --bearer-token-env-var TELEMETRY_MCP_TOKEN</span></pre></div>
+          </li>
+          <li class="body">
+            <h3>Anything else</h3>
+            <p>Point any MCP client at <code>https://YOUR-SERVER/mcp</code> with the header <code>Authorization: Bearer YOUR-READ-TOKEN</code>.</p>
+          </li>
+          <li class="body">
+            <h3>Let it read your day (optional)</h3>
+            <p>For the "what you're doing" readings and check-ins, the server needs a command that runs your assistant once per reading, like <code>claude -p</code>. Set it as <code>TELEMETRY_INTENT_COMMAND</code> in <code>~/telemetry/.env</code> on the server and run the server script again. Everything else works without it.</p>
+          </li>
+        </ol>
+      </article>
+    </section>
+
+    </div>
+
+    <section id="rules" class="deck">
+      <article class="card wide reveal" data-hue="Set your first rules">
+        <div class="card-head"><h2>5 · First rules</h2><span class="num">05</span></div>
+        <p>Nothing is blocked until you say so. Telemetry ships with no list of "bad" apps, because yours aren't the same as anyone else's.</p>
+        <ol class="steps">
+          <li class="body">
+            <h3>Watch for two or three days</h3>
+            <p>Let it collect, then look at <b>Activity</b>. The surprises are the useful part.</p>
+          </li>
+          <li class="body">
+            <h3>Name your distractions</h3>
+            <p>Tell your assistant something like "YouTube, X and Reddit are my distractions, and the bank apps are essential". It proposes the labels, you approve them in chat, and they're applied. Or add them in the panel under <b>Rules → Blocked apps</b>.</p>
+          </li>
+          <li class="body">
+            <h3>Choose distraction times</h3>
+            <p>Feeds stay closed outside them. Start generous and tighten it later: tightening is instant, while loosening waits a day.</p>
+          </li>
+          <li class="body">
+            <h3>Hand over the key (when you're ready)</h3>
+            <p>Turn on the <b>settings lock</b> and let a friend type the PIN. The morning code, bedtime and openings are all in <b>Rules</b> too.</p>
+          </li>
+        </ol>
+      </article>
+    </section>
+
+    <section id="trouble" class="deck">
+      <article class="card wide reveal" data-hue="If something's off">
+        <div class="card-head"><h2>If something's off</h2><span class="num">06</span></div>
+        <div class="faq body">
+          <details>
+            <summary>The panel says a device is silent</summary>
+            <p>Open <b>Sources</b>. It tells a sleeping device apart from a stopped collector. If a computer is on and still silent, run the installer again: it repairs the service without losing anything queued.</p>
+          </details>
+          <details>
+            <summary>A site isn't blocked</summary>
+            <p>Check that the extension is on in that browser profile. In private windows it stays off until you allow it. On a Mac, a browser without the extension is hidden while sites are blocked, so a missing extension can't be used as a way around the block.</p>
+          </details>
+          <details>
+            <summary>The phone stopped reporting</summary>
+            <p>Some phones put background apps to sleep. Set Telemetry's battery use to <b>Unrestricted</b>, and keep Tailscale connected. Everything collected in the meantime is delivered once it can reach the server again.</p>
+          </details>
+          <details>
+            <summary>How do I update?</summary>
+            <p>You don't need to. The server and the computers check for signed releases every 10 minutes, check that each update works, and roll it back if it doesn't. The phone updates through Obtainium.</p>
+          </details>
+          <details>
+            <summary>How do I remove it?</summary>
+            <p>Revoke the device under <b>Devices</b> so it can't send anything more. On Android, uninstall it like any other app. A one-command uninstaller for computers isn't there yet: the <a href="https://github.com/rimexe0/telemetry#readme">README</a> lists the services the installer adds. Your history stays on the server until you delete its Docker volume.</p>
+          </details>
+          <details>
+            <summary>Something else</summary>
+            <p><a href="https://github.com/rimexe0/telemetry/issues">Open an issue on GitHub</a>, and say which device it happens on and what <b>Sources</b> shows for it.</p>
+          </details>
+        </div>
+      </article>
+    </section>
+
+    <footer>
+      <p>Made by <a href="https://rime.cyou">rime</a>.</p>
+      <div class="links">
+        <a class="btn" href="index.html">home</a>
+        <a class="btn" href="https://github.com/rimexe0/telemetry">github</a>
+        <a class="btn blue" href="https://rime.cyou">rime.cyou</a>
+      </div>
+    </footer>
+  </main>
+
+  <script src="site.js" defer></script>
+</body>
+</html>

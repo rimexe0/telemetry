@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Telemetry for Android</title>
+  <meta name="description" content="Install the Telemetry phone app: with Obtainium for automatic updates, or as an APK.">
+  <meta name="theme-color" content="#111213">
+  <link rel="icon" href="/logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+  <script>document.documentElement.classList.add('js')</script>
+</head>
+<body>
+  <div class="bg" aria-hidden="true"><div class="noise"></div><div class="lanes"></div></div>
+  <main class="page">
+    <header class="page-head">
+      <h1 class="sr-only">Telemetry for Android</h1>
+      <div class="wordmark" aria-hidden="true"><span class="letter">a</span><span class="letter">n</span><span class="letter">d</span><span class="letter">r</span><span class="letter">o</span><span class="letter">i</span><span class="letter">d</span><span class="caret"></span></div>
+      <div class="links" style="justify-content:center"><a class="btn" href="/">← telemetry</a> <a class="btn white" href="/setup.html">full setup guide</a></div>
+    </header>
+    <section class="deck">
+      <article class="card wide reveal" data-hue="Android">
+        <div class="card-head"><h2>Get the app</h2><span class="num">phone</span></div>
+        <ol class="steps">
+          <li class="body">
+            <h3>Install Tailscale and sign in</h3>
+            <p>Use the same account as your server. <a href="https://play.google.com/store/apps/details?id=com.tailscale.ipn">Tailscale on Google Play</a></p>
+          </li>
+          <li class="body">
+            <h3>Install Telemetry</h3>
+            <p><b>With Obtainium</b> (recommended): it installs the app from GitHub and keeps it updated. Obtainium asks you to confirm, then shows an install button.</p>
+            <div class="links"><a class="btn" href="https://apps.obtainium.imranr.dev/redirect?r=obtainium%3A%2F%2Fapp%2F%257B%2522id%2522%253A%2522cyou.rime.telemetry.collector%2522%252C%2522url%2522%253A%2522https%253A%252F%252Fgithub.com%252Frimexe0%252Ftelemetry%2522%252C%2522author%2522%253A%2522rimexe0%2522%252C%2522name%2522%253A%2522Telemetry%2522%252C%2522additionalSettings%2522%253A%2522%257B%255C%2522apkFilterRegEx%255C%2522%253A%255C%2522telemetry-phone%255C%2522%252C%255C%2522appName%255C%2522%253A%255C%2522Telemetry%255C%2522%252C%255C%2522appAuthor%255C%2522%253A%255C%2522rimexe0%255C%2522%257D%2522%257D">open in Obtainium</a> <a class="btn white" href="https://obtainium.imranr.dev/">get Obtainium first</a></div>
+            <p class="aside">Or download the APK and open it. Android asks you once to allow installs from your browser. You won't get updates this way.</p>
+            <div class="links"><a class="btn white" href="https://github.com/rimexe0/telemetry/releases/latest/download/telemetry-phone.apk">download telemetry-phone.apk</a></div>
+          </li>
+          <li class="body">
+            <h3>Connect it</h3>
+            <p>Open the app, type your server's <code>https://…</code> address, and tap <b>Connect</b>. Then click <b>Connect</b> on the "wants to connect" banner in the panel, and grant the permissions the app walks you through.</p>
+          </li>
+        </ol>
+      </article>
+    </section>
+  </main>
+  <script src="/site.js" defer></script>
+</body>
+</html>

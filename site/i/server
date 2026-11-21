@@ -1,0 +1,16 @@
+#!/bin/bash
+# Telemetry server setup: https://te.rime.cyou/i/server
+#
+#   curl -fsSL https://te.rime.cyou/i/server | bash
+#
+# This only downloads install-server.sh from the newest Telemetry release on GitHub
+# and runs it. It checks everything else it downloads against the
+# release signature. Read it first if you like:
+# https://github.com/rimexe0/telemetry/blob/main/deploy/install-server.sh
+set -euo pipefail
+case "$(uname -s)" in
+  Linux) ;;
+  *) echo "The Telemetry server runs on Linux (with Docker). Run this on your always-on Linux machine." >&2; exit 1 ;;
+esac
+script=$(curl -fsSL https://github.com/rimexe0/telemetry/releases/latest/download/install-server.sh) || { echo "Could not download https://github.com/rimexe0/telemetry/releases/latest/download/install-server.sh. Either GitHub cannot be reached from here, or the newest release does not have it yet." >&2; exit 1; }
+bash -c "$script" install-server.sh "$@"
