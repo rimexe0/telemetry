@@ -102,7 +102,7 @@ code, kbd, pre { font-family: var(--mono); }
   position: relative; display: inline-flex; align-items: baseline;
   font-family: var(--display); font-weight: 800;
   font-size: clamp(3.4rem, 13vw, 10rem);
-  letter-spacing: -0.055em; line-height: 0.95;
+  letter-spacing: -0.01em; line-height: 0.95;
   margin: 0 0 18px; user-select: none; white-space: nowrap;
   text-shadow: 0.035em 0.035em 0 hsl(calc(var(--bg-hue) + 180) 70% 62% / 0.9);
 }

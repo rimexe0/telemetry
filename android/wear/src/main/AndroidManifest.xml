@@ -16,7 +16,8 @@
     <application
         android:allowBackup="false"
         android:label="Telemetry"
-        android:icon="@android:drawable/ic_menu_mylocation">
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round">
         <!-- The phone app is required: walks reach the server through it. -->
         <meta-data android:name="com.google.android.wearable.standalone" android:value="false" />
 
