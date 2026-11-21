@@ -461,3 +461,34 @@ a.chip { text-decoration: none; }
 }
 .steps > li::after { content: ""; display: block; clear: both; }
 @media (max-width: 640px) { .phone-shot { float: none; width: 70%; margin: 6px 0 12px; } }
+
+/* ---------- agent instructions ---------- */
+.prose { padding: 18px 26px 22px; }
+.prose h1 { font-family: var(--display); font-size: clamp(1.8rem, 4vw, 2.6rem); line-height: 1.1; margin: 6px 0 14px; letter-spacing: -0.02em; }
+.prose h2 { font-family: var(--display); font-size: 1.6rem; margin: 30px 0 8px; }
+.prose h3 { font-size: 1.15rem; margin: 22px 0 6px; }
+.prose p, .prose li { max-width: 78ch; }
+.prose ul { padding-left: 1.3em; margin: 6px 0 12px; }
+.prose li { margin: 4px 0; }
+.prose hr { border: 0; border-top: 2px dashed color-mix(in srgb, var(--ink) 35%, transparent); margin: 18px 0; }
+.prose .code { max-width: 78ch; }
+.prose .plain-link { font-family: var(--mono); font-size: 0.78rem; opacity: 0.8; margin: 0; }
+
+/* ---------- setup chooser ---------- */
+.chooser { display: grid; grid-template-columns: 1fr 1fr; gap: 0; padding: 4px 14px 14px; }
+.chooser button {
+  font: inherit; text-align: left; cursor: pointer; padding: 14px 16px; margin: 0;
+  background: transparent; color: var(--ink); border: 2px dashed var(--ink);
+}
+.chooser button + button { border-left: 0; }
+.chooser button b { display: block; font-family: var(--display); font-size: 1.35rem; margin-bottom: 2px; }
+.chooser button span { font-size: 0.92rem; opacity: 0.85; }
+.chooser button[aria-selected="true"] { background: #000; color: #fff; border-style: solid; border-color: #000; }
+.prompt-copy {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 8px 0 10px; padding: 12px 14px; background: #0f1011; color: #f1f1ee; border-radius: 0 10px 0 10px;
+}
+.prompt-copy code { background: none; color: inherit; font-size: 0.98rem; padding: 0; flex: 1 1 18rem; }
+.prompt-copy button { font: 0.8rem var(--sans); background: #fff; color: #000; border: 0; padding: 6px 12px; cursor: pointer; border-radius: 6px 0 6px 0; }
+.prompt-copy button.done { background: #3ddc84; }
+@media (max-width: 640px) { .chooser { grid-template-columns: 1fr; } .chooser button + button { border-left: 2px dashed var(--ink); border-top: 0; } }

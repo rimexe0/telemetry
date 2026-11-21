@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://telemetry.rime.cyou/sitemap.xml
+Sitemap: https://te.rime.cyou/sitemap.xml

@@ -301,6 +301,48 @@
     block.appendChild(button);
   });
 
+  // "uwu pls install this" copy buttons.
+  document.querySelectorAll('.copy-prompt').forEach((button) => {
+    button.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(button.dataset.text);
+        button.textContent = 'copied';
+        button.classList.add('done');
+      } catch {
+        button.textContent = 'select it';
+      }
+      setTimeout(() => { button.textContent = 'copy'; button.classList.remove('done'); }, 1600);
+    });
+  });
+
+  // Setup: with your agent, or by hand. Without JS both show.
+  const tabs = [...document.querySelectorAll('.chooser [role="tab"]')];
+  if (tabs.length) {
+    const show = (id, scroll) => {
+      tabs.forEach((tab) => {
+        const on = tab.getAttribute('aria-controls') === id;
+        tab.setAttribute('aria-selected', String(on));
+        const panel = document.getElementById(tab.getAttribute('aria-controls'));
+        if (panel) panel.hidden = !on;
+      });
+      if (scroll) document.getElementById(id)?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+    };
+    tabs.forEach((tab) => tab.addEventListener('click', () => {
+      const id = tab.getAttribute('aria-controls');
+      show(id, id === 'manual');
+      history.replaceState(null, '', id === 'manual' ? '#manual' : '#how');
+    }));
+    // Links to a manual step open the manual tab.
+    const manualIds = new Set([...document.querySelectorAll('#manual [id]')].map((el) => el.id).concat('manual'));
+    const fromHash = () => {
+      const id = location.hash.slice(1);
+      show(manualIds.has(id) ? 'manual' : 'agent', false);
+      if (manualIds.has(id)) document.getElementById(id)?.scrollIntoView({ block: 'start' });
+    };
+    addEventListener('hashchange', fromHash);
+    fromHash();
+  }
+
   // Screenshot lightbox.
   const dialog = document.querySelector('dialog.lightbox');
   if (dialog) {

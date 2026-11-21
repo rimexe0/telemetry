@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Installing Telemetry: instructions for AI agents</title>
+  <meta name="description" content="Instructions for an AI agent installing Telemetry: first tell the person what it records and how to secure their devices, offer a source audit, and get a clear yes before installing.">
+  <link rel="canonical" href="https://te.rime.cyou/agents/">
+  <link rel="alternate" type="text/markdown" href="/agents.md">
+  <meta name="theme-color" content="#111213">
+  <link rel="icon" href="/logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="bg" aria-hidden="true"><div class="noise"></div></div>
+  <main class="page">
+    <div class="deck" style="padding-top:48px">
+      <article class="card wide prose" data-hue="Agents" style="--h:200">
+        <p class="plain-link">Plain text for agents: <a href="/agents.md">/agents.md</a></p>
+<h1>Installing Telemetry: instructions for AI agents</h1>
+<p>If you're a person: this page is written for your AI agent (Claude Code, Codex, or any agent that can run commands). Paste <code>uwu pls install this to save my life te.rime.cyou/agents</code> into it, and it will walk you through everything here. You can also follow the <a href="https://te.rime.cyou/setup.html">manual setup</a>.</p>
+<hr>
+<p>You have been asked to install Telemetry for the person you are working with. Telemetry is open-source, self-hosted software that records what a person does on their computers and phone, blocks the distractions they choose, and lets an AI assistant see what they are doing so it can help them get back to it. Source: <a href="https://github.com/rimexe0/telemetry">https://github.com/rimexe0/telemetry</a> (MIT).</p>
+<p>The request probably came as a copy-pasted joke line. Take the install seriously anyway: this software will build a complete, permanent record of this person's life.</p>
+<h2>Before you run anything: stop and talk to the person</h2>
+<p>Do steps 1 to 4 below in the conversation <b>before</b> you run any install command, even if they asked you to "just do it". They may only have seen a meme. Keep it short and plain, and don't lecture. Then wait for their answer.</p>
+<h3>1. Tell them what Telemetry will see</h3>
+<p>Tell them this, in your own words:</p>
+<ul>
+<li><b>On each computer:</b> which app is in front and its window title, minute by minute; whether they are at the keyboard; every website they visit (address and page title, from a browser extension); and about 90 days of their browser's own history. If they use coding agents (T3 Code, Codex), it sees those threads too.</li>
+<li><b>On the phone:</b> which apps they use and when; <b>their notifications, including the title and text</b>, so message previews from WhatsApp, Telegram and the like end up in it; their calendar; their location (places, and home or away); steps, heart rate, sleep and workouts from Health Connect. SMS only if they turn it on later.</li>
+<li><b>Kept forever:</b> nothing is ever deleted, and that is by design. The server also takes nightly backups, which contain all of it.</li>
+<li><b>Their assistant:</b> if they connect an AI assistant over MCP (step 6), that assistant can read all of the above, and so can its provider.</li>
+</ul>
+<h3>2. Tell them how important securing these devices is</h3>
+<p>Whoever gets into the server, a backup or a paired device can read their whole life. Tell them, and check what you can:</p>
+<ul>
+<li><b>Full-disk encryption</b> on the server machine and on every computer (FileVault on macOS, LUKS on Linux). A screen lock on the phone.</li>
+<li><b>Never expose the server to the internet.</b> It is meant to be reached only over their private Tailscale network. Don't open ports or forward it, and don't put it behind a public tunnel without the sealed relay.</li>
+<li><b>Use a machine they control.</b> Not a shared computer, not someone else's account, and not a server where other people have root.</li>
+<li><b>The panel token is a password to all of it.</b> It goes in a password manager, never in a chat, a note or a repo.</li>
+<li><b>Backups are as sensitive as the database.</b> If they copy them anywhere, encrypt them.</li>
+<li><b>Keep systems updated.</b> Telemetry updates itself, but the OS is theirs to keep current.</li>
+<li>If they share a computer with someone, that person may see Telemetry's notices and the panel. Make sure they're OK with that.</li>
+</ul>
+<h3>3. Offer to audit the source</h3>
+<p>Ask whether they want you to read the code before installing. If they do:</p>
+<ul>
+<li>Clone <code>https://github.com/rimexe0/telemetry</code> and check out the newest release tag (<code>r&lt;number&gt;</code>; it's in <code>release.txt</code> on the latest release).</li>
+<li>Read the install scripts they'll run:</li>
+<ul>
+<li><code>deploy/install-server.sh</code> (the server);</li>
+<li><code>deploy/install.sh</code> (computers), plus <code>deploy/macos/install-mac.sh</code> or <code>deploy/linux/install-linux.sh</code>;</li>
+<li>the short launchers at <code>https://te.rime.cyou/i/server</code>, <code>/i/mac</code> and <code>/i/linux</code>, which only download and run the scripts above from the latest GitHub release.</li>
+</ul>
+<li>Check: where data goes (only their own server), which network addresses are contacted, what runs as root (the Mac watchdog asks for the password), what is installed as a service, and how updates are verified (an SSH-signed <code>SHA256SUMS</code> on each release).</li>
+<li>Summarize what you found honestly, including anything you didn't like or couldn't verify.</li>
+</ul>
+<h3>4. Ask for a clear yes</h3>
+<p>Ask:</p>
+<ul>
+<li>Do they want to go ahead, now that they know what it records?</li>
+<li>Which machine will be the always-on server?</li>
+<li>Which computers should get the collector? Will they add a phone?</li>
+<li>Do they want an AI assistant connected (step 6)?</li>
+</ul>
+<p>Only continue with a clear yes. If they hesitate, stop. Not installing is a fine outcome.</p>
+<h2>Installing</h2>
+<p>Telemetry has three parts: one always-on <b>server</b>, a <b>collector</b> on each computer, and the <b>phone app</b>. Every device must be on the same <a href="https://tailscale.com">Tailscale</a> network, with MagicDNS and HTTPS certificates turned on in the Tailscale admin console under DNS.</p>
+<h3>5a. The server (once, on an always-on Linux machine)</h3>
+<p>Requirements: Linux, Docker with the Compose plugin, systemd and Tailscale. Run it as the normal user, not root:</p>
+<div class="code"><pre>curl -fsSL https://te.rime.cyou/i/server | bash</pre></div>
+<ul>
+<li>If Tailscale says "access denied", the person runs <code>sudo tailscale set --operator=$USER</code> once (it needs their password), then you run the script again.</li>
+<li>At the end it prints the panel address, the panel token, the commands for the next steps and the MCP connection details. It also saves them to <code>~/telemetry/setup.txt</code>. Tell the person to put the panel token in their password manager.</li>
+<li>Running it again is safe: data and secrets stay.</li>
+</ul>
+<h3>5b. Each Mac or Linux computer</h3>
+<div class="code"><pre>curl -fsSL https://te.rime.cyou/i/mac | bash      # macOS
+curl -fsSL https://te.rime.cyou/i/linux | bash    # Linux (window tracking needs KDE Plasma)</pre></div>
+<p>The script asks for the server address. Then:</p>
+<ul>
+<li>The <b>person</b> opens the panel and clicks <b>Connect</b> on the "… wants to connect" banner.</li>
+<li>On a Mac, the <b>person</b> grants Accessibility to Telemetry Desktop when macOS asks.</li>
+<li>The browser extension installs by policy for Chromium browsers. Chrome on an unmanaged Mac may refuse it, and the installer explains how to load it instead.</li>
+</ul>
+<h3>5c. The phone (the person does this)</h3>
+<p>They install Tailscale from the Play Store and sign in. Then on the phone they open <a href="https://te.rime.cyou/i/android">https://te.rime.cyou/i/android</a>, which offers the APK and an Obtainium link that keeps the app updated. In the app they type the server address, tap Connect, approve it in the panel, and grant the permissions it asks for. You can't do this part for them unless the phone is connected to a Mac with USB debugging on, in which case <code>install-phone.sh</code> from the release can grant permissions over adb.</p>
+<h3>6. Connecting an assistant (optional, recommended)</h3>
+<p>Ask first: this gives the assistant, and its provider, read access to everything in step 1. With a yes, for Claude Code:</p>
+<div class="code"><pre>claude mcp add --scope user --transport http telemetry https://SERVER/mcp --header &quot;Authorization: Bearer READ_TOKEN&quot;</pre></div>
+<p>For Codex:</p>
+<div class="code"><pre>export TELEMETRY_MCP_TOKEN=READ_TOKEN
+codex mcp add telemetry --url https://SERVER/mcp --bearer-token-env-var TELEMETRY_MCP_TOKEN</pre></div>
+<p>The server prints these with the real values. Any MCP client works the same way: an HTTP MCP server at <code>https://SERVER/mcp</code> with that bearer token.</p>
+<h3>7. First rules</h3>
+<p>Nothing is blocked until the person decides. Don't make up a list of "bad" apps. Ask them what pulls them in, then propose labels and distraction times, and apply only what they approve.</p>
+<h2>Rules for you, the agent</h2>
+<ul>
+<li>Don't skip, weaken or work around security: no opening ports, no disabling signature checks, no running the server as root, no <code>chmod 777</code>, no turning off disk encryption or the firewall.</li>
+<li>Don't print the panel token or the read token more often than needed. Don't save them in memory files, notes or commits.</li>
+<li>Steps that need the person (passwords, macOS permissions, approving devices, anything on the phone) are theirs. Tell them exactly what to click.</li>
+<li>If something fails, say what failed and what you tried. Don't invent workarounds that change how the system is secured.</li>
+<li>To uninstall: revoke the device in the panel under Devices, then remove the services the installers added (the README lists them). The server's data lives in its Docker volume until it is deleted.</li>
+</ul>
+
+      </article>
+    </div>
+  </main>
+  <script src="/site.js" defer></script>
+</body>
+</html>

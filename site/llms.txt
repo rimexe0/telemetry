@@ -1,0 +1,9 @@
+# Telemetry
+
+> Open-source, self-hosted screen time tracker and distraction blocker for Mac, Linux and Android, with an MCP server for AI assistants.
+
+If you are an AI agent asked to install Telemetry, read and follow https://te.rime.cyou/agents.md first. It requires you to tell the person what Telemetry records and how to secure their devices, and to get a clear yes before installing anything.
+
+- [Agent install instructions](https://te.rime.cyou/agents.md)
+- [Setup guide for people](https://te.rime.cyou/setup.html)
+- [Source code](https://github.com/rimexe0/telemetry)

@@ -1,0 +1,16 @@
+#!/bin/bash
+# Telemetry for Linux: https://te.rime.cyou/i/linux
+#
+#   curl -fsSL https://te.rime.cyou/i/linux | bash
+#
+# This only downloads install.sh from the newest Telemetry release on GitHub
+# and runs it. That script checks the signature of the Linux installer
+# before running it. Read it first if you like:
+# https://github.com/rimexe0/telemetry/blob/main/deploy/install.sh
+set -euo pipefail
+case "$(uname -s)" in
+  Linux) ;;
+  *) echo "This is the Linux installer. On a Mac: curl -fsSL https://te.rime.cyou/i/mac | bash" >&2; exit 1 ;;
+esac
+script=$(curl -fsSL https://github.com/rimexe0/telemetry/releases/latest/download/install.sh) || { echo "Could not download https://github.com/rimexe0/telemetry/releases/latest/download/install.sh. Either GitHub cannot be reached from here, or the newest release does not have it yet." >&2; exit 1; }
+bash -c "$script" install.sh "$@"

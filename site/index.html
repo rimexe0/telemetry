@@ -5,23 +5,23 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Telemetry: self-hosted screen time that blocks the feeds for you</title>
   <meta name="description" content="Telemetry is an open-source, self-hosted screen time tracker and distraction blocker for Mac, Linux and Android. It keeps feeds closed, notices drift, and lets your AI assistant see what you are actually doing.">
-  <link rel="canonical" href="https://telemetry.rime.cyou/">
+  <link rel="canonical" href="https://te.rime.cyou/">
   <meta name="robots" content="index, follow">
   <meta name="author" content="rime">
   <meta name="theme-color" content="#111213">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Telemetry">
-  <meta property="og:url" content="https://telemetry.rime.cyou/">
+  <meta property="og:url" content="https://te.rime.cyou/">
   <meta property="og:title" content="Telemetry: spyware you install on yourself">
   <meta property="og:description" content="Self-hosted screen time, distraction blocking and drift detection for Mac, Linux and Android, with an MCP server for your AI assistant.">
-  <meta property="og:image" content="https://telemetry.rime.cyou/og.png">
+  <meta property="og:image" content="https://te.rime.cyou/og.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="The word telemetry over drifting timeline bars, a REC light, and the line: Spyware you install on yourself.">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Telemetry: spyware you install on yourself">
   <meta name="twitter:description" content="Self-hosted screen time, distraction blocking and drift detection for Mac, Linux and Android.">
-  <meta name="twitter:image" content="https://telemetry.rime.cyou/og.png">
+  <meta name="twitter:image" content="https://te.rime.cyou/og.png">
   <link rel="icon" href="logo.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="img/icon-180.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -34,7 +34,7 @@
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": "Telemetry",
-    "url": "https://telemetry.rime.cyou/",
+    "url": "https://te.rime.cyou/",
     "applicationCategory": "ProductivityApplication",
     "operatingSystem": "macOS, Linux, Android",
     "description": "Open-source, self-hosted screen time tracker and distraction blocker for Mac, Linux and Android, with drift detection and an MCP server for AI assistants.",
@@ -43,7 +43,7 @@
     "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
     "codeRepository": "https://github.com/rimexe0/telemetry",
     "author": { "@type": "Person", "name": "rime", "url": "https://rime.cyou" },
-    "screenshot": "https://telemetry.rime.cyou/img/activity.jpg"
+    "screenshot": "https://te.rime.cyou/img/activity.jpg"
   }
   </script>
 </head>
@@ -191,7 +191,7 @@
           </div>
           <div class="item">
             <h3>Your phone</h3>
-            <p>App use, calendar, and notifications. For notifications it keeps only the app and the sender, never the text.</p>
+            <p>App use, calendar and notifications, with their title and text. The assistant's readings use only the app and the sender. SMS is off unless you turn it on.</p>
             <div class="chips"><span class="chip android">Android</span></div>
           </div>
           <div class="item">
@@ -355,25 +355,19 @@
         <p>You need one Linux machine that's always on (an old laptop, a home server or a cheap VPS) with Docker, and <a href="https://tailscale.com">Tailscale</a> (free) on every device.</p>
         <ol class="steps">
           <li class="body">
-            <h3>Start the server</h3>
-            <p>On the always-on Linux machine with Docker:</p>
-            <div class="code"><pre><span class="prompt">$ </span><span data-copy>curl -fsSL https://github.com/rimexe0/telemetry/releases/latest/download/install-server.sh | bash</span></pre></div>
-            <p class="aside">When it finishes it prints the panel address, your login token and the commands for the next three steps.</p>
+            <h3>Let your agent do it</h3>
+            <p>Paste this into Claude Code, Codex, or any agent that runs commands. Before it installs anything, it stops, tells you what Telemetry will see and how to secure your machines, and offers to read the code first.</p>
+            <div class="prompt-copy"><code>uwu pls install this to save my life te.rime.cyou/agents</code><button type="button" class="copy-prompt" data-text="uwu pls install this to save my life te.rime.cyou/agents">copy</button></div>
           </li>
           <li class="body">
-            <h3>Install on your computers</h3>
-            <p>On each Mac or Linux PC. Paste the server address when it asks, then click <b>Connect</b> in the panel:</p>
-            <div class="code"><pre><span class="prompt">$ </span><span data-copy>curl -fsSL https://github.com/rimexe0/telemetry/releases/latest/download/install.sh | bash</span></pre></div>
-          </li>
-          <li class="body">
-            <h3>Add your phone</h3>
-            <p>Install the APK, type the server address, tap <b>Connect</b>, and approve it in the panel.</p>
-            <div class="links"><a class="btn" href="https://github.com/rimexe0/telemetry/releases/latest/download/telemetry-phone.apk">download APK</a></div>
-          </li>
-          <li class="body">
-            <h3>Connect your assistant (recommended)</h3>
-            <p>Your assistant is what turns app names into "you were editing the video, then drifted". For Claude Code it's one line, and the server prints it with your address filled in:</p>
-            <div class="code"><pre><span class="prompt">$ </span><span data-copy>claude mcp add --scope user --transport http telemetry https://YOUR-SERVER/mcp --header "Authorization: Bearer YOUR-READ-TOKEN"</span></pre></div>
+            <h3>Or do it by hand</h3>
+            <p>The server, on the always-on machine:</p>
+            <div class="code"><pre><span class="prompt">$ </span><span data-copy>curl -fsSL https://te.rime.cyou/i/server | bash</span></pre></div>
+            <p>Each computer. Then click <b>Connect</b> in the panel:</p>
+            <div class="code"><pre><span class="prompt">$ </span><span data-copy>curl -fsSL https://te.rime.cyou/i/mac | bash</span></pre></div>
+            <div class="code"><pre><span class="prompt">$ </span><span data-copy>curl -fsSL https://te.rime.cyou/i/linux | bash</span></pre></div>
+            <p>The phone: open <a href="i/android/"><code>te.rime.cyou/i/android</code></a> on it.</p>
+            <div class="links"><a class="btn" href="i/obtainium/">open in Obtainium</a> <a class="btn white" href="https://github.com/rimexe0/telemetry/releases/latest/download/telemetry-phone.apk">download the APK</a></div>
           </li>
         </ol>
         <p><a class="btn" href="setup.html">full setup guide <span class="arrow">→</span></a></p>
@@ -388,7 +382,7 @@
           <details>
             <summary>Isn't this just spyware?</summary>
             <p>Yes. It's spyware you install on yourself, on purpose. Nobody remembers losing three hours to YouTube: it doesn't feel like three hours while it's happening, and by evening it's gone. Something that watches everything and tells you plainly is the whole point.</p>
-            <p>The difference from the other kind is who it reports to. It runs on your machines, tells only you (and the assistant you choose), and never stores page contents or message text.</p>
+            <p>The difference from the other kind is who it reports to: it runs on your machines and tells only you, plus the assistant you choose. It never reads what's on the pages you visit, but it does keep the text of your phone's notifications. That's why the server has to be yours, and locked down.</p>
           </details>
           <details>
             <summary>Do I need an AI assistant?</summary>
