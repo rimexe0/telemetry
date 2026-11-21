@@ -257,33 +257,24 @@ code, kbd, pre { font-family: var(--mono); }
 .stats .stat { transition: background-color 900ms ease, border-color 600ms ease; border-color: color-mix(in srgb, #e5322d calc(var(--heat) * 100%), var(--ink)); }
 .stats .stat b { color: color-mix(in srgb, #e5322d calc(var(--heat) * 100%), var(--ink)); }
 
-/* the washing machine dies: each tile switches off like an old TV */
-.stats .stat.off { background: rgba(0, 0, 0, 0.72); border-color: rgba(0, 0, 0, 0.6); border-style: dotted; }
-.stats .stat.off b, .stats .stat.off span { animation: crt-off 520ms ease-in forwards; transform-origin: 50% 50%; }
-@keyframes crt-off {
-  0% { opacity: 1; }
-  15% { opacity: 0.15; }
-  28% { opacity: 1; filter: brightness(1.6); }
-  60% { opacity: 1; transform: scale(1, 0.06); filter: brightness(3); }
-  100% { opacity: 0; transform: scale(0, 0.02); }
+/* broken: tiles slumped out of line, scorched, still counting */
+.stats .stat.scorched {
+  background: linear-gradient(to bottom, rgba(38, 26, 20, 0.62), rgba(38, 26, 20, 0.14) 70%), hsl(var(--bg-hue) var(--pastel-s) var(--pastel-l) / 50%);
+  border-color: #2b1d17; border-style: dashed;
+  transition: background 1600ms ease, border-color 600ms ease, transform 0s;
 }
-.stats .flatline {
-  position: absolute; left: 0; top: 0; width: 100%;
-  pointer-events: none; overflow: visible; display: none;
+.stats .stat.scorched b { color: #8a2c1c; }
+@media (prefers-color-scheme: dark) { .stats .stat.scorched b { color: #e0705a; } }
+.why-grid .aftermath {
+  grid-column: 1 / -1; margin: 4px 0 0; font-family: var(--mono); font-size: 0.8rem;
+  letter-spacing: 0.01em; opacity: 0; transition: opacity 2400ms ease;
 }
-.stats .flatline path {
-  fill: none; stroke: #ff3b30; stroke-width: 2.5; stroke-linejoin: round;
-  stroke-dasharray: 1; stroke-dashoffset: 1; filter: drop-shadow(0 0 4px #ff3b30);
-}
-.stats.dead .flatline { display: block; }
-.stats.dead .flatline path { animation: flatline 2.4s linear forwards, flat-cool 1.6s ease 2.6s forwards; }
-@keyframes flatline { to { stroke-dashoffset: 0; } }
-@keyframes flat-cool { to { stroke: #8a8d91; filter: none; } }
-.why-grid .spin-done { grid-column: 1 / -1; margin: 2px 0 0; font-family: var(--mono); font-size: 0.82rem; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; opacity: 0; transition: opacity 1200ms ease; }
-.why-grid .spin-done p { margin: 0; font-size: inherit; }
-.why-grid .spin-done[hidden] { display: none; }
-.why-grid .spin-done.shown { opacity: 1; }
-.restart { font-size: 0.75rem; cursor: pointer; font-family: var(--sans); }
+.why-grid .aftermath.shown { opacity: 0.85; }
+/* room for the slumped tiles */
+.stats.broken .note { margin-top: 12px; transition: margin 260ms ease; }
+/* the world doesn't tilt with it */
+.stats .aftermath { transform: rotate(0.8deg) translate(-1px, -3px); transform-origin: 0 0; }
+.aftermath .since { font-variant-numeric: tabular-nums; }
 
 /* smoke */
 .smoke { position: absolute; pointer-events: none; z-index: 3; overflow: visible; }

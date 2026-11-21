@@ -112,23 +112,20 @@
     sections.forEach((s) => spy.observe(s));
   }
 
-  // Big silly numbers that never stop, until you stare at them too long:
-  // then the box spins up like a washing machine, overheats, smokes, and
-  // dies. Nobody likes how that ends. That's the point.
+  // Big silly numbers that never stop. Stare at them long enough and the box
+  // spins up like a washing machine, overheats, smokes and breaks. Then
+  // nothing happens. Nobody comes, nothing stops, the numbers keep going.
   const stats = document.querySelector('.stats');
   if (stats) {
     const grid = stats.parentElement;
     const tiles = [...stats.querySelectorAll('.stat')];
     const numbers = [...stats.querySelectorAll('b')];
-    const ending = stats.querySelector('.spin-done');
-    const restart = stats.querySelector('.restart');
-    let scrolled = 0, lastY = scrollY, frozen = false;
+    const aftermath = grid.querySelector('.aftermath');
+    let scrolled = 0, lastY = scrollY;
     addEventListener('scroll', () => { scrolled += Math.abs(scrollY - lastY); lastY = scrollY; }, { passive: true });
     const format = (value, digits) => value.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
-    let speedup = 1, extra = 0, lastDraw = performance.now();
+    let speedup = 1, extra = 0, lastDraw = performance.now(), scrambleUntil = 0;
     const draw = (now) => {
-      if (frozen) return;
-      // While it overheats the numbers race ahead too.
       extra += ((now - lastDraw) / 1000) * (speedup - 1);
       lastDraw = now;
       const t = (now - started) / 1000 + extra;
@@ -138,7 +135,9 @@
         if (b.dataset.rate) value = Number(b.dataset.rate) * t;
         else if (b.dataset.here === 'seconds') value = t;
         else if (b.dataset.here === 'scroll') value = scrolled * 2.54 / 96;
-        b.textContent = format(value, digits);
+        let text = format(value, digits);
+        if (now < scrambleUntil) text = text.replace(/\d/g, () => String(Math.floor(Math.random() * 10)));
+        b.textContent = text;
       }
       requestAnimationFrame(draw);
     };
@@ -151,74 +150,83 @@
     grid.style.position = 'relative';
     grid.appendChild(smoke);
     const placeSmoke = () => {
+      const lastTile = tiles[tiles.length - 1];
       smoke.style.left = `${stats.offsetLeft}px`;
       smoke.style.top = `${stats.offsetTop}px`;
       smoke.style.width = `${stats.offsetWidth}px`;
-      smoke.style.height = `${tiles[0] ? tiles[tiles.length - 1].offsetTop + tiles[tiles.length - 1].offsetHeight : stats.offsetHeight}px`;
+      smoke.style.height = `${lastTile ? lastTile.offsetTop + lastTile.offsetHeight : stats.offsetHeight}px`;
     };
     const puff = (strength) => {
       const p = document.createElement('span');
       p.className = 'puff';
-      const x = 8 + Math.random() * 84;
-      p.style.left = `${x}%`;
+      p.style.left = `${8 + Math.random() * 84}%`;
       p.style.bottom = `${72 + Math.random() * 30}%`;
-      p.style.setProperty('--d', `${(2.2 + Math.random() * 1.6).toFixed(2)}s`);
+      p.style.setProperty('--d', `${(2.4 + Math.random() * 1.8).toFixed(2)}s`);
       p.style.setProperty('--dx', `${((Math.random() - 0.5) * 80).toFixed(0)}px`);
       p.style.setProperty('--rise', `${(-140 - Math.random() * 160 - strength * 120).toFixed(0)}px`);
       p.style.setProperty('--s', (2 + Math.random() * 2 + strength * 1.5).toFixed(2));
-      p.style.setProperty('--o', (0.45 + strength * 0.5).toFixed(2));
+      p.style.setProperty('--o', (0.35 + strength * 0.6).toFixed(2));
       p.addEventListener('animationend', () => p.remove());
       smoke.appendChild(p);
     };
-    let smoking = 0, nextPuff = 0;
+    let smoking = 0, nextPuff = 0, visible = false;
     const smokeLoop = (now) => {
-      if (smoking > 0.02 && now >= nextPuff) {
+      if (visible && smoking > 0.02 && now >= nextPuff) {
         puff(smoking);
-        nextPuff = now + 260 - 225 * smoking + Math.random() * 60;
+        nextPuff = now + 280 - 240 * smoking + Math.random() * 120;
       }
-      if (state === 'spinning' || smoking > 0.02 || smoke.childElementCount) requestAnimationFrame(smokeLoop);
+      requestAnimationFrame(smokeLoop);
     };
 
     const LINGER = 6000, RAMP = 9000, PEAK = 1600;
-    let seen = 0, visible = false, last = performance.now(), state = 'idle';
+    let seen = 0, last = performance.now(), state = 'idle';
     if ('IntersectionObserver' in window) {
       new IntersectionObserver(([entry]) => { visible = entry.intersectionRatio >= 0.5; }, { threshold: [0, 0.5, 1] }).observe(stats);
     }
-    const die = () => {
-      state = 'done';
-      frozen = true;
+    const breakDown = () => {
+      state = 'broken';
+      stats.classList.add('broken');
+      const brokeAt = performance.now();
       speedup = 1;
+      scrambleUntil = brokeAt + 900;
       stats.style.transition = 'none';
-      stats.style.transform = 'none';
-      tiles.forEach((tile) => { tile.style.transform = ''; });
-      // Lights go out one by one, in no particular order.
-      const order = tiles.map((tile) => tile).sort(() => Math.random() - 0.5);
-      order.forEach((tile, i) => setTimeout(() => tile.classList.add('off'), 120 + i * 210 + Math.random() * 90));
-      // The smoke keeps going for a while after it stops.
-      const fade = performance.now();
-      const taper = (now) => {
-        smoking = Math.max(0, 0.75 * (1 - (now - fade) / 4200));
-        if (smoking > 0) requestAnimationFrame(taper);
-      };
-      requestAnimationFrame(taper);
-      // A heart monitor across the dead screens: two beats, weaker, then flat.
-      const line = stats.querySelector('.flatline');
-      const lastTile = tiles[tiles.length - 1];
-      if (line && lastTile) {
-        const w = stats.offsetWidth, h = lastTile.offsetTop + lastTile.offsetHeight;
-        const firstRow = tiles[0].offsetTop + tiles[0].offsetHeight;
-        const y = tiles.length > 2 ? (firstRow + tiles[2].offsetTop) / 2 : h / 2;
-        const beat = (x, a) => `L${x} ${y} l6 ${-a * 0.18} l6 ${a * 0.18} l8 0 l5 ${a * 0.25} l7 ${-a * 1.25} l8 ${a * 1.6} l6 ${-a * 0.6} l10 0 l9 ${-a * 0.3} l9 ${a * 0.3}`;
-        line.setAttribute('viewBox', `0 0 ${w} ${h}`);
-        line.style.height = `${h}px`;
-        line.querySelector('path').setAttribute('d', `M0 ${y} ${beat(w * 0.14, 46)} ${beat(w * 0.38, 26)} L${w} ${y}`);
+      // One last jolt, then it stays where it landed: crooked, slumped, scorched.
+      stats.style.transform = reduce ? 'rotate(-0.8deg)' : `translate(${(Math.random() - 0.5) * 18}px, 10px) rotate(-2.4deg)`;
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        stats.style.transition = 'transform 260ms cubic-bezier(.3, 1.6, .5, 1)';
+        stats.style.transform = 'translate(1px, 3px) rotate(-0.8deg)';
+      }));
+      tiles.forEach((tile, i) => {
+        const r = (Math.random() - 0.5) * 7;
+        const y = 1 + Math.random() * 5 + (i % 2) * 2;
+        const x = (Math.random() - 0.5) * 8;
+        tile.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) rotate(${r.toFixed(2)}deg)`;
+        tile.classList.add('scorched');
+      });
+      // The smoke thins out but never quite stops.
+      if (!reduce) {
+        const fade = performance.now();
+        const taper = (now) => {
+          smoking = Math.max(0.12, 0.8 * (1 - (now - fade) / 5000));
+          if (smoking > 0.12) requestAnimationFrame(taper);
+        };
+        requestAnimationFrame(taper);
       }
-      setTimeout(() => stats.classList.add('dead'), 1300);
-      setTimeout(() => {
-        if (!ending) return;
-        ending.hidden = false;
-        requestAnimationFrame(() => requestAnimationFrame(() => ending.classList.add('shown')));
-      }, 4300);
+      // A plain log line keeps time. Nothing else on the page reacts.
+      if (aftermath) {
+        const since = aftermath.querySelector('.since');
+        const pad = (n) => String(n).padStart(2, '0');
+        const tick = () => {
+          const s = Math.floor((performance.now() - brokeAt) / 1000);
+          since.textContent = s >= 3600 ? `${Math.floor(s / 3600)}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}` : `${pad(Math.floor(s / 60))}:${pad(s % 60)}`;
+        };
+        tick();
+        setInterval(tick, 1000);
+        setTimeout(() => {
+          aftermath.hidden = false;
+          requestAnimationFrame(() => requestAnimationFrame(() => aftermath.classList.add('shown')));
+        }, 3500);
+      }
     };
     const spin = (startedAt) => {
       let phase = 0, jolt = 0, prev = startedAt;
@@ -231,7 +239,7 @@
         const elapsed = now - startedAt;
         const dt = Math.min(0.05, (now - prev) / 1000);
         prev = now;
-        if (elapsed > RAMP + PEAK) { die(); return; }
+        if (elapsed > RAMP + PEAK) { breakDown(); return; }
         const p = Math.min(1, elapsed / RAMP);
         stats.style.setProperty('--heat', Math.min(1, Math.max(0, (p - 0.25) / 0.65)).toFixed(3));
         smoking = Math.max(0, Math.min(1, (p - 0.3) / 0.6));
@@ -257,35 +265,18 @@
     const watch = (now) => {
       const dt = now - last;
       last = now;
-      if (state === 'idle') {
-        if (visible && document.visibilityState === 'visible') seen += dt;
-        if (seen >= LINGER) {
-          state = 'spinning';
-          if (reduce) {
-            stats.style.setProperty('--heat', '1');
-            die();
-          } else spin(now);
-          return;
-        }
+      if (visible && document.visibilityState === 'visible') seen += dt;
+      if (seen >= LINGER) {
+        state = 'spinning';
+        if (reduce) {
+          stats.style.setProperty('--heat', '1');
+          breakDown();
+        } else spin(now);
+        return;
       }
       requestAnimationFrame(watch);
     };
     requestAnimationFrame(watch);
-
-    // You can turn it back on. It'll do the same thing again.
-    restart?.addEventListener('click', () => {
-      ending.classList.remove('shown');
-      ending.hidden = true;
-      stats.classList.remove('dead');
-      stats.style.setProperty('--heat', '0');
-      tiles.forEach((tile) => tile.classList.remove('off'));
-      seen = 0;
-      state = 'idle';
-      frozen = false;
-      lastDraw = last = performance.now();
-      requestAnimationFrame(draw);
-      requestAnimationFrame(watch);
-    });
   }
 
   // Copy buttons on code blocks.
