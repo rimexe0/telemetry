@@ -422,6 +422,9 @@ func (b *Blocker) SiteDecision(host, address string) awserver.SiteDecision {
 	if BlocksSite(*decision, host) && !policy.AddressOpen(decision.OpenAddresses, address) {
 		result.Blocked, result.Mode, result.Reason = true, ModeLabel(decision.Mode), decision.Reason
 		result.Trim = TrimmedPage(*decision, host, address)
+		if result.Trim == "" {
+			result.Instead = VideoInstead(*decision, host, address)
+		}
 		b.recordSite(host, result.Trim, *decision)
 	}
 	return result

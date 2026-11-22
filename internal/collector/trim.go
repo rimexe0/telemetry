@@ -16,6 +16,10 @@ import (
 // site covered.
 var trimModes = map[string]bool{policy.ModeWork: true, policy.ModeBreak: true, policy.ModeClosed: true, policy.ModeUrgent: true}
 
+// youtubeVideo matches one video in a format the trim does not allow: a Short,
+// whose page scrolls on into the Shorts feed, or /watch/<id>.
+var youtubeVideo = regexp.MustCompile(`^/(shorts|watch)/([A-Za-z0-9_-]{6,})/?$`)
+
 // redditPost matches a single post page.
 var redditPost = regexp.MustCompile(`^/((r|u|user)/[^/]+/)?comments/[^/]+`)
 
@@ -43,4 +47,28 @@ func TrimmedPage(decision policy.Decision, host, address string) string {
 		}
 	}
 	return ""
+}
+
+// VideoInstead is the address of the same video on the trimmed video page,
+// for a covered YouTube page that shows one video in another format, or ""
+// otherwise. The cover offers it as a link; the tab's address is never
+// changed for the owner (owner request 2026-11-22: a tutorial posted as a
+// Short could not be watched).
+func VideoInstead(decision policy.Decision, host, address string) string {
+	if strings.TrimPrefix(strings.ToLower(host), "www.") != "youtube.com" {
+		return ""
+	}
+	parsed, err := url.Parse(address)
+	if err != nil || !strings.EqualFold(parsed.Hostname(), host) {
+		return ""
+	}
+	match := youtubeVideo.FindStringSubmatch(parsed.EscapedPath())
+	if match == nil {
+		return ""
+	}
+	instead := "https://" + parsed.Host + "/watch?v=" + match[2]
+	if TrimmedPage(decision, host, instead) == "" {
+		return ""
+	}
+	return instead
 }

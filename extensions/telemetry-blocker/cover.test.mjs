@@ -2,11 +2,11 @@
 import fs from "node:fs";
 import vm from "node:vm";
 const src = fs.readFileSync(new URL("./cover.js", import.meta.url), "utf8");
-function world({ readyState, visibility, blocked, trim, pathname = "/a", found = {} }) {
-  const w = { reloads: 0, stops: 0, paused: 0, clicks: 0, listeners: {}, messages: [], visibility, covered: false, styled: false, timers: [], found };
+function world({ readyState, visibility, blocked, trim, instead, pathname = "/a", found = {} }) {
+  const w = { parts: {}, assigned: [], reloads: 0, stops: 0, paused: 0, clicks: 0, listeners: {}, messages: [], visibility, covered: false, styled: false, timers: [], found };
   const el = (tag) => tag === "style"
     ? { get isConnected() { return w.styled; }, remove() { w.styled = false; }, set textContent(v) { w.css = v; } }
-    : { style: { setProperty: (k, v, p) => ((w.coverStyle ||= {})[k] = v + " " + p) }, attachShadow: () => ({ innerHTML: "", querySelector: (q) => ({ addEventListener() {}, set textContent(v) { if (q === ".closed") w.closedText = v; } }) }),
+    : { style: { setProperty: (k, v, p) => ((w.coverStyle ||= {})[k] = v + " " + p) }, attachShadow: () => ({ innerHTML: "", querySelector: (q) => (w.parts[q] ||= { hidden: q === ".instead", addEventListener(n, f) { this.click = f; }, set textContent(v) { if (q === ".closed") w.closedText = v; } }) }),
         get isConnected() { return w.covered; }, remove() { w.covered = false; } };
   const visible = { checkVisibility: () => true };
   const document = { readyState, get visibilityState() { return w.visibility; },
@@ -15,9 +15,9 @@ function world({ readyState, visibility, blocked, trim, pathname = "/a", found =
     documentElement: { append(node) { if (node.attachShadow) w.covered = true; else w.styled = true; } },
     addEventListener: (n, f) => (w.listeners[n] = f), dispatchEvent() {} };
   const window = { stop: () => w.stops++ }; window.top = window;
-  const location = { hostname: "x.com", href: "https://x.com" + pathname, pathname, reload: () => w.reloads++ };
+  const location = { hostname: "x.com", href: "https://x.com" + pathname, pathname, reload: () => w.reloads++, assign: (a) => w.assigned.push(a) };
   w.location = location;
-  const answer = (url) => ({ blocked: typeof blocked === "function" ? blocked(url) : blocked, trim: typeof trim === "function" ? trim(url) : trim });
+  const answer = (url) => ({ blocked: typeof blocked === "function" ? blocked(url) : blocked, trim: typeof trim === "function" ? trim(url) : trim, instead });
   const ctx = { window, document, location, history: {}, Event: class {},
     setInterval: (f) => w.timers.push(f), clearInterval: (id) => { if (id) w.timers[id - 1] = () => {}; }, MutationObserver: class { observe() {} disconnect() {} },
     chrome: { runtime: { sendMessage: (m, cb) => { w.messages.push(m); cb(answer(m.url)); }, onMessage: { addListener: (f) => (w.send = (b, t) => f({ type: "decision", decision: { blocked: b, trim: t } })) } } } };
@@ -77,3 +77,8 @@ check("and trimmed again when going back to one that is", !w.covered && w.styled
 w.send(false); check("the style goes when the block ends", !w.covered && !w.styled);
 w = world({ readyState: "complete", visibility: "visible", blocked: true });
 check("the cover cannot be hidden by page styles", w.coverStyle.visibility === "visible important" && w.coverStyle["z-index"] === "2147483647 important");
+w = world({ readyState: "loading", visibility: "visible", blocked: true, instead: "https://www.youtube.com/watch?v=abc", pathname: "/shorts/abc" });
+check("a covered Short offers the same video on the trimmed page", w.covered && w.parts[".instead"].hidden === false && w.assigned.length === 0);
+w.parts[".instead"].click(); check("and goes there only when clicked", w.assigned[0] === "https://www.youtube.com/watch?v=abc");
+w = world({ readyState: "loading", visibility: "visible", blocked: true, pathname: "/shorts/abc" });
+check("a covered page without one offers nothing", w.covered && w.parts[".instead"].hidden === true);

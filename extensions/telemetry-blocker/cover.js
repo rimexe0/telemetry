@@ -134,14 +134,22 @@
       </style>
       <div class="page"><main>
         <div class="mode"></div><div class="reason"></div><div class="closed"></div>
-        <button>Go back</button>
+        <button class="back">Go back</button> <button class="instead" hidden>Watch it as a normal video</button>
       </main></div>`;
     shadow.querySelector(".mode").textContent = decision.mode || "";
     shadow.querySelector(".reason").textContent = decision.reason || "This site is blocked right now.";
     shadow.querySelector(".closed").textContent = decision.trimFailed
       ? `This ${location.hostname} page looks different from what the blocker knows, so the site is closed until the block ends.`
       : `${location.hostname} is closed right now. The page will come back when the block ends.`;
-    shadow.querySelector("button").addEventListener("click", () => history.back());
+    shadow.querySelector(".back").addEventListener("click", () => history.back());
+    // A Short is covered, since its page scrolls on into the Shorts feed; the
+    // same video can play on the trimmed video page. Only the owner's click
+    // goes there.
+    const instead = shadow.querySelector(".instead");
+    if (decision.instead && !decision.trimFailed) {
+      instead.hidden = false;
+      instead.addEventListener("click", () => location.assign(decision.instead));
+    }
     return host;
   }
 

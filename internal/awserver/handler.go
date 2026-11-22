@@ -74,6 +74,9 @@ type SiteDecision struct {
 	// Trim names how the extension may show a blocked page with its feeds
 	// hidden instead of covering it, such as "youtube".
 	Trim string `json:"trim,omitempty"`
+	// Instead is the same video as a page the trim allows, for a covered
+	// page that shows one video in a closed format, such as a Short.
+	Instead string `json:"instead,omitempty"`
 }
 
 func (h Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
