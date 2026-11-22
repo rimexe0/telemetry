@@ -130,8 +130,9 @@ class TelemetryDeliveryClient(
             }
 
             val plan = try {
-                DeliveryBatchPlanner.plan(
+                DeliveryBatchPlanner.planRequest(
                     pending,
+                    MAX_REQUEST_BYTES,
                     DeliveryBatchBudget.remaining(maxBytes, result.bodyBytes),
                     ::buildBody,
                 )
@@ -161,11 +162,10 @@ class TelemetryDeliveryClient(
                 hasMore = true,
             )
             try {
-                val remainingMillis = ((deadline - System.nanoTime()) / 1_000_000L).coerceAtLeast(1L)
-                sendWithFailureMetrics(
-                    DeliveryPayload(plan.rows.size, batchId(plan.rows), plan.body),
-                    remainingMillis,
-                )
+                // A started request gets its full timeout: cutting it to the
+                // drain's remaining time failed the last batch of most drains.
+                // The deadline only decides whether another one starts.
+                sendWithFailureMetrics(DeliveryPayload(plan.rows.size, batchId(plan.rows), plan.body))
             } catch (error: DeliveryException) {
                 throw error.withPartial(attempted)
             } catch (error: Exception) {
@@ -441,6 +441,7 @@ class TelemetryDeliveryClient(
         const val MAX_ROWS_PER_BATCH = 500
         const val DEFAULT_MAX_BATCHES = 10
         const val DEFAULT_MAX_BYTES = 1_048_576L
+        const val MAX_REQUEST_BYTES = 256L * 1024L
         const val DEFAULT_MAX_MILLIS = 20_000L
         const val MAX_RECEIPT_BYTES = 64 * 1024
         val DRAIN_LOCK = Any()

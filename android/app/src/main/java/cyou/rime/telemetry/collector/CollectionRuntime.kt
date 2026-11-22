@@ -204,9 +204,10 @@ object CollectionRuntime {
                     ?: if (error.kind == DeliveryFailureKind.OVERSIZED_ROW || error.kind == DeliveryFailureKind.INVALID_PAYLOAD) 0L
                     else error.bodyBytes.takeIf { it > 0L } ?: limit
             }
-            val failures = (prefs.getInt("delivery_failures", 0) + 1).coerceAtMost(5)
-            prefs.edit().putInt("delivery_failures", failures)
-                .putLong("retry_at", now + minOf(900_000L, 60_000L shl (failures - 1))).apply()
+            val progress = error is DeliveryException && (error.partialResult?.acknowledged ?: 0) > 0
+            val next = DeliveryBackoff.after(prefs.getInt("delivery_failures", 0), progress)
+            prefs.edit().putInt("delivery_failures", next.failures)
+                .putLong("retry_at", if (next.waitMillis > 0) now + next.waitMillis else 0L).apply()
             if (error is DeliveryException) "delivery_${error.kind ?: error.status}"
             else "delivery_error:${error.javaClass.simpleName}"
         } finally {

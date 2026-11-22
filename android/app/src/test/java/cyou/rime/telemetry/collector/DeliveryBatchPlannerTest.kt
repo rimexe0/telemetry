@@ -39,4 +39,34 @@ class DeliveryBatchPlannerTest {
             assertEquals(50L, remaining)
         }
     }
+
+    @Test
+    fun aRequestStaysSmallWhileTheDrainBudgetIsLarger() {
+        val rows = (0 until 500).toList()
+        val bodyBuilder: (List<Int>) -> ByteArray = { values -> ByteArray(values.size * 1_000) }
+        val request = DeliveryBatchPlanner.planRequest(rows, 262_144L, 1_048_576L, bodyBuilder)!!
+        assertEquals(262, request.rows.size)
+    }
+
+    @Test
+    fun aRowLargerThanARequestStillGoesAloneWithinTheDrainBudget() {
+        val rows = listOf(300_000, 10)
+        val bodyBuilder: (List<Int>) -> ByteArray = { values -> ByteArray(values.sum()) }
+        val request = DeliveryBatchPlanner.planRequest(rows, 262_144L, 1_048_576L, bodyBuilder)!!
+        assertEquals(listOf(300_000), request.rows)
+        try {
+            DeliveryBatchPlanner.planRequest(listOf(2_000_000), 262_144L, 1_048_576L, bodyBuilder)
+            throw AssertionError("a row over the drain budget must still be refused")
+        } catch (error: OversizedDeliveryRowException) {
+            assertEquals(2_000_000L, error.bodyBytes)
+        }
+    }
+
+    @Test
+    fun aCycleThatGotRowsThroughDoesNotWaitLonger() {
+        assertEquals(DeliveryBackoff.Next(0, 0L), DeliveryBackoff.after(5, madeProgress = true))
+        assertEquals(DeliveryBackoff.Next(1, 60_000L), DeliveryBackoff.after(0, madeProgress = false))
+        assertEquals(DeliveryBackoff.Next(3, 240_000L), DeliveryBackoff.after(2, madeProgress = false))
+        assertEquals(DeliveryBackoff.Next(5, 900_000L), DeliveryBackoff.after(5, madeProgress = false))
+    }
 }

@@ -48,6 +48,40 @@ internal object DeliveryBatchPlanner {
     }
 }
 
+/**
+ * Plans one request of at most [requestBytes] within the drain's [remainingBytes].
+ * Small requests finish on a slow link; a single row larger than a request
+ * still goes alone while the drain's budget allows it (2026-11-22: 1 MiB
+ * requests timed out on the phone for seven hours).
+ */
+internal fun <T> DeliveryBatchPlanner.planRequest(
+    rows: List<T>,
+    requestBytes: Long,
+    remainingBytes: Long,
+    buildBody: (List<T>) -> ByteArray,
+): PlannedDeliveryBatch<T>? = try {
+    plan(rows, minOf(requestBytes, remainingBytes), buildBody)
+} catch (error: OversizedDeliveryRowException) {
+    if (requestBytes >= remainingBytes) throw error
+    plan(rows.take(1), remainingBytes, buildBody)
+}
+
+/**
+ * The next retry after a failed delivery cycle. A cycle that got rows through
+ * before failing is progress, not a failure: it tries again at the next cycle
+ * and does not lengthen the wait. Otherwise the wait doubles from one minute
+ * up to fifteen.
+ */
+internal object DeliveryBackoff {
+    data class Next(val failures: Int, val waitMillis: Long)
+
+    fun after(previousFailures: Int, madeProgress: Boolean): Next {
+        if (madeProgress) return Next(0, 0L)
+        val failures = (previousFailures + 1).coerceAtMost(5)
+        return Next(failures, minOf(900_000L, 60_000L shl (failures - 1)))
+    }
+}
+
 /** Keeps the byte cap an aggregate drain budget rather than a per-batch cap. */
 internal object DeliveryBatchBudget {
     fun remaining(maxBytes: Long, usedBytes: Long): Long {
