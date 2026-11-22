@@ -184,3 +184,19 @@ func TestRelaySendsBrowsersToThePanel(t *testing.T) {
 		t.Fatalf("device after redirect set = %+v %v", answer, err)
 	}
 }
+
+func TestRelayTellsWhichHostADeviceReachedItOn(t *testing.T) {
+	now := time.Date(2026, 10, 6, 9, 0, 0, 0, time.UTC)
+	r, sealer, _ := relay(t, now)
+	hosts := []string{}
+	r.Reached = func(host string) { hosts = append(hosts, host) }
+	if code := send(t, r, []byte("not sealed"), "1.2.3.4").Code; code != http.StatusBadRequest || len(hosts) != 0 {
+		t.Fatalf("an unsealed request must not count: %d %v", code, hosts)
+	}
+	message, _, _ := sealer.Seal(Head{Method: "GET", Path: "/v1/device/now", At: now.UnixMilli(), ID: newID()}, nil)
+	request := httptest.NewRequest(http.MethodPost, "https://t.example.com/", bytes.NewReader(message))
+	r.ServeHTTP(httptest.NewRecorder(), request)
+	if len(hosts) != 1 || hosts[0] != "t.example.com" {
+		t.Fatalf("hosts = %v", hosts)
+	}
+}

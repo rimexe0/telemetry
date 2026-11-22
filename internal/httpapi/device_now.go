@@ -180,7 +180,7 @@ func (s *Server) deviceNowBody(ctx context.Context, places bool) (map[string]any
 	// Start in the past so a device whose clock runs slightly behind still
 	// finds a segment covering its own "now".
 	timeline := policy.Timeline(config, version, facts, now.Add(-10*time.Minute), now.Add(deviceTimeline))
-	return map[string]any{
+	body := map[string]any{
 		"fingerprint":  nowFingerprint(decision, timeline, task, facts.PlanExists, openFollowUps),
 		"generated_at": now,
 		"tracking":     tracking,
@@ -194,7 +194,13 @@ func (s *Server) deviceNowBody(ctx context.Context, places bool) (map[string]any
 		"decision":             decision,
 		"timeline":             timeline,
 		"panel_path":           "/panel/",
-	}, nil
+	}
+	if s.config.DeviceRelay != nil {
+		if relayURL, relayKey := s.config.DeviceRelay(ctx); relayURL != "" && relayKey != "" {
+			body["relay"] = map[string]string{"url": relayURL, "key": relayKey}
+		}
+	}
+	return body, nil
 }
 
 // nowFingerprint changes only when what a device does changes: the decision

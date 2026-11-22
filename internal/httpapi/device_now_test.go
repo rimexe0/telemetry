@@ -187,3 +187,35 @@ func TestDeviceNowKeepsWaitingPlaceRemindersFromOlderApps(t *testing.T) {
 		t.Fatalf("the current app gets every open follow-up with its place: %+v", current)
 	}
 }
+
+func TestDeviceNowNamesTheRelayOnceItIsKnown(t *testing.T) {
+	relayURL := ""
+	server, err := New(&fakeRepository{}, Config{
+		IngestToken: "ingest-secret",
+		ReadToken:   "read-secret",
+		DeviceAuthorized: func(_ context.Context, deviceID, token string) (bool, bool, error) {
+			return true, token == "device-secret", nil
+		},
+		DeviceRelay: func(context.Context) (string, string) { return relayURL, "BDQApublic" },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	relay := func() map[string]string {
+		var payload struct {
+			Relay map[string]string `json:"relay"`
+		}
+		response := deviceGet(server, "android-1", "device-secret")
+		if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil || response.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", response.Code, response.Body)
+		}
+		return payload.Relay
+	}
+	if got := relay(); got != nil {
+		t.Fatalf("no saved relay address names none, got %v", got)
+	}
+	relayURL = "https://t.example.com"
+	if got := relay(); got["url"] != "https://t.example.com" || got["key"] != "BDQApublic" {
+		t.Fatalf("relay = %v", got)
+	}
+}

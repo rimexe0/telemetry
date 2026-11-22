@@ -22,6 +22,11 @@ import (
 )
 
 type Config struct {
+	// DeviceRelay names the relay devices reach the server through without
+	// Tailscale, and its public key, or "" when there is none. Paired
+	// devices learn it from /v1/device/now, so one set up without it stops
+	// needing Tailscale.
+	DeviceRelay        func(ctx context.Context) (url, key string)
 	IngestToken        string
 	IngestDeviceTokens map[string]string
 	ReadToken          string

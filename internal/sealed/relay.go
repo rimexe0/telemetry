@@ -28,6 +28,9 @@ type Relay struct {
 	// in a browser is sent: the panel on its private address. Devices only
 	// ever POST sealed requests, so a GET is always a person.
 	Browsers string
+	// Reached, when set, is told the host a device's sealed request came
+	// in on: the relay's public address as devices know it.
+	Reached func(host string)
 
 	mu      sync.Mutex
 	seen    map[string]time.Time
@@ -93,6 +96,9 @@ func (r *Relay) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	if !r.first(head.ID, now) {
 		http.Error(writer, "replayed", http.StatusConflict)
 		return
+	}
+	if r.Reached != nil {
+		r.Reached(request.Host)
 	}
 	target, err := url.ParseRequestURI(head.Path)
 	if err != nil || target.Host != "" || !reachable(target.Path) {

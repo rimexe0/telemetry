@@ -9,12 +9,14 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -166,7 +168,10 @@ func main() {
 	}
 	// Changes wake devices waiting for their next decision.
 	feed := changes.New()
+	// The relay's public key, once loaded below.
+	relayPublic := ""
 	serverConfig := httpapi.Config{
+		DeviceRelay:         deviceRelay(devices, &relayPublic),
 		IngestToken:         *ingestToken,
 		OwnerAuthorized:     ownerAuthorized,
 		DeviceAuthorized:    devices.AuthorizeDevice,
@@ -217,6 +222,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
+		relayPublic = relayKey.Public()
 	}
 	if clerkPairing || panelPairing {
 		verifyOwner := ownerAuthorized
@@ -225,10 +231,6 @@ func main() {
 		}
 		if signInSettings != nil {
 			verifyOwner = settingsOwner
-		}
-		relayPublic := ""
-		if relayKey != nil {
-			relayPublic = relayKey.Public()
 		}
 		pairing, err := enrollment.NewHandler(devices, enrollment.HandlerConfig{VerifyOwner: verifyOwner, PublicURL: publicURL, RelayKey: relayPublic, JoinPage: os.Getenv("TELEMETRY_JOIN_PAGE")})
 		if err != nil {
@@ -282,7 +284,7 @@ func main() {
 		key := relayKey
 		relayServer := &http.Server{
 			Addr:              *relayListen,
-			Handler:           &sealed.Relay{Key: key, Next: handler, MaxBytes: 24 << 20, Window: 5 * time.Minute, PerMinute: 600, Browsers: relayBrowsers(publicURL)},
+			Handler:           &sealed.Relay{Key: key, Next: handler, MaxBytes: 24 << 20, Window: 5 * time.Minute, PerMinute: 600, Browsers: relayBrowsers(publicURL), Reached: learnRelay(devices)},
 			ReadHeaderTimeout: 10 * time.Second,
 		}
 		go func() {
@@ -377,4 +379,56 @@ func relayBrowsers(publicURL string) string {
 		return ""
 	}
 	return strings.TrimRight(publicURL, "/") + "/panel/"
+}
+
+// learnRelay saves the relay's public address the first time a device's
+// sealed request arrives through it, when none was saved in the panel. Setup
+// codes then carry it, and paired devices learn it from /v1/device/now, so a
+// phone set up without it stops needing Tailscale (2026-11-22: a phone paired
+// from a code without the relay went silent whenever Tailscale was off).
+func learnRelay(devices *enrollment.Service) func(host string) {
+	var settled atomic.Bool
+	return func(host string) {
+		if settled.Load() || !publicHost(host) || !settled.CompareAndSwap(false, true) {
+			return
+		}
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			current, err := devices.RelayURL(ctx)
+			if err == nil && current == "" {
+				err = devices.SetRelayURL(ctx, "https://"+host)
+				if err == nil {
+					log.Printf("Saved the relay address https://%s from a device's request", host)
+				}
+			}
+			if err != nil {
+				log.Printf("learn relay address: %v", err)
+				settled.Store(false)
+			}
+		}()
+	}
+}
+
+// publicHost is a bare public host name: no port, no address, not local.
+func publicHost(host string) bool {
+	if host == "" || strings.ContainsAny(host, ":/[]@") || net.ParseIP(host) != nil {
+		return false
+	}
+	return strings.Contains(host, ".") && !strings.HasSuffix(host, ".local") && !strings.HasSuffix(host, ".ts.net") && host != "localhost"
+}
+
+// deviceRelay names the saved relay address and the relay's public key for
+// paired devices, or nothing until both are known.
+func deviceRelay(devices *enrollment.Service, public *string) func(context.Context) (string, string) {
+	return func(ctx context.Context) (string, string) {
+		if *public == "" {
+			return "", ""
+		}
+		address, err := devices.RelayURL(ctx)
+		if err != nil {
+			return "", ""
+		}
+		return address, *public
+	}
 }
