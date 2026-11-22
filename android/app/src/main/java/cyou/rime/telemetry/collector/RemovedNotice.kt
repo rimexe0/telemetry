@@ -13,6 +13,7 @@ object RemovedNotice {
     private const val ID = 7301
 
     fun show(context: Context) {
+        if (!Notices.on(context, NoticeKind.SYNC)) return
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         manager.createNotificationChannel(NotificationChannel(CHANNEL, "Connection to your server", NotificationManager.IMPORTANCE_DEFAULT))
         val open = PendingIntent.getActivity(context, 4, SetupActivity.intent(context, SetupStep.PAIR), PendingIntent.FLAG_IMMUTABLE)

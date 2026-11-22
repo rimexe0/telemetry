@@ -31,7 +31,7 @@ class SetupStepsTest {
         val all = SetupStep.entries.toSet()
         assertNull(SetupStep.next(all, emptySet()))
         assertEquals(0, SetupStep.remainingRequired(all))
-        assertEquals(4, SetupStep.remainingRequired(emptySet()))
+        assertEquals(3, SetupStep.remainingRequired(emptySet()))
     }
 
     @Test
@@ -40,5 +40,15 @@ class SetupStepsTest {
         // Health and location are extras; blocking and notification access matter for blocking.
         assertEquals(listOf(SetupStep.BLOCKING, SetupStep.NOTIFICATION_ACCESS), SetupStep.missing(done))
         assertEquals(emptyList<SetupStep>(), SetupStep.missing(SetupStep.entries.toSet()))
+    }
+
+    @Test
+    fun notificationsAreNeverForced() {
+        // Without them nothing opens setup or is named as missing on the Now screen.
+        assertEquals(false, SetupStep.NOTIFICATIONS.required)
+        val done = SetupStep.entries.toSet() - SetupStep.NOTIFICATIONS
+        assertEquals(0, SetupStep.remainingRequired(done))
+        assertEquals(emptyList<SetupStep>(), SetupStep.missing(done))
+        assertEquals(null, SetupStep.next(done, setOf(SetupStep.NOTIFICATIONS)))
     }
 }

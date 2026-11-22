@@ -30,8 +30,11 @@ data class FollowUp(val id: Long, val title: String, val dueAt: Instant, val nag
 }
 
 /**
- * Keeps due follow-ups in front of the owner until they are marked done, so
- * nothing depends on remembering. It works from the cached server answer, so
+ * Keeps due follow-ups on the Now screen until they are marked done, so
+ * nothing depends on remembering, and says so in a notification when one
+ * comes due (and again at its nag interval). A swiped-away notification
+ * stays away, and with follow-up notifications switched off there are none
+ * (owner request 2026-11-22). It works from the cached server answer, so
  * a follow-up still comes due while the phone is offline; a "done" tapped
  * offline is kept and sent when the server is reachable.
  */
@@ -84,15 +87,15 @@ object FollowUpWatch {
         val done = doneLocally(context)
         val now = Instant.now()
         val manager = context.getSystemService(NotificationManager::class.java)
-        val showing = manager.activeNotifications.map { it.id }.toSet()
+        val wanted = Notices.on(context, NoticeKind.FOLLOW_UPS)
         val editor = preferences.edit()
         for (followUp in listed) {
             if (followUp.id in done || !followUp.dueBy(now)) continue
+            if (!wanted) manager.cancel(notificationId(followUp.id))
             val last = preferences.getString(KEY_ALERTED + followUp.id, null)?.let { runCatching { Instant.parse(it) }.getOrNull() }
-            val loud = alertsNow(followUp, now, last)
-            // A swiped-away notice comes back quietly; it only leaves when done.
-            if (loud || notificationId(followUp.id) !in showing) notify(context, manager, followUp, loud)
-            if (loud) editor.putString(KEY_ALERTED + followUp.id, now.toString())
+            if (!alertsNow(followUp, now, last)) continue
+            if (wanted) notify(context, manager, followUp)
+            editor.putString(KEY_ALERTED + followUp.id, now.toString())
         }
         // Closed elsewhere: take the notice down and forget it.
         val openIds = listed.map { it.id }.toSet()
@@ -128,20 +131,20 @@ object FollowUpWatch {
 
     private fun notificationId(id: Long) = BASE_ID + (id % 1000).toInt()
 
-    private fun notify(context: Context, manager: NotificationManager, followUp: FollowUp, loud: Boolean) {
+    private fun notify(context: Context, manager: NotificationManager, followUp: FollowUp) {
         manager.createNotificationChannel(NotificationChannel(CHANNEL, "Follow-ups", NotificationManager.IMPORTANCE_HIGH))
-        manager.createNotificationChannel(NotificationChannel(QUIET_CHANNEL, "Follow-ups still open", NotificationManager.IMPORTANCE_LOW))
+        // Earlier builds re-posted swiped-away ones quietly on a channel of their own.
+        manager.deleteNotificationChannel(QUIET_CHANNEL)
         val open = PendingIntent.getActivity(context, 4, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val done = PendingIntent.getBroadcast(context, notificationId(followUp.id),
             Intent(context, FollowUpDoneReceiver::class.java).setAction(ACTION_DONE).putExtra(EXTRA_ID, followUp.id),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        manager.notify(notificationId(followUp.id), Notification.Builder(context, if (loud) CHANNEL else QUIET_CHANNEL)
+        manager.notify(notificationId(followUp.id), Notification.Builder(context, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_popup_reminder)
             .setContentTitle(followUp.title)
             .setContentText(dueText(followUp, Instant.now()))
             .setWhen((followUp.dueSince ?: followUp.dueAt).toEpochMilli())
             .setShowWhen(true)
-            .setOngoing(true)
             .setContentIntent(open)
             .addAction(Notification.Action.Builder(null, "Done", done).build())
             .build())

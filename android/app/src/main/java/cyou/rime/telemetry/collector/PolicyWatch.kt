@@ -11,18 +11,13 @@ import java.time.Instant
 /**
  * Runs once per collection cycle: refreshes the cached policy and notices when
  * blocking is switched off while the policy is blocking something. One bypass
- * is recorded and asked about per episode.
+ * is recorded and asked about once per episode.
  */
 object PolicyWatch {
     private const val PREFS = "telemetry-policy-watch"
     private const val KEY_BYPASS_SINCE = "bypass_since"
     private const val CHANNEL = "telemetry-checkins"
     private const val NOTIFICATION_ID = 4201
-
-    // Updates and reboots delete the app's notifications. The first check in a
-    // new process asks again about a bypass that is still open; later checks
-    // leave a dismissed question alone.
-    @Volatile private var askedThisProcess = false
 
     /** With fetch false, applies the cached answer as it is, such as one that just arrived. */
     fun check(context: Context, fetch: Boolean = true) {
@@ -50,7 +45,6 @@ object PolicyWatch {
                 preferences.edit().putString(KEY_BYPASS_SINCE, since).apply()
                 notify(context, decision!!)
             }
-            bypassed && !askedThisProcess -> notify(context, decision!!)
             !bypassed && openSince != null -> {
                 PolicyEvents.record(context, "android.policy_bypass_end", "bypass-end:$openSince", decision, mapOf("started_at" to openSince))
                 preferences.edit().remove(KEY_BYPASS_SINCE).apply()
@@ -59,8 +53,9 @@ object PolicyWatch {
         }
     }
 
+    // Asked once per episode, and only while the owner wants these.
     private fun notify(context: Context, decision: BlockDecision) {
-        askedThisProcess = true
+        if (!Notices.on(context, NoticeKind.BLOCKING_OFF)) return
         val manager = context.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(CHANNEL, "Check-ins", NotificationManager.IMPORTANCE_DEFAULT))
         val open = PendingIntent.getActivity(context, 2, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)

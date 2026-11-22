@@ -113,6 +113,7 @@ object TurnWatch {
     }
 
     private fun notify(context: Context, manager: NotificationManager, id: Int, title: String, text: String) {
+        if (!Notices.on(context, NoticeKind.TASKS)) return
         manager.createNotificationChannel(NotificationChannel(CHANNEL, "Tasks", NotificationManager.IMPORTANCE_DEFAULT))
         val open = PendingIntent.getActivity(context, 5, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         manager.notify(id, Notification.Builder(context, CHANNEL)

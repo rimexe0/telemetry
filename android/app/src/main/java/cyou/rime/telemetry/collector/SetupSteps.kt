@@ -15,9 +15,11 @@ enum class SetupStep(
     PAIR(true, "Connect this phone",
         "Links the phone to your Telemetry server. In the panel on your computer, open Devices → Add a device, then tap Scan the QR here and point the phone at it. Or type the server's address and the setup code below.",
         "Connect", "Not connected to the server"),
-    NOTIFICATIONS(true, "Allow notifications",
-        "Collection runs with a visible notification, and later the phone asks you short questions when something looks off.",
-        "Allow", "Notifications are off"),
+    // Optional, and never named as missing: the owner may keep them off
+    // (2026-11-22). Settings → Notifications picks which kinds are sent.
+    NOTIFICATIONS(false, "Allow notifications",
+        "Lets Telemetry tell you when the phone has not synced or a follow-up is due. Everything works without them, and you choose which kinds in Settings.",
+        "Allow"),
     USAGE_ACCESS(true, "Allow usage access",
         "Lets Telemetry see which app is open, so it can tell work from scrolling. Switch it on, then come back.",
         "Open setting", "Usage access is off"),

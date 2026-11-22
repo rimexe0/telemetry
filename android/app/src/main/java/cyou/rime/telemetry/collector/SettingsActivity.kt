@@ -42,6 +42,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -105,6 +106,8 @@ class SettingsActivity : ComponentActivity() {
     private var smsReady by mutableStateOf(false)
     private var smsBusy by mutableStateOf(false)
     private var captureNotifications by mutableStateOf(false)
+    private var notificationsAllowed by mutableStateOf(true)
+    private val noticeOn = mutableStateMapOf<NoticeKind, Boolean>()
     private var blockingStatus by mutableStateOf("")
     private var blockingEnforced by mutableStateOf(false)
     private var blockingBusy by mutableStateOf(false)
@@ -146,7 +149,7 @@ class SettingsActivity : ComponentActivity() {
         ) { granted -> notice(if (granted) "Background location is granted." else "Background location was not granted.") }
         notificationPermissionLauncher = registerForActivityResult(
             ActivityResultContracts.RequestPermission(),
-        ) { startFastCollection() }
+        ) { granted -> notificationsAllowed = granted }
         smsPermissionLauncher = registerForActivityResult(
             ActivityResultContracts.RequestPermission(),
         ) { granted ->
@@ -181,6 +184,9 @@ class SettingsActivity : ComponentActivity() {
         refreshBlockingStatus()
         if (blockingOn) ensureBlocking()
         paired = DeliveryConfig(this).token() != null
+        notificationsAllowed = Build.VERSION.SDK_INT < 33 ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        NoticeKind.entries.forEach { noticeOn[it] = Notices.on(this, it) }
     }
 
     @OptIn(ExperimentalMaterial3Api::class)
@@ -225,7 +231,25 @@ class SettingsActivity : ComponentActivity() {
                     Item("Usage access", "Lets Telemetry see which app is open.", onClick = { startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) })
                     Item("Collect app and device context", enabled = !deviceBusy, onClick = ::collectDeviceTelemetry)
                 }
-                Section("Notifications") {
+                // Which notifications Telemetry sends. Nothing here is switched
+                // back on or asked for unless the owner taps it.
+                Section("Notifications Telemetry sends") {
+                    if (!notificationsAllowed) {
+                        Item("Off for Telemetry in Android", "None of these are sent. Tap to allow them.",
+                            onClick = { notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) })
+                    }
+                    for (kind in NoticeKind.entries) {
+                        Toggle(kind.title, kind.detail, noticeOn[kind] ?: kind.defaultOn) { checked ->
+                            Notices.set(this@SettingsActivity, kind, checked)
+                            noticeOn[kind] = checked
+                        }
+                    }
+                    Item("Hide the collection notification", "Android shows it while collecting. Turn off \"Telemetry collection\" and \"Telemetry location\" here to hide it; collection keeps running.",
+                        onClick = {
+                            startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
+                        })
+                }
+                Section("Other apps' notifications") {
                     Toggle("Capture notifications", "Kept in the local queue until uploaded.", captureNotifications) { checked ->
                         PolicyStore(this@SettingsActivity).captureNotifications = checked
                         captureNotifications = checked
@@ -370,13 +394,8 @@ class SettingsActivity : ComponentActivity() {
         }
     }
 
-    private fun requestFastCollection() {
-        if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        } else {
-            startFastCollection()
-        }
-    }
+    // Collection runs without the notification permission; it is not asked for here.
+    private fun requestFastCollection() = startFastCollection()
 
     private fun saveLimits() {
         val values = limits.map { it.toIntOrNull() }

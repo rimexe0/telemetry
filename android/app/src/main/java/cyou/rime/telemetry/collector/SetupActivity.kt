@@ -122,7 +122,10 @@ class SetupActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { refresh() }
+        permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
+            // Refusing notifications is an answer; they are not asked for again.
+            if (current == SetupStep.NOTIFICATIONS && results.values.any { !it }) skipStep(SetupStep.NOTIFICATIONS) else refresh()
+        }
         healthLauncher = registerForActivityResult(PermissionController.createRequestPermissionResultContract()) { refresh() }
         val density = resources.displayMetrics.density
         val pad = (24 * density).toInt()

@@ -24,8 +24,9 @@ data class CollectionIncident(
  * Tells the owner when another device's collection has a problem (#28), once
  * per incident, and clears the notice when the server closes it. The phone's
  * own silence cannot be reported from the phone. A collector stopped while
- * its computer is on is the way around blocking, so that one alerts loudly,
- * stays, and alerts again every 15 minutes until it runs.
+ * its computer is on has its own switch and starts on; the other problems
+ * start off. Each is said once; the owner asked on 2026-11-22 not to be sent
+ * repeated alerts.
  */
 object IncidentWatch {
     private const val PREFS = "telemetry-incident-watch"
@@ -33,12 +34,10 @@ object IncidentWatch {
     private const val CHANNEL = "telemetry-incidents"
     private const val BASE_ID = 4300
     private const val STOPPED_CHANNEL = "telemetry-stopped"
-    private const val KEY_ALERTED = "alerted:"
     const val STOPPED = "stopped_while_on"
-    const val STOPPED_REPEAT_MILLIS = 15 * 60_000L
 
-    /** Whether a stopped collector should alert again now. */
-    fun alertsAgain(lastAlert: Long?, now: Long): Boolean = lastAlert == null || now - lastAlert >= STOPPED_REPEAT_MILLIS
+    fun kind(incident: CollectionIncident): NoticeKind =
+        if (incident.kind == STOPPED) NoticeKind.COMPUTER_STOPPED else NoticeKind.COMPUTER_PROBLEMS
 
     fun parse(json: String): List<CollectionIncident> {
         val array = JSONObject(json).optJSONArray("collection_incidents") ?: return emptyList()
@@ -67,20 +66,14 @@ object IncidentWatch {
         val open = incidents.map { it.id }.toSet()
         val manager = context.getSystemService(NotificationManager::class.java)
         val editor = preferences.edit()
-        val now = System.currentTimeMillis()
+        // Ones not shown because their kind is off count as shown, so switching
+        // a kind on later does not bring back old problems.
         for (incident in incidents) {
-            if (incident.kind == STOPPED) {
-                val last = preferences.getLong(KEY_ALERTED + incident.id, 0L).takeIf { it > 0 }
-                if (alertsAgain(last, now)) {
-                    notify(context, manager, incident)
-                    editor.putLong(KEY_ALERTED + incident.id, now)
-                }
-            } else if (incident.id !in shown) notify(context, manager, incident)
+            if (incident.id in shown) {
+                if (!Notices.on(context, kind(incident))) manager.cancel(notificationId(incident.id))
+            } else if (Notices.on(context, kind(incident))) notify(context, manager, incident)
         }
-        for (id in shown - open) {
-            manager.cancel(notificationId(id))
-            editor.remove(KEY_ALERTED + id)
-        }
+        for (id in shown - open) manager.cancel(notificationId(id))
         editor.putStringSet(KEY_SHOWN, open.map { it.toString() }.toSet()).apply()
     }
 
@@ -107,7 +100,6 @@ object IncidentWatch {
         val stopped = incident.kind == STOPPED
         manager.notify(notificationId(incident.id), Notification.Builder(context, if (stopped) STOPPED_CHANNEL else CHANNEL)
             .setSmallIcon(android.R.drawable.stat_notify_error)
-            .setOngoing(stopped)
             .setContentTitle(title(incident))
             .setContentText(incident.message)
             .setStyle(Notification.BigTextStyle().bigText(incident.message))

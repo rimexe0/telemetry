@@ -18,13 +18,16 @@ import java.time.ZoneId
 /**
  * Says so when the phone has not reached the server for a while, with a
  * "Sync now" button, instead of piling records up quietly (owner request
- * 2026-11-22, after seven silent hours). It goes away once a sync succeeds.
+ * 2026-11-22, after seven silent hours). It is posted once per stall: swiped
+ * away, it stays away until a sync succeeds and the phone stalls again.
  */
 object SyncNotice {
     private const val CHANNEL = "telemetry-connection"
     private const val ID = 7302
     private const val ACTION_SYNC = "cyou.rime.telemetry.collector.SYNC_NOW"
     private const val WORK = "telemetry-sync-now"
+    private const val PREFS = "telemetry-sync-notice"
+    private const val KEY_POSTED_FOR = "posted_for"
 
     /** How long records may wait unsent before the owner is told. */
     const val AFTER_MILLIS = 30L * 60L * 1000L
@@ -40,14 +43,22 @@ object SyncNotice {
         return now - since >= AFTER_MILLIS
     }
 
+    /** Whether this stall, named by the last sync (or the oldest record), still needs its one notice. */
+    fun postsNow(stall: String, postedFor: String?): Boolean = stall != postedFor
+
     fun update(context: Context, pending: Long, lastSyncAt: String?, oldestPendingAt: String?, now: Long) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         val lastSync = lastSyncAt?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
         val oldest = oldestPendingAt?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
-        if (!due(pending, lastSync, oldest, now)) {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (!Notices.on(context, NoticeKind.SYNC) || !due(pending, lastSync, oldest, now)) {
             manager.cancel(ID)
+            if (!due(pending, lastSync, oldest, now)) prefs.edit().remove(KEY_POSTED_FOR).apply()
             return
         }
+        val stall = lastSyncAt ?: oldestPendingAt ?: return
+        if (!postsNow(stall, prefs.getString(KEY_POSTED_FOR, null))) return
+        prefs.edit().putString(KEY_POSTED_FOR, stall).apply()
         manager.createNotificationChannel(NotificationChannel(CHANNEL, "Connection to your server", NotificationManager.IMPORTANCE_DEFAULT))
         val since = lastSync?.let { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()) }
         val title = if (since != null) String.format("Not synced since %02d:%02d", since.hour, since.minute) else "Not synced yet"

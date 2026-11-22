@@ -1,5 +1,6 @@
 package cyou.rime.telemetry.collector
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -32,5 +33,18 @@ class SyncNoticeTest {
         assertFalse(RelayAddress.acceptable("http://t.example.com", "BDQAkey"))
         assertFalse(RelayAddress.acceptable("https://", "BDQAkey"))
         assertFalse(RelayAddress.acceptable("https://t.example.com", ""))
+    }
+
+    @Test
+    fun aStallIsToldOnceEvenWhenSwipedAway() {
+        assertTrue(SyncNotice.postsNow("2026-11-22T08:53:00Z", null))
+        assertFalse(SyncNotice.postsNow("2026-11-22T08:53:00Z", "2026-11-22T08:53:00Z"))
+        // After a sync the next stall is a new one.
+        assertTrue(SyncNotice.postsNow("2026-11-22T16:19:00Z", "2026-11-22T08:53:00Z"))
+    }
+
+    @Test
+    fun theNoisyKindsStartOff() {
+        assertEquals(listOf(NoticeKind.COMPUTER_PROBLEMS, NoticeKind.TASKS), NoticeKind.entries.filter { !it.defaultOn })
     }
 }
