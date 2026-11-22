@@ -41,6 +41,9 @@
         // In search results: Shorts and suggestion shelves.
         "ytd-search ytd-reel-shelf-renderer", "ytd-search grid-shelf-view-model", "ytd-search ytd-shelf-renderer",
         "ytd-search ytm-shorts-lockup-view-model", "ytd-search ytm-shorts-lockup-view-model-v2",
+        // Since November 2026 search results also list Shorts as ordinary
+        // results linking to /shorts/; left showing, they closed the site.
+        'ytd-search ytd-video-renderer:has(a[href^="/shorts/"])', 'ytd-search yt-lockup-view-model:has(a[href^="/shorts/"])',
       ]),
       // Seen on screen, these mean the hiding stopped working.
       leaks: [

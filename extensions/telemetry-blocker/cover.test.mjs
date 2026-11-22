@@ -54,6 +54,7 @@ check("a new copy of the script takes over from the old one", !w.covered);
 
 w = world({ readyState: "complete", visibility: "visible", blocked: true, trim: "youtube" });
 check("a trimmed page is not covered but styled", !w.covered && w.styled && w.css.includes('ytd-browse[page-subtype="home"]'));
+check("search results listing Shorts as ordinary results hide them", w.css.includes('ytd-search ytd-video-renderer:has(a[href^="/shorts/"])'));
 w.tick(); check("and its media keeps playing", w.paused === 0);
 w = world({ readyState: "complete", visibility: "visible", blocked: true, trim: "unknown" });
 check("a trim this copy does not know covers the page", w.covered && !w.styled);
