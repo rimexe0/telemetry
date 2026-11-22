@@ -111,7 +111,11 @@ func Timeline(config Config, version int64, facts Facts, from, to time.Time) []S
 			if date == "" {
 				continue
 			}
-			if t, err := time.ParseInLocation("2006-01-02", date, location); err == nil {
+			// Since 2026-11-22 a waiting rule starts at a moment (the wake
+			// time after the next bedtime); older ones at a local date.
+			if t, err := time.Parse(time.RFC3339, date); err == nil {
+				add(t)
+			} else if t, err := time.ParseInLocation("2006-01-02", date, location); err == nil {
 				add(t)
 			}
 		}

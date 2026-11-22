@@ -157,3 +157,17 @@ func TestWithOutsideDefersLooserRulesAndAppliesStricterOnes(t *testing.T) {
 		t.Fatalf("stricter: %+v", config)
 	}
 }
+
+func TestTheTimelineChangesWhenAWaitingRuleStarts(t *testing.T) {
+	location, _ := time.LoadLocation("Europe/Istanbul")
+	config := outsideConfig(OutsideRule{Enabled: true, Minutes: 20, Meters: 200, Holds: []string{HoldDistractions}})
+	off := OutsideRule{}
+	start := time.Date(2026, 11, 23, 8, 17, 0, 0, location)
+	config.OutsideNext, config.OutsideNextFrom = &off, start.UTC().Format(time.RFC3339)
+	from := start.Add(-time.Hour)
+	facts := Facts{PlanExists: true}
+	segments := Timeline(config, 1, facts, from, from.Add(2*time.Hour))
+	if len(segments) != 2 || !segments[1].From.Equal(start) || segments[0].Decision.Mode != ModeOutside || segments[1].Decision.Mode == ModeOutside {
+		t.Fatalf("segments = %+v", segments)
+	}
+}
