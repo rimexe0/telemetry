@@ -216,3 +216,13 @@ func TestStoppedWhileOnIsToldAtOnceThenAtMostDaily(t *testing.T) {
 		t.Fatal("a once-only problem told twice")
 	}
 }
+
+func TestLoopholeMessageSaysWhenTheFixMerges(t *testing.T) {
+	location, _ := time.LoadLocation("Europe/Istanbul")
+	merge := time.Date(2026, 11, 22, 12, 40, 0, 0, time.UTC)
+	got := LoopholeMessage(4, "Bedtime went off at 23:59.", "https://github.com/x/y/pull/9", "", &merge, location)
+	want := "Loophole case 4: Bedtime went off at 23:59.\nFix: https://github.com/x/y/pull/9\nReply to keep, change or drop it. With no answer it merges at 15:40."
+	if got != want {
+		t.Fatalf("got %q", got)
+	}
+}

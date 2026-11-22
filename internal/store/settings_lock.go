@@ -247,5 +247,8 @@ func (p *Postgres) UnlockSettings(ctx context.Context, pin string) (time.Time, e
 	if _, err := tx.Exec(ctx, `INSERT INTO settings_unlocks (unlocked_at, until) VALUES ($1, $2)`, now, until); err != nil {
 		return time.Time{}, err
 	}
+	if err := noteLoosening(ctx, tx, LoopholeEvent{At: now, Source: "pin_unlock", What: "the settings lock was opened with the PIN until " + until.Format(time.RFC3339)}); err != nil {
+		return time.Time{}, err
+	}
 	return until, tx.Commit(ctx)
 }

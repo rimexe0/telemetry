@@ -81,5 +81,12 @@ func (p *Postgres) SavePolicy(ctx context.Context, config policy.Config, note st
 	}
 	version := PolicyVersion{Config: config, Note: note}
 	err = p.pool.QueryRow(ctx, `INSERT INTO policy_versions (config, note) VALUES ($1::jsonb, $2) RETURNING id, created_at`, string(raw), note).Scan(&version.ID, &version.CreatedAt)
+	if err == nil && latest != nil {
+		stored := latest.Config
+		if (stored.ClosedByDefault && !config.ClosedByDefault) || (stored.PlanGate.FromWake && !config.PlanGate.FromWake) || len(config.Distractions) < len(stored.Distractions) ||
+			len(config.Essentials) > len(stored.Essentials) || len(config.OpenAddresses) > len(stored.OpenAddresses) {
+			err = noteLoosening(ctx, p.pool, LoopholeEvent{Source: "policy", What: "a whole blocking policy was saved that blocks less", Reason: note})
+		}
+	}
 	return version, err
 }

@@ -137,6 +137,9 @@ func New(repository store.Repository, readToken string, publicHosts ...string) (
 	addLocationTools(server, repository, time.Now)
 	addCalendarTools(server, repository, time.Now)
 	addAnalysisTools(server, repository, time.Now)
+	if loopholes, ok := repository.(store.LoopholeStore); ok {
+		addLoopholeTools(server, loopholes)
+	}
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{
 		Stateless:                    true,
 		JSONResponse:                 true,

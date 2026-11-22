@@ -24,6 +24,10 @@ const (
 	// KindCollection tells the owner that something Telemetry reads changed
 	// its format and needs fixing. It is not counted against the hourly cap.
 	KindCollection = "collection"
+	// KindLoophole tells the owner a coding agent's report on a loophole
+	// case: once, then each hour until its fix merges (owner request
+	// 2026-11-22). Like collection messages it does not hold back others.
+	KindLoophole = "loophole"
 
 	// MorningWithin is how long after waking the morning message is still
 	// sent; later than that it is no longer the start of the day.
@@ -116,7 +120,7 @@ func OffPlanDue(now time.Time, stretch Stretch, sent []Sent) bool {
 	}
 	today := 0
 	for _, earlier := range sent {
-		if earlier.Kind != KindCollection && now.Sub(earlier.At) < Between {
+		if earlier.Kind != KindCollection && earlier.Kind != KindLoophole && now.Sub(earlier.At) < Between {
 			return false
 		}
 		if earlier.Kind == KindOffPlan && earlier.Delivered {
@@ -370,4 +374,20 @@ func Send(ctx context.Context, command []string, message string) error {
 		return fmt.Errorf("send command: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+// LoopholeMessage is what the owner reads about a loophole report: the
+// agent's words, the links, and when the fix merges without an answer.
+func LoopholeMessage(id int64, message, prURL, threadURL string, mergeAfter *time.Time, location *time.Location) string {
+	lines := []string{fmt.Sprintf("Loophole case %d: %s", id, strings.TrimSpace(message))}
+	if prURL != "" {
+		lines = append(lines, "Fix: "+prURL)
+	}
+	if threadURL != "" {
+		lines = append(lines, "Investigation: "+threadURL)
+	}
+	if mergeAfter != nil {
+		lines = append(lines, "Reply to keep, change or drop it. With no answer it merges at "+mergeAfter.In(location).Format("15:04")+".")
+	}
+	return strings.Join(lines, "\n")
 }

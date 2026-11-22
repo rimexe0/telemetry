@@ -275,3 +275,88 @@ func TestPostgresTheExtensionRuleStaysOn(t *testing.T) {
 		t.Fatalf("saving a policy without the extension rule = %v", err)
 	}
 }
+
+// Every accepted loosening is recorded for an agent to look at; changes
+// close together are one case, and a preview records nothing.
+func TestPostgresLooseningOpensALoopholeCase(t *testing.T) {
+	ctx, database := openCleanIntegration(t)
+	on := policy.Bedtime{Enabled: true, Start: "00:00", End: "08:00"}
+	if _, _, err := database.ApplyBlockingSchedule(ctx, ScheduleChange{Bedtime: &on}, "bedtime on"); err != nil {
+		t.Fatal(err)
+	}
+	if cases, err := database.LoopholeCases(ctx, false, 10); err != nil || len(cases) != 0 {
+		t.Fatalf("tightening opened a case: %+v, %v", cases, err)
+	}
+	// Past the minutes in which switching it off would be a correction.
+	aged, _ := database.LatestPolicy(ctx)
+	aged.Config.RuleChanged = map[string]time.Time{"bedtime": time.Now().UTC().Add(-48 * time.Hour)}
+	if _, err := database.SavePolicy(ctx, aged.Config, "two days later"); err != nil {
+		t.Fatal(err)
+	}
+	off := policy.Bedtime{}
+	if _, err := database.PreviewBlockingSchedule(ctx, ScheduleChange{Bedtime: &off}); err != nil {
+		t.Fatal(err)
+	}
+	if cases, _ := database.LoopholeCases(ctx, false, 10); len(cases) != 0 {
+		t.Fatalf("a preview opened a case: %+v", cases)
+	}
+	if _, _, err := database.ApplyBlockingSchedule(ctx, ScheduleChange{Bedtime: &off}, "bedtime off at 23:59"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := database.ApplyBlockingSchedule(ctx, ScheduleChange{AddOpenAddresses: []string{"youtube.com/watch?v=x"}}, "one page"); err != nil {
+		t.Fatal(err)
+	}
+	cases, err := database.LoopholeCases(ctx, true, 10)
+	if err != nil || len(cases) != 1 || len(cases[0].Events) != 2 || cases[0].Status() != "waiting" {
+		t.Fatalf("cases = %+v, %v", cases, err)
+	}
+	if cases[0].Events[0].Reason != "bedtime off at 23:59" || cases[0].Events[0].Source != "schedule" {
+		t.Fatalf("event = %+v", cases[0].Events[0])
+	}
+	// Handed over only once quiet for LoopholeSettle.
+	if due, _ := database.LoopholesToDispatch(ctx, time.Now().UTC()); len(due) != 0 {
+		t.Fatal("handed over before it settled")
+	}
+	due, err := database.LoopholesToDispatch(ctx, time.Now().UTC().Add(LoopholeSettle+time.Minute))
+	if err != nil || len(due) != 1 {
+		t.Fatalf("due = %+v, %v", due, err)
+	}
+	id := due[0].ID
+	if err := database.MarkLoopholeDispatched(ctx, id, nil); err != nil {
+		t.Fatal(err)
+	}
+	// A loosening after the handover starts a new case.
+	times := []policy.Window{{Start: "12:00", End: "13:00"}}
+	if _, _, err := database.ApplyBlockingSchedule(ctx, ScheduleChange{DistractionTimes: &times}, "lunch break"); err != nil {
+		t.Fatal(err)
+	}
+	if cases, _ := database.LoopholeCases(ctx, true, 10); len(cases) != 2 {
+		t.Fatalf("cases after the handover = %d", len(cases))
+	}
+	if _, err := database.ReportLoophole(ctx, id, "", "x", "", ""); err == nil {
+		t.Fatal("an empty report was stored")
+	}
+	reported, err := database.ReportLoophole(ctx, id, "Bedtime was switched off a minute before it began.", "Bedtime went off at 23:59; the fix makes that wait for the morning.", "https://github.com/rimexe0/telemetry/pull/1", "")
+	if err != nil || reported.Status() != "reported" || reported.MergeAfter == nil || reported.MergeAfter.Sub(*reported.ReportedAt).Round(time.Minute) != LoopholeMergeAfter {
+		t.Fatalf("reported = %+v, %v", reported, err)
+	}
+	answered, err := database.AnswerLoophole(ctx, id, "don't merge, I needed it")
+	if err != nil || answered.Status() != "answered" || answered.ReminderDue(time.Now().UTC()) {
+		t.Fatalf("answered = %+v, %v", answered, err)
+	}
+	if _, err := database.ReportLoophole(ctx, id, "again", "again", "", ""); err == nil {
+		t.Fatal("a report replaced the owner's answer")
+	}
+	if done, err := database.CloseLoophole(ctx, id, LoopholeDropped, "the owner said no"); err != nil || done.Status() != "closed" {
+		t.Fatalf("closed = %+v, %v", done, err)
+	}
+	if err := database.SetLoopholeWebhook(ctx, "http://insecure"); err == nil {
+		t.Fatal("an http webhook was saved")
+	}
+	if err := database.SetLoopholeWebhook(ctx, "https://example.com/hook"); err != nil {
+		t.Fatal(err)
+	}
+	if webhook, err := database.LoopholeWebhook(ctx); err != nil || webhook != "https://example.com/hook" {
+		t.Fatalf("webhook = %q, %v", webhook, err)
+	}
+}

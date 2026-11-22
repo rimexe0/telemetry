@@ -183,20 +183,30 @@ func (p *Postgres) ListActivityLabels(ctx context.Context) ([]ActivityLabel, err
 
 // RemoveActivityLabel is an owner action; the label's history is kept.
 func (p *Postgres) RemoveActivityLabel(ctx context.Context, id int64) error {
-	var label string
-	if err := p.pool.QueryRow(ctx, `SELECT label FROM activity_labels WHERE id = $1 AND removed_at IS NULL`, id).Scan(&label); err == nil {
+	var label, kind, match string
+	if err := p.pool.QueryRow(ctx, `SELECT label, kind, match FROM activity_labels WHERE id = $1 AND removed_at IS NULL`, id).Scan(&label, &kind, &match); err == nil {
 		if _, err := refuseIfLocked(ctx, p.pool, label == policy.LabelDistraction); err != nil {
 			return err
 		}
 	}
-	tag, err := p.pool.Exec(ctx, `UPDATE activity_labels SET removed_at = now() WHERE id = $1 AND removed_at IS NULL`, id)
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `UPDATE activity_labels SET removed_at = now() WHERE id = $1 AND removed_at IS NULL`, id)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
-	return nil
+	if label == policy.LabelDistraction {
+		if err := noteLoosening(ctx, tx, LoopholeEvent{Source: "label_removed", What: "the distraction label on " + kind + " " + match + " was removed"}); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 // LabeledTargets converts stored labels for the policy engine.

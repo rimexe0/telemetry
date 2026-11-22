@@ -93,6 +93,11 @@ func applyBlocklistTx(ctx context.Context, tx pgx.Tx, changes []policy.Blocklist
 	if _, err := refuseIfLocked(ctx, tx, loosens); err != nil {
 		return nil, 0, err
 	}
+	if loosens {
+		if err := noteLoosening(ctx, tx, LoopholeEvent{Source: "blocklist", What: "apps or sites unblocked", Reason: note, Detail: changes}); err != nil {
+			return nil, 0, err
+		}
+	}
 	config := policy.Config{}
 	var raw []byte
 	err := tx.QueryRow(ctx, `SELECT config FROM policy_versions ORDER BY id DESC LIMIT 1`).Scan(&raw)
@@ -141,6 +146,11 @@ func applyLabelsTx(ctx context.Context, tx pgx.Tx, changes []activity.LabelChang
 	}
 	if _, err := refuseIfLocked(ctx, tx, loosens); err != nil {
 		return nil, err
+	}
+	if loosens {
+		if err := noteLoosening(ctx, tx, LoopholeEvent{Source: "labels", What: "labels no longer distractions, or made essential", Detail: changes}); err != nil {
+			return nil, err
+		}
 	}
 	previous := make([]activity.LabelChange, 0, len(changes))
 	for _, change := range changes {

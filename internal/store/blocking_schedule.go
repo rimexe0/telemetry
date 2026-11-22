@@ -127,7 +127,9 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 	now := time.Now().UTC()
 	// Loosening is refused while the settings lock holds; after the PIN,
 	// changes apply at once instead of waiting for the next day.
-	immediate, err := refuseIfLocked(ctx, tx, scheduleLoosens(config, change, now))
+	loosens := scheduleLoosens(config, change, now)
+	original := config
+	immediate, err := refuseIfLocked(ctx, tx, loosens)
 	if err != nil {
 		return ScheduleChange{}, config, 0, err
 	}
@@ -253,6 +255,25 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 	if change.Bedtime != nil && (immediate || correcting("bedtime")) {
 		config.Bedtime, config.BedtimeNext, config.BedtimeNextFrom = *change.Bedtime, nil, ""
 	}
+	// A loosening made only of corrections (back to how a rule was just
+	// before) asks no less than before, so it opens no loophole case.
+	if loosens && !immediate {
+		others := change
+		others.Outside, others.OpeningRule, others.Morning, others.SettingsLock, others.Bedtime, others.Extension = nil, nil, nil, nil, nil, nil
+		onlyCorrections := !scheduleLoosens(original, others, now)
+		check := func(name string, loosened bool) {
+			if loosened && !correcting(name) {
+				onlyCorrections = false
+			}
+		}
+		check("outside", change.Outside != nil && original.OutsideAt(now).Looser(*change.Outside))
+		check("opening_rule", change.OpeningRule != nil && original.OpeningRuleAt(now).Looser(*change.OpeningRule))
+		check("morning", change.Morning != nil && original.MorningAt(now).Looser(*change.Morning))
+		check("settings_lock", change.SettingsLock != nil && original.SettingsLockAt(now).Looser(*change.SettingsLock))
+		check("bedtime", change.Bedtime != nil && original.BedtimeAt(now).Looser(*change.Bedtime))
+		check("extension", change.Extension != nil && original.ExtensionRuleAt(now).Looser(*change.Extension))
+		loosens = !onlyCorrections
+	}
 	after := map[string]any{
 		"outside": config.OutsideAt(now), "opening_rule": config.OpeningRuleAt(now), "morning": config.MorningAt(now),
 		"settings_lock": config.SettingsLockAt(now), "bedtime": config.BedtimeAt(now), "extension": config.ExtensionRuleAt(now),
@@ -320,9 +341,58 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 	if runes := []rune(note); len(runes) > maxPlanningTextRunes {
 		note = string(runes[:maxPlanningTextRunes])
 	}
+	if loosens {
+		event := LoopholeEvent{At: now, Source: "schedule", What: describeSchedule(change, immediate), Reason: note,
+			Detail: map[string]any{"change": change, "waits_until": waitingRules(config, now), "applied_at_once": immediate}}
+		if err := noteLoosening(ctx, tx, event); err != nil {
+			return ScheduleChange{}, config, 0, err
+		}
+	}
 	var version int64
 	err = tx.QueryRow(ctx, `INSERT INTO policy_versions (config, note) VALUES ($1::jsonb, $2) RETURNING id`, string(encoded), note).Scan(&version)
 	return previous, config, version, err
+}
+
+// describeSchedule names the parts of the schedule a loosening changed.
+func describeSchedule(change ScheduleChange, immediate bool) string {
+	parts := []string{}
+	add := func(set bool, name string) {
+		if set {
+			parts = append(parts, name)
+		}
+	}
+	add(change.ClosedByDefault != nil, "closed by default")
+	add(change.DistractionTimes != nil, "distraction times")
+	add(change.OpenAddresses != nil || len(change.AddOpenAddresses) > 0, "pages kept open")
+	add(change.LockUntilPlanned != nil, "lock until planned")
+	add(change.Outside != nil, "outside rule")
+	add(change.OpeningRule != nil, "opening rule")
+	add(change.Morning != nil, "morning code")
+	add(change.SettingsLock != nil, "settings lock")
+	add(change.Bedtime != nil, "bedtime")
+	add(change.Extension != nil, "browser extension rule")
+	text := "loosened: " + strings.Join(parts, ", ")
+	if immediate {
+		text += " (applied at once, after the PIN)"
+	}
+	return text
+}
+
+// waitingRules lists the rules waiting for their day, and when each starts.
+func waitingRules(config policy.Config, now time.Time) map[string]string {
+	waits := map[string]string{}
+	add := func(waiting bool, name, from string) {
+		if waiting && !policy.Started(config.Timezone, from, now) {
+			waits[name] = from
+		}
+	}
+	add(config.OutsideNext != nil, "outside", config.OutsideNextFrom)
+	add(config.OpeningRuleNext != nil, "opening_rule", config.OpeningRuleNextFrom)
+	add(config.MorningNext != nil, "morning", config.MorningNextFrom)
+	add(config.SettingsLockNext != nil, "settings_lock", config.SettingsLockNextFrom)
+	add(config.BedtimeNext != nil, "bedtime", config.BedtimeNextFrom)
+	add(config.ExtensionNext != nil, "extension", config.ExtensionNextFrom)
+	return waits
 }
 
 // PreviewBlockingSchedule returns the config a change would give, without
