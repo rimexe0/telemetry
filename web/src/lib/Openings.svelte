@@ -2,7 +2,7 @@
   import { onDestroy } from 'svelte';
   import { confirmOpening, createOpening, endOpening, getLock, getOpenings, previewOpeningRule, saveOpeningRule, type OpeningRule, type OpeningsState } from './api';
   import { confirmPrompt, confirmText, longestOpening, openingStatus, yesSpot } from './openings';
-  import { saveWarning } from './lock';
+  import { saveWarning, waitStart } from './lock';
 
   let confirmMessage = '';
   let confirmRun: (() => Promise<void>) | null = null;
@@ -112,7 +112,7 @@
     </div>
   {/if}
   {#if notice}<p class="muted small" role="status">{notice}</p>{/if}
-  {#if state?.next}<p class="muted small">From {state.next_from}: {state.next.wait_minutes ?? 0} min wait, at most {state.next.max_minutes || 'any'} min, {state.next.per_day || 'any number'} a day.</p>{/if}
+  {#if state?.next}<p class="muted small">From {waitStart(state.next_from)}: {state.next.wait_minutes ?? 0} min wait, at most {state.next.max_minutes || 'any'} min, {state.next.per_day || 'any number'} a day.</p>{/if}
 
   {#if editing}
     <form class="row" on:submit|preventDefault={saveRule}>

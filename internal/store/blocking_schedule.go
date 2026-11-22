@@ -98,6 +98,15 @@ func scheduleLoosens(config policy.Config, change ScheduleChange, now time.Time)
 		change.Extension != nil && config.ExtensionRuleAt(now).Looser(*change.Extension)
 }
 
+// noLooser reports whether incoming asks no less than the stored rule.
+func noLooser[T any](raw json.RawMessage, incoming *T, looser func(T, T) bool) bool {
+	var before T
+	if incoming == nil || json.Unmarshal(raw, &before) != nil {
+		return false
+	}
+	return !looser(before, *incoming)
+}
+
 // applyScheduleTx writes a new policy version and returns the change that
 // restores the schedule it replaced.
 func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note string) (ScheduleChange, policy.Config, int64, error) {
@@ -136,7 +145,32 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 		"outside": config.OutsideAt(now), "opening_rule": config.OpeningRuleAt(now), "morning": config.MorningAt(now),
 		"settings_lock": config.SettingsLockAt(now), "bedtime": config.BedtimeAt(now), "extension": config.ExtensionRuleAt(now),
 	}
-	correcting := func(name string) bool { return config.Correcting(name, now) }
+	// A correction applies at once only when it asks no less than the rule
+	// in force before the last change.
+	correcting := func(name string) bool {
+		if !config.Correcting(name, now) {
+			return false
+		}
+		raw, ok := config.RuleBefore[name]
+		if !ok {
+			return false
+		}
+		switch name {
+		case "extension":
+			return noLooser(raw, change.Extension, policy.ExtensionRule.Looser)
+		case "outside":
+			return noLooser(raw, change.Outside, policy.OutsideRule.Looser)
+		case "opening_rule":
+			return noLooser(raw, change.OpeningRule, policy.OpeningRule.Looser)
+		case "morning":
+			return noLooser(raw, change.Morning, policy.MorningRule.Looser)
+		case "settings_lock":
+			return noLooser(raw, change.SettingsLock, policy.SettingsLock.Looser)
+		case "bedtime":
+			return noLooser(raw, change.Bedtime, policy.Bedtime.Looser)
+		}
+		return false
+	}
 	closed, times, addresses := config.ClosedByDefault, append([]policy.Window{}, config.DistractionTimes...), append([]string{}, config.OpenAddresses...)
 	locked := config.PlanGate.FromWake
 	outside := config.OutsideAt(now)
@@ -193,6 +227,9 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 		if err := change.Extension.Normalize(); err != nil {
 			return ScheduleChange{}, config, 0, fmt.Errorf("%w: %s", ErrInvalidAgentChange, err)
 		}
+		if extension.SwitchesOff(*change.Extension) || config.ExtensionNext != nil && !config.ExtensionNext.Enabled && !change.Extension.Enabled {
+			return ScheduleChange{}, config, 0, fmt.Errorf("%w: %s", ErrInvalidAgentChange, policy.ErrExtensionStaysOn)
+		}
 		extension = *change.Extension
 	}
 	config = config.WithExtensionRule(extension, now)
@@ -226,6 +263,12 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 			maps.Copy(changed, config.RuleChanged)
 			changed[name] = now
 			config.RuleChanged = changed
+			previousRules := map[string]json.RawMessage{}
+			maps.Copy(previousRules, config.RuleBefore)
+			if encoded, err := json.Marshal(before[name]); err == nil {
+				previousRules[name] = encoded
+			}
+			config.RuleBefore = previousRules
 		}
 	}
 	if change.LockUntilPlanned != nil {

@@ -49,7 +49,7 @@ func (s *Server) openingsState(request *http.Request) (openingsResponse, error) 
 		return openingsResponse{}, err
 	}
 	response := openingsResponse{Rule: config.OpeningRuleAt(now), Openings: []store.Opening{}, Distractions: config.Distractions}
-	if config.OpeningRuleNext != nil && config.OpeningRuleNextFrom > now.In(location).Format("2006-01-02") {
+	if config.OpeningRuleNext != nil && !policy.Started(config.Timezone, config.OpeningRuleNextFrom, now) {
 		response.Next, response.NextFrom = config.OpeningRuleNext, config.OpeningRuleNextFrom
 	}
 	local := now.In(location)
@@ -249,13 +249,8 @@ func (s *Server) morning(writer http.ResponseWriter, request *http.Request) {
 		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
 		return
 	}
-	location, err := time.LoadLocation(config.Timezone)
-	if err != nil {
-		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
-		return
-	}
 	response := morningResponse{Rule: config.MorningAt(now), ScannedAt: facts.MorningScannedAt, ScanAddress: s.scanAddress(request, "")}
-	if config.MorningNext != nil && config.MorningNextFrom > now.In(location).Format("2006-01-02") {
+	if config.MorningNext != nil && !policy.Started(config.Timezone, config.MorningNextFrom, now) {
 		response.Next, response.NextFrom = config.MorningNext, config.MorningNextFrom
 	}
 	response.Holding = policy.Evaluate(config, version, facts, now).Mode == policy.ModeMorning

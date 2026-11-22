@@ -73,8 +73,10 @@ data class DayView(
     val scrollingMinutes: Double = 0.0,
     /** Time away from home, from the phone's GPS. */
     val outsideMinutes: Double = 0.0,
-    /** When the owner woke that day, as the server found it; the timeline starts there. */
+    /** When the owner woke that day, as the server found it. */
     val wokeAt: Instant? = null,
+    /** The wake time the owner set (the end of bedtime), once it has passed. */
+    val plannedWake: Instant? = null,
 )
 
 object DayModel {
@@ -91,6 +93,7 @@ object DayModel {
             date = root.getString("date"),
             from = Instant.parse(root.getString("from")),
             wokeAt = root.optString("woke_at").takeIf { it.isNotBlank() && it != "null" }?.let { runCatching { Instant.parse(it) }.getOrNull() },
+            plannedWake = root.optString("planned_wake").takeIf { it.isNotBlank() && it != "null" }?.let { runCatching { Instant.parse(it) }.getOrNull() },
             to = Instant.parse(root.getString("to")),
             blocks = day.optJSONArray("blocks").each {
                 DayBlock(it.getString("title"), Instant.parse(it.getString("start")), Instant.parse(it.getString("end")), it.getString("status"),
@@ -178,9 +181,11 @@ object DayModel {
         val dayEnd = view.from.plusSeconds(24 * 3600)
         val ends = view.blocks.map { if (it.end.isAfter(dayEnd)) dayEnd else it.end } + view.chunks.map { it.end } +
             (if (finished && view.chunks.isNotEmpty()) emptyList() else listOf(view.to))
-        // The day starts when the owner woke; use from the night before is
-        // part of the previous day.
-        val first = (view.wokeAt ?: starts.minOrNull() ?: view.from).coerceAtLeast(view.from)
+        // The day starts when the owner woke, or at the wake time they set
+        // when that came first, so a missed wake time stays in view; use from
+        // the night before is part of the previous day.
+        val woke = listOfNotNull(view.wokeAt, view.plannedWake).minOrNull()
+        val first = (woke ?: starts.minOrNull() ?: view.from).coerceAtLeast(view.from)
         val start = first.atZone(zone).withMinute(0).withSecond(0).withNano(0).toInstant()
         val last = ends.max()
         val floor = last.atZone(zone).withMinute(0).withSecond(0).withNano(0)

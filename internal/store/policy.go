@@ -60,6 +60,9 @@ func (p *Postgres) SavePolicy(ctx context.Context, config policy.Config, note st
 		config.Morning, config.MorningNext, config.MorningNextFrom = stored.Morning, stored.MorningNext, stored.MorningNextFrom
 		config = config.WithOutside(outside, now).WithOpeningRule(openingRule, now).WithMorning(morning, now)
 		lock, bedtime, extension := config.SettingsLockAt(now), config.BedtimeAt(now), config.ExtensionRuleAt(now)
+		if stored.ExtensionRuleAt(now).SwitchesOff(extension) {
+			return PolicyVersion{}, fmt.Errorf("%w: %s", ErrInvalidPolicy, policy.ErrExtensionStaysOn)
+		}
 		config.SettingsLock, config.SettingsLockNext, config.SettingsLockNextFrom = stored.SettingsLock, stored.SettingsLockNext, stored.SettingsLockNextFrom
 		config.Bedtime, config.BedtimeNext, config.BedtimeNextFrom = stored.Bedtime, stored.BedtimeNext, stored.BedtimeNextFrom
 		config.Extension, config.ExtensionNext, config.ExtensionNextFrom = stored.Extension, stored.ExtensionNext, stored.ExtensionNextFrom

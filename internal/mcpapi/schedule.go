@@ -25,7 +25,8 @@ const outsideNotes = "The outside rule makes the owner go outside before things 
 	"it holds \"distractions\" closed (distraction times included), \"lock\" closes everything but the essentials, or both. It counts the watch's walks (only while worn) " +
 	"and, unless watch_only, the phone's positions; on_foot leaves out cars and buses. from/from_wake and until bound its hours each day. Openings do not lift it unless allow_openings; " +
 	"an emergency unlock on the phone still does. The owner asked for it to be hard to get around: a change that asks less in any way, switching it off or reverting included, " +
-	"takes effect only the next day; one that asks more applies at once. Every number is the owner's to choose; never suggest one as a default. " +
+	"takes effect only the next day; one that asks more applies at once. The next day starts at the end of the next bedtime that begins after the change (the wake time the owner picked), " +
+	"or at the next midnight without a bedtime, so loosening late at night never spares that night. Every number is the owner's to choose; never suggest one as a default. " +
 	"Tell them their progress from outside.today, and never shame them for not having gone out."
 
 const openingNotes = "opening_rule is the owner's: an opening starts wait_minutes after it is made, lasts at most max_minutes, and at most per_day are made each day " +
@@ -40,7 +41,7 @@ const lockNotes = "settings_lock is the owner's: during its windows (none means 
 	"Only a PIN held by someone else, entered in the panel during pin_windows, lifts it for unlock_minutes; you never ask for, hold or enter the PIN. " +
 	"When a change is refused because of the lock, say so plainly and do not look for another way to the same result. " +
 	"bedtime locks the owner's screens during its hours without closing anything, so agents keep running; the phone keeps only its essentials. " +
-	"extension hides (never quits) a browser on the Mac whose Telemetry extension has been quiet for quiet_seconds while sites are blocked; its Extensions page stays usable to switch the extension back on."
+	"extension hides (never quits) a browser on the Mac whose Telemetry extension has been quiet for quiet_seconds while sites are blocked; its Extensions page stays usable to switch the extension back on. Once on, the extension rule cannot be switched off by you or the panel (owner decision 2026-11-22); do not offer to."
 
 type WindowIO struct {
 	Start string `json:"start" jsonschema:"local HH:MM"`
@@ -119,14 +120,14 @@ func policyWindows(windows []WindowIO) []policy.Window {
 type OpeningRuleOutput struct {
 	Rule      OpeningRuleIO  `json:"rule" jsonschema:"in force today"`
 	Next      *OpeningRuleIO `json:"next,omitempty"`
-	NextFrom  string         `json:"next_from,omitempty" jsonschema:"local date the waiting rule starts"`
+	NextFrom  string         `json:"next_from,omitempty" jsonschema:"when the waiting rule starts: an RFC 3339 moment, or a local date for rules set before 2026-11-22"`
 	UsedToday int            `json:"used_today" jsonschema:"openings made today that count toward per_day"`
 }
 
 type MorningOutput struct {
 	Rule      MorningRuleIO  `json:"rule" jsonschema:"in force today"`
 	Next      *MorningRuleIO `json:"next,omitempty"`
-	NextFrom  string         `json:"next_from,omitempty" jsonschema:"local date the waiting rule starts"`
+	NextFrom  string         `json:"next_from,omitempty" jsonschema:"when the waiting rule starts: an RFC 3339 moment, or a local date for rules set before 2026-11-22"`
 	ScannedAt string         `json:"scanned_at,omitempty" jsonschema:"local time of the latest scan today"`
 }
 
@@ -166,7 +167,7 @@ type OutsideOutput struct {
 	Rule OutsideRuleIO `json:"rule" jsonschema:"in force today"`
 	// Next is a looser rule waiting for its day.
 	Next     *OutsideRuleIO         `json:"next,omitempty"`
-	NextFrom string                 `json:"next_from,omitempty" jsonschema:"local date the waiting rule starts"`
+	NextFrom string                 `json:"next_from,omitempty" jsonschema:"when the waiting rule starts: an RFC 3339 moment, or a local date for rules set before 2026-11-22"`
 	Today    *store.OutsideProgress `json:"today,omitempty" jsonschema:"time outside so far today, as the rule in force counts it"`
 	Notes    string                 `json:"notes"`
 }
@@ -252,7 +253,7 @@ func scheduleOutput(ctx context.Context, repository store.Repository, config pol
 	today := now.In(location)
 	openingRule := config.OpeningRuleAt(now)
 	output.OpeningRule.Rule = OpeningRuleIO(openingRule)
-	if config.OpeningRuleNext != nil && config.OpeningRuleNextFrom > today.Format("2006-01-02") {
+	if config.OpeningRuleNext != nil && !policy.Started(config.Timezone, config.OpeningRuleNextFrom, now) {
 		next := OpeningRuleIO(*config.OpeningRuleNext)
 		output.OpeningRule.Next, output.OpeningRule.NextFrom = &next, config.OpeningRuleNextFrom
 	}
@@ -260,7 +261,7 @@ func scheduleOutput(ctx context.Context, repository store.Repository, config pol
 		return BlockingScheduleOutput{}, err
 	}
 	output.Morning.Rule = morningIO(config.MorningAt(now))
-	if config.MorningNext != nil && config.MorningNextFrom > today.Format("2006-01-02") {
+	if config.MorningNext != nil && !policy.Started(config.Timezone, config.MorningNextFrom, now) {
 		next := morningIO(*config.MorningNext)
 		output.Morning.Next, output.Morning.NextFrom = &next, config.MorningNextFrom
 	}
@@ -282,7 +283,7 @@ func scheduleOutput(ctx context.Context, repository store.Repository, config pol
 	output.Extension = ExtensionIO(config.ExtensionRuleAt(now))
 	rule := config.OutsideAt(now)
 	output.Outside = OutsideOutput{Rule: outsideIO(rule), Notes: outsideNotes}
-	if config.OutsideNext != nil && config.OutsideNextFrom > now.In(location).Format("2006-01-02") {
+	if config.OutsideNext != nil && !policy.Started(config.Timezone, config.OutsideNextFrom, now) {
 		next := outsideIO(*config.OutsideNext)
 		output.Outside.Next, output.Outside.NextFrom = &next, config.OutsideNextFrom
 	}

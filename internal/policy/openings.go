@@ -55,6 +55,6 @@ func (c Config) OpeningRuleAt(at time.Time) OpeningRule {
 // WithOpeningRule sets the opening rule as of now; a looser one waits for
 // the next local day.
 func (c Config) WithOpeningRule(next OpeningRule, now time.Time) Config {
-	c.OpeningRule, c.OpeningRuleNext, c.OpeningRuleNextFrom = withRule(c.Timezone, c.OpeningRule, c.OpeningRuleNext, c.OpeningRuleNextFrom, next, OpeningRule.Looser, now)
+	c.OpeningRule, c.OpeningRuleNext, c.OpeningRuleNextFrom = withRule(c.Timezone, c.OpeningRule, c.OpeningRuleNext, c.OpeningRuleNextFrom, next, OpeningRule.Looser, now, c.NextDay(now))
 	return c
 }

@@ -26,15 +26,26 @@ func (r ExtensionRule) Looser(next ExtensionRule) bool {
 	return r.Enabled && (!next.Enabled || next.QuietSeconds > r.QuietSeconds)
 }
 
+// SwitchesOff reports whether next turns off a rule that is on. Once on, the
+// rule cannot be switched off from the panel or by an agent, not even the
+// next day: switching it off was how site blocking got bypassed (owner
+// request 2026-11-22). A longer quiet time still waits for the next day.
+func (r ExtensionRule) SwitchesOff(next ExtensionRule) bool {
+	return r.Enabled && !next.Enabled
+}
+
+// ErrExtensionStaysOn refuses switching the extension rule off.
+var ErrExtensionStaysOn = fmt.Errorf("%w: the browser extension rule stays on once it is on; it cannot be switched off", ErrInvalidConfig)
+
 // ExtensionRuleAt is the extension rule in force at an instant.
 func (c Config) ExtensionRuleAt(at time.Time) ExtensionRule {
 	return ruleAt(c.Timezone, c.Extension, c.ExtensionNext, c.ExtensionNextFrom, at)
 }
 
 // WithExtensionRule sets the rule as of now; a looser one waits for the
-// next local day.
+// next day (see NextDay). Callers refuse SwitchesOff first.
 func (c Config) WithExtensionRule(next ExtensionRule, now time.Time) Config {
-	c.Extension, c.ExtensionNext, c.ExtensionNextFrom = withRule(c.Timezone, c.Extension, c.ExtensionNext, c.ExtensionNextFrom, next, ExtensionRule.Looser, now)
+	c.Extension, c.ExtensionNext, c.ExtensionNextFrom = withRule(c.Timezone, c.Extension, c.ExtensionNext, c.ExtensionNextFrom, next, ExtensionRule.Looser, now, c.NextDay(now))
 	return c
 }
 

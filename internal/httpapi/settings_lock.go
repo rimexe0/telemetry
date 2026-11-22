@@ -80,16 +80,14 @@ func (s *Server) settingsLock(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 	now := time.Now().UTC()
-	location, _ := time.LoadLocation(config.Timezone)
-	today := now.In(location).Format("2006-01-02")
 	response := lockResponse{Lock: config.SettingsLockAt(now), Bedtime: config.BedtimeAt(now), Extension: config.ExtensionRuleAt(now)}
-	if config.ExtensionNext != nil && config.ExtensionNextFrom > today {
+	if config.ExtensionNext != nil && !policy.Started(config.Timezone, config.ExtensionNextFrom, now) {
 		response.ExtensionNext, response.ExtensionFrom = config.ExtensionNext, config.ExtensionNextFrom
 	}
-	if config.SettingsLockNext != nil && config.SettingsLockNextFrom > today {
+	if config.SettingsLockNext != nil && !policy.Started(config.Timezone, config.SettingsLockNextFrom, now) {
 		response.LockNext, response.LockNextFrom = config.SettingsLockNext, config.SettingsLockNextFrom
 	}
-	if config.BedtimeNext != nil && config.BedtimeNextFrom > today {
+	if config.BedtimeNext != nil && !policy.Started(config.Timezone, config.BedtimeNextFrom, now) {
 		response.BedtimeNext, response.BedtimeFrom = config.BedtimeNext, config.BedtimeNextFrom
 	}
 	if response.State, err = s.repository.SettingsLock(ctx); err != nil {

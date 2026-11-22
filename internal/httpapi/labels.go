@@ -219,9 +219,10 @@ func (s *Server) deviceDay(writer http.ResponseWriter, request *http.Request) {
 	if wake, err := store.LoadShownWakeTime(ctx, s.repository, at); err == nil && wake != nil && !wake.Before(from.Add(-6*time.Hour)) && wake.Before(from.Add(18*time.Hour)) {
 		woke = wake
 	}
+	planned := s.plannedWake(ctx, day.Format("2006-01-02"), now)
 	writeJSON(writer, http.StatusOK, map[string]any{
 		"date": day.Format("2006-01-02"), "timezone": location.String(), "from": from, "to": to, "generated_at": now, "plan_exists": plan != nil,
-		"woke_at": woke, "day": activity.BuildDay(input),
+		"woke_at": woke, "planned_wake": planned, "day": activity.BuildDay(input),
 	})
 }
 

@@ -70,7 +70,7 @@ func (c Config) SettingsLockAt(at time.Time) SettingsLock {
 // WithSettingsLock sets the lock as of now; a looser one waits for the next
 // local day.
 func (c Config) WithSettingsLock(next SettingsLock, now time.Time) Config {
-	c.SettingsLock, c.SettingsLockNext, c.SettingsLockNextFrom = withRule(c.Timezone, c.SettingsLock, c.SettingsLockNext, c.SettingsLockNextFrom, next, SettingsLock.Looser, now)
+	c.SettingsLock, c.SettingsLockNext, c.SettingsLockNextFrom = withRule(c.Timezone, c.SettingsLock, c.SettingsLockNext, c.SettingsLockNextFrom, next, SettingsLock.Looser, now, c.NextDay(now))
 	return c
 }
 
@@ -193,7 +193,7 @@ func (c Config) BedtimeAt(at time.Time) Bedtime {
 
 // WithBedtime sets bedtime as of now; a looser one waits for the next day.
 func (c Config) WithBedtime(next Bedtime, now time.Time) Config {
-	c.Bedtime, c.BedtimeNext, c.BedtimeNextFrom = withRule(c.Timezone, c.Bedtime, c.BedtimeNext, c.BedtimeNextFrom, next, Bedtime.Looser, now)
+	c.Bedtime, c.BedtimeNext, c.BedtimeNextFrom = withRule(c.Timezone, c.Bedtime, c.BedtimeNext, c.BedtimeNextFrom, next, Bedtime.Looser, now, c.NextDay(now))
 	return c
 }
 
@@ -277,4 +277,33 @@ func bedtimeEnd(rule Bedtime, location *time.Location, at time.Time) (time.Time,
 		return time.Time{}, false
 	}
 	return inWindows([]Window{{Start: rule.Start, End: rule.End}}, location, at)
+}
+
+// PlannedWake is when the owner chose to wake on a local date: the end of
+// the bedtime in force then, on that date. Nil without a bedtime. The day
+// timeline starts at the earlier of this and the recorded wake, so a missed
+// wake time stays on the timeline instead of being cut off (owner request
+// 2026-11-22).
+func (c Config) PlannedWake(date string) *time.Time {
+	location, err := time.LoadLocation(c.Timezone)
+	if err != nil {
+		location = time.UTC
+	}
+	end, err := time.ParseInLocation("2006-01-02 15:04", date+" "+c.Bedtime.End, location)
+	if err != nil {
+		end, err = time.ParseInLocation("2006-01-02", date, location)
+		if err != nil {
+			return nil
+		}
+	}
+	bedtime := c.BedtimeAt(end)
+	if !bedtime.Enabled {
+		return nil
+	}
+	wake, err := time.ParseInLocation("2006-01-02 15:04", date+" "+bedtime.End, location)
+	if err != nil {
+		return nil
+	}
+	wake = wake.UTC()
+	return &wake
 }

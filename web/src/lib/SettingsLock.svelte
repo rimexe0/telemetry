@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getLock, previewLock, saveLock, setPin, unlockWithPin, type Bedtime, type ExtensionRule, type LockResponse, type SettingsLock } from './api';
-  import { formatWindows, parseWindows, saveWarning } from './lock';
+  import { formatWindows, parseWindows, saveWarning, waitStart } from './lock';
 
   /** Which setting this card shows; each loads the same settings. */
   export let part: 'lock' | 'bedtime' | 'extension' = 'lock';
@@ -104,7 +104,7 @@
     {:else if data.lock.enabled}On, not holding now.{:else}Off.{/if}
     {#if data?.lock.enabled} PIN {data.state.pin_open ? 'accepted now' : `accepted ${formatWindows(data.lock.pin_windows) || 'any time'}`}.{/if}
   </p>
-  {#if data?.lock_next}<p class="muted small">From {data.lock_next_from}: {data.lock_next.enabled ? formatWindows(data.lock_next.windows) || 'always' : 'off'}.</p>{/if}
+  {#if data?.lock_next}<p class="muted small">From {waitStart(data.lock_next_from)}: {data.lock_next.enabled ? formatWindows(data.lock_next.windows) || 'always' : 'off'}.</p>{/if}
 
   {#if data?.lock.enabled && data.state.pin_set}
     <form class="row" on:submit|preventDefault={unlock}>
@@ -132,7 +132,7 @@
   {:else if part === 'bedtime'}
   <h3 id="bedtime-heading">Bedtime</h3>
   <p class="muted small">{bedtime.enabled ? `On, ${bedtime.start}–${bedtime.end}${bedtime.wind_down_minutes ? `, screens gray from ${bedtime.wind_down_minutes} min before` : ''}.` : 'Off.'} Screens lock when used; nothing is closed, so agents keep running.</p>
-  {#if data?.bedtime_next}<p class="muted small">From {data.bedtime_next_from}: {data.bedtime_next.enabled ? `${data.bedtime_next.start}–${data.bedtime_next.end}` : 'off'}.</p>{/if}
+  {#if data?.bedtime_next}<p class="muted small">From {waitStart(data.bedtime_next_from)}: {data.bedtime_next.enabled ? `${data.bedtime_next.start}–${data.bedtime_next.end}` : 'off'}.</p>{/if}
   <form class="row" on:submit|preventDefault={saveBedtime}>
     <label><input type="checkbox" bind:checked={bedtime.enabled} /> On</label>
     <label>From <input type="time" bind:value={bedtime.start} /></label>
@@ -142,10 +142,14 @@
   </form>
   {:else}
   <h3 id="extension-heading">Browser extension</h3>
-  <p class="muted small">{extension.enabled ? `On: a browser without a running extension is hidden after ${extension.quiet_seconds} s while sites are blocked.` : 'Off.'} Hidden, never quit; its Extensions page stays usable.</p>
-  {#if data?.extension_next}<p class="muted small">From {data.extension_next_from}: {data.extension_next.enabled ? `${data.extension_next.quiet_seconds} s` : 'off'}.</p>{/if}
+  <p class="muted small">{data?.extension?.enabled ? `On: a browser without a running extension is hidden after ${data.extension.quiet_seconds} s while sites are blocked.` : 'Off.'} Hidden, never quit; its Extensions page stays usable. Once on, it stays on.</p>
+  {#if data?.extension_next}<p class="muted small">From {waitStart(data.extension_next_from)}: {data.extension_next.enabled ? `${data.extension_next.quiet_seconds} s` : 'off'}.</p>{/if}
   <form class="row" on:submit|preventDefault={saveExtension}>
-    <label><input type="checkbox" bind:checked={extension.enabled} /> Hide a browser without it</label>
+    {#if data?.extension?.enabled}
+      <span class="muted small">Stays on: it can't be switched off.</span>
+    {:else}
+      <label><input type="checkbox" bind:checked={extension.enabled} /> Hide a browser without it</label>
+    {/if}
     <label>after <input type="number" min="30" max="3600" bind:value={extension.quiet_seconds} /> s</label>
     <button disabled={busy}>Save</button>
   </form>

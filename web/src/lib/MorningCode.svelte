@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getMorning, newMorningCode, previewMorningRule, saveMorningRule, type MorningRule, type MorningState } from './api';
-  import { saveWarning } from './lock';
+  import { saveWarning, waitStart } from './lock';
 
   let state: MorningState | null = null;
   let draft: MorningRule = { enabled: false, from_wake: true, until: '' };
@@ -80,7 +80,7 @@
     </div>
   {/if}
   {#if notice}<p class="muted small" role="status">{notice}</p>{/if}
-  {#if state?.next}<p class="muted small">From {state.next_from}: {state.next.enabled ? `until ${state.next.until}` : 'off'}.</p>{/if}
+  {#if state?.next}<p class="muted small">From {waitStart(state.next_from)}: {state.next.enabled ? `until ${state.next.until}` : 'off'}.</p>{/if}
 
   <form class="row" on:submit|preventDefault={save}>
     <label><input type="checkbox" bind:checked={draft.enabled} /> On</label>

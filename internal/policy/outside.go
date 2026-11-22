@@ -98,11 +98,7 @@ func (c Config) OutsideAt(at time.Time) OutsideRule {
 	if c.OutsideNext == nil || c.OutsideNextFrom == "" {
 		return c.Outside
 	}
-	location, err := time.LoadLocation(c.Timezone)
-	if err != nil {
-		location = time.UTC
-	}
-	if at.In(location).Format("2006-01-02") >= c.OutsideNextFrom {
+	if Started(c.Timezone, c.OutsideNextFrom, at) {
 		return *c.OutsideNext
 	}
 	return c.Outside
@@ -143,12 +139,8 @@ func (c Config) WithOutside(next OutsideRule, now time.Time) Config {
 		return c
 	}
 	if current.Looser(next) {
-		location, err := time.LoadLocation(c.Timezone)
-		if err != nil {
-			location = time.UTC
-		}
 		c.Outside, c.OutsideNext = current, &next
-		c.OutsideNextFrom = now.In(location).AddDate(0, 0, 1).Format("2006-01-02")
+		c.OutsideNextFrom = c.NextDay(now)
 		return c
 	}
 	if reflect.DeepEqual(next, current) && c.OutsideNext != nil {

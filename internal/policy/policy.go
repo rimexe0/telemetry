@@ -4,6 +4,7 @@
 package policy
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -112,6 +113,11 @@ type Config struct {
 	// (outside, opening_rule, morning, settings_lock, bedtime, extension),
 	// so a quick correction is not mistaken for loosening.
 	RuleChanged map[string]time.Time `json:"rule_changed,omitempty"`
+	// RuleBefore is each rule as it was in force just before RuleChanged.
+	// A quick correction may go back to it but never ask less than it, so
+	// tightening a rule a little cannot open a window to switch it off at
+	// once (2026-11-22).
+	RuleBefore map[string]json.RawMessage `json:"rule_before,omitempty"`
 }
 
 // NormalizeAddress reduces a URL or address to host and path without scheme

@@ -67,7 +67,7 @@ func (c Config) MorningAt(at time.Time) MorningRule {
 // WithMorning sets the morning rule as of now; a looser one waits for the
 // next local day.
 func (c Config) WithMorning(next MorningRule, now time.Time) Config {
-	c.Morning, c.MorningNext, c.MorningNextFrom = withRule(c.Timezone, c.Morning, c.MorningNext, c.MorningNextFrom, next, MorningRule.Looser, now)
+	c.Morning, c.MorningNext, c.MorningNextFrom = withRule(c.Timezone, c.Morning, c.MorningNext, c.MorningNextFrom, next, MorningRule.Looser, now, c.NextDay(now))
 	return c
 }
 

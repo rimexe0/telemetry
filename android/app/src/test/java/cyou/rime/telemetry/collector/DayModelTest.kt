@@ -74,6 +74,16 @@ class DayModelTest {
     }
 
     @Test
+    fun aMissedWakeTimeStaysOnTheTimeline() {
+        // Set to wake 10:00 local (07:00Z), woke 11:10: the strip starts at 10:00.
+        val view = DayModel.parse(json.replace(""""from":""", """"woke_at":"2026-10-01T08:10:00Z","planned_wake":"2026-10-01T07:00:00Z","from":"""))
+        assertEquals(Instant.parse("2026-10-01T07:00:00Z"), DayModel.window(view, zone).first)
+        // Woke before it: the strip starts when they woke.
+        val early = DayModel.parse(json.replace(""""from":""", """"woke_at":"2026-10-01T06:10:00Z","planned_wake":"2026-10-01T07:00:00Z","from":"""))
+        assertEquals(Instant.parse("2026-10-01T06:00:00Z"), DayModel.window(early, zone).first)
+    }
+
+    @Test
     fun aFinishedDayEndsAtItsLastActivityAndIsNamed() {
         val finished = DayModel.parse(json.replace(""""to":"2026-10-01T10:30:00Z"""", """"to":"2026-10-01T21:00:00Z"""")
             .replace(""""blocks":[{""", """"blocks":[],"ignored":[{"""))

@@ -88,7 +88,16 @@ func TestPostgresOpeningRuleWaitsCapsAndCounts(t *testing.T) {
 	if used, err := database.OpeningsSince(ctx, now.Add(-time.Hour)); err != nil || used != 0 {
 		t.Fatalf("used = %d, %v", used, err)
 	}
-	// A looser rule waits for the next day.
+	// A looser rule waits for the next day, once the rule is past the
+	// minutes in which changing it back counts as a correction.
+	aged, err := database.LatestPolicy(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aged.Config.RuleChanged = map[string]time.Time{"opening_rule": now.Add(-time.Hour)}
+	if _, err := database.SavePolicy(ctx, aged.Config, "an hour later"); err != nil {
+		t.Fatal(err)
+	}
 	looser := policy.OpeningRule{}
 	if _, config, err := database.ApplyBlockingSchedule(ctx, ScheduleChange{OpeningRule: &looser}, "x"); err != nil || config.OpeningRuleAt(now) != rule || config.OpeningRuleNext == nil {
 		t.Fatalf("looser = %+v, %v", config, err)
@@ -211,5 +220,58 @@ func TestPostgresCorrectingAJustSavedBedtimeAppliesAtOnce(t *testing.T) {
 	}
 	if _, config, err := database.ApplyBlockingSchedule(ctx, ScheduleChange{Bedtime: &off}, "fix"); err != nil || config.BedtimeAt(now).Enabled {
 		t.Fatalf("correction = %+v, %v", config.Bedtime, err)
+	}
+}
+
+// Tightening a rule a little must not open a window to switch it off at once.
+func TestPostgresACorrectionNeverAsksLessThanBefore(t *testing.T) {
+	ctx, database := openCleanIntegration(t)
+	now := time.Now().UTC()
+	zone := time.FixedZone("TR", 3*3600)
+	first := policy.Bedtime{Enabled: true, Start: now.Add(2 * time.Hour).In(zone).Format("15:04"), End: now.Add(10 * time.Hour).In(zone).Format("15:04")}
+	if _, _, err := database.ApplyBlockingSchedule(ctx, ScheduleChange{Bedtime: &first}, "bedtime"); err != nil {
+		t.Fatal(err)
+	}
+	tighter := first
+	tighter.WindDownMinutes = 5
+	if _, _, err := database.ApplyBlockingSchedule(ctx, ScheduleChange{Bedtime: &tighter}, "a little more"); err != nil {
+		t.Fatal(err)
+	}
+	// Back to the first bedtime is a correction.
+	if _, config, err := database.ApplyBlockingSchedule(ctx, ScheduleChange{Bedtime: &first}, "undo"); err != nil || config.BedtimeNextFrom != "" || config.BedtimeAt(now).WindDownMinutes != 0 {
+		t.Fatalf("undo = %+v next %+v, %v", config.Bedtime, config.BedtimeNext, err)
+	}
+	if _, _, err := database.ApplyBlockingSchedule(ctx, ScheduleChange{Bedtime: &tighter}, "a little more again"); err != nil {
+		t.Fatal(err)
+	}
+	// Off asks less than the first bedtime: it waits for the next day.
+	off := policy.Bedtime{}
+	_, config, err := database.ApplyBlockingSchedule(ctx, ScheduleChange{Bedtime: &off}, "off")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !config.BedtimeAt(now).Enabled || config.BedtimeNext == nil || config.BedtimeNextFrom == "" {
+		t.Fatalf("switching off applied at once: %+v next %+v from %q", config.Bedtime, config.BedtimeNext, config.BedtimeNextFrom)
+	}
+}
+
+func TestPostgresTheExtensionRuleStaysOn(t *testing.T) {
+	ctx, database := openCleanIntegration(t)
+	on := policy.ExtensionRule{Enabled: true, QuietSeconds: 30}
+	if _, _, err := database.ApplyBlockingSchedule(ctx, ScheduleChange{Extension: &on}, "on"); err != nil {
+		t.Fatal(err)
+	}
+	off := policy.ExtensionRule{}
+	if _, _, err := database.ApplyBlockingSchedule(ctx, ScheduleChange{Extension: &off}, "off"); !errors.Is(err, ErrInvalidAgentChange) {
+		t.Fatalf("switching the extension rule off = %v", err)
+	}
+	latest, err := database.LatestPolicy(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := latest.Config
+	config.Extension, config.ExtensionNext, config.ExtensionNextFrom = policy.ExtensionRule{}, nil, ""
+	if _, err := database.SavePolicy(ctx, config, "whole policy without it"); !errors.Is(err, ErrInvalidPolicy) {
+		t.Fatalf("saving a policy without the extension rule = %v", err)
 	}
 }

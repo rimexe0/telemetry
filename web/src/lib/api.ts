@@ -917,7 +917,8 @@ export async function savePairingSettings(relayURL: string): Promise<PairingSett
 
 // When the owner last woke before `at`: the end of the last long quiet
 // stretch across all devices. Null when the server finds none.
-export async function getWakeTime(at: Date, signal?: AbortSignal): Promise<string | null> {
-  const result = await request<{ wake_at: string | null }>(`/v1/activity/wake?at=${encodeURIComponent(at.toISOString())}`, { signal });
-  return result.wake_at ?? null;
+/** When the owner woke before at, and the wake time they set (bedtime's end) that day once it has passed. */
+export async function getWakeTime(at: Date, signal?: AbortSignal): Promise<{ woke: string | null; planned: string | null }> {
+  const result = await request<{ wake_at: string | null; planned_wake?: string | null }>(`/v1/activity/wake?at=${encodeURIComponent(at.toISOString())}`, { signal });
+  return { woke: result.wake_at ?? null, planned: result.planned_wake ?? null };
 }

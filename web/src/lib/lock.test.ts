@@ -12,7 +12,7 @@ describe('lock times', () => {
   });
 });
 
-import { bedtimeHours, saveWarning } from './lock';
+import { bedtimeHours, saveWarning, waitStart } from './lock';
 
 describe('rule save warnings', () => {
   it('measures bedtime across midnight', () => {
@@ -24,6 +24,9 @@ describe('rule save warnings', () => {
   it('warns about long bedtimes and changes that wait a day', () => {
     expect(saveWarning(undefined, { enabled: true, start: '12:00', end: '08:00' })).toBe('Bedtime would last 20 hours, from 12:00 to 08:00.');
     expect(saveWarning('2026-11-01')).toBe('This asks less than now, so it only starts on 1 Nov; today stays as it is.');
+    expect(saveWarning('2026-11-23T05:00:00Z')).toBe('This asks less than now, so it only starts at 23 Nov, 08:00, when the next bedtime ends; until then it stays as it is.');
+    expect(waitStart('2026-11-23T05:00:00Z')).toBe('23 Nov, 08:00');
+    expect(waitStart('2026-11-01')).toBe('1 Nov');
     expect(saveWarning(undefined, { enabled: true, start: '00:00', end: '08:00' })).toBe('');
   });
 });

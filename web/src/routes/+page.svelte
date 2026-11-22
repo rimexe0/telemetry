@@ -644,9 +644,17 @@
       if (lo >= Date.now()) throw new Error('Choose today or an earlier day.');
       // The day starts when you woke, not at midnight: the server finds the
       // end of the last long quiet stretch before 18:00 that day.
+      // It starts at the wake time you set instead when that came first, so
+      // a missed wake time stays in view.
       const wake = await getWakeTime(new Date(Math.min(lo + 18 * 3_600_000, Date.now())), request.signal).catch(() => null);
-      const wakeAt = wake ? Date.parse(wake) : NaN;
-      dayWindowStart = Number.isFinite(wakeAt) && wakeAt >= lo - 6 * 3_600_000 && wakeAt < lo + 18 * 3_600_000 ? wakeAt : lo;
+      const inDay = (value: string | null | undefined) => {
+        const at = value ? Date.parse(value) : NaN;
+        return Number.isFinite(at) && at >= lo - 6 * 3_600_000 && at < lo + 18 * 3_600_000 ? at : undefined;
+      };
+      const wokeAt = inDay(wake?.woke);
+      const plannedAt = inDay(wake?.planned);
+      dayWindowStart = Math.min(wokeAt ?? Infinity, plannedAt ?? Infinity);
+      if (!Number.isFinite(dayWindowStart)) dayWindowStart = lo;
       const start = dayWindowStart;
       const from = new Date(start - 6 * 3_600_000);
       const to = new Date(Math.min(start + 86_400_000, Date.now()));
@@ -676,7 +684,11 @@
       if (request.signal.aborted || !authenticated || selectedDay !== requestedDay) return;
       dayObservations = rows;
       saveHistory(requestedDay, sourceKeys, from.getTime(), to.getTime(), rows);
-      const began = start === lo ? 'Starts at midnight: no wake time was found.' : `Starts when you woke, at ${new Date(start).toLocaleTimeString('en-GB', { timeZone: 'Europe/Istanbul', hour: '2-digit', minute: '2-digit' })}.`;
+      const clock = (at: number) => new Date(at).toLocaleTimeString('en-GB', { timeZone: 'Europe/Istanbul', hour: '2-digit', minute: '2-digit' });
+      const began = start === lo ? 'Starts at midnight: no wake time was found.'
+        : plannedAt !== undefined && start === plannedAt
+          ? `Starts at ${clock(plannedAt)}, the wake time you set${wokeAt !== undefined && wokeAt > plannedAt ? `; you woke at ${clock(wokeAt)}` : ''}.`
+          : `Starts when you woke, at ${clock(start)}.`;
       dayStatus = `Loaded ${rows.length.toLocaleString()} records for ${requestedDay} at ${date(new Date().toISOString())}. ${began} UTC+03:00. Gaps mean unknown activity.${skipped > 0 ? ` ${skipped} less active source${skipped === 1 ? ' was' : 's were'} left out.` : ''}`;
     } catch (cause) {
       if (request.signal.aborted) return;

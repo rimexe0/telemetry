@@ -30,6 +30,21 @@ export function shortDate(day: string): string {
 }
 
 /**
+ * When a waiting rule starts: "23 Nov, 08:00" for a moment (the wake time
+ * after the next bedtime), or "1 Nov" for a date, as rules set before
+ * 2026-11-22 waited for.
+ */
+export function waitStart(from: string | undefined, timeZone = 'Europe/Istanbul'): string {
+  if (!from) return '';
+  if (!from.includes('T')) return shortDate(from);
+  const at = new Date(from);
+  if (Number.isNaN(at.getTime())) return from;
+  const day = at.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone });
+  const clock = at.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone });
+  return `${day}, ${clock}`;
+}
+
+/**
  * What the owner is asked before a rule change is saved, or nothing when it
  * applies at once and needs no warning.
  */
@@ -39,6 +54,7 @@ export function saveWarning(waitsUntil: string | undefined, bedtime?: { enabled?
     const hours = bedtimeHours(bedtime.start, bedtime.end);
     if (hours > 12) parts.push(`Bedtime would last ${hours} hours, from ${bedtime.start} to ${bedtime.end}.`);
   }
-  if (waitsUntil) parts.push(`This asks less than now, so it only starts on ${shortDate(waitsUntil)}; today stays as it is.`);
+  if (waitsUntil?.includes('T')) parts.push(`This asks less than now, so it only starts at ${waitStart(waitsUntil)}, when the next bedtime ends; until then it stays as it is.`);
+  else if (waitsUntil) parts.push(`This asks less than now, so it only starts on ${shortDate(waitsUntil)}; today stays as it is.`);
   return parts.join(' ');
 }
