@@ -26,11 +26,14 @@ log() { echo "$(date -u +%FT%TZ) telemetry-update: $*"; }
 # signed list below like every other.
 tag=$(curl -fsSL "https://github.com/$repo/releases/latest/download/release.txt" | awk '{print $1}')
 [[ "$tag" =~ ^r[0-9]+$ ]] || { log "the latest release has no usable name: $tag"; exit 1; }
-[[ "$tag" == "$(cat "$installed" 2>/dev/null)" ]] && exit 0
+# A Mac installed before its updater fetched the packed extension gets its
+# release again once, to fetch it: browser policy installs that copy, which
+# cannot be switched off (owner request 2026-11-22).
+[[ "$tag" == "$(cat "$installed" 2>/dev/null)" && -f "$root/extension.crx" ]] && exit 0
 # A release that failed here once is not retried; the next one is.
 [[ "$tag" == "$(cat "$refused" 2>/dev/null)" ]] && exit 0
 
-files=(telemetry-desktop-macos.zip telemetry-panel-macos.zip telemetry-extension.tar.gz telemetry-update-macos.sh release.txt)
+files=(telemetry-desktop-macos.zip telemetry-panel-macos.zip telemetry-extension.tar.gz telemetry-extension.crx telemetry-update-macos.sh release.txt)
 self="${0:A}"
 work="$root/updates/$tag"
 mkdir -p "$work"
@@ -110,6 +113,10 @@ mkdir new/extension
 tar -xzf telemetry-extension.tar.gz -C new/extension
 [[ -d "$root/extension" ]] && mv "$root/extension" before/extension
 mv new/extension "$root/extension"
+# Browser policy installs this packed copy from the collector, and the browser
+# updates it from there by itself.
+install -m 644 telemetry-extension.crx "$root/extension.crx.new"
+mv -f "$root/extension.crx.new" "$root/extension.crx"
 
 echo "$tag" > "$installed"
 log "$tag installed"

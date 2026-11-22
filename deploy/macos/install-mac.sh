@@ -53,7 +53,7 @@ tag=$(curl -fsSL "https://github.com/$repo/releases/latest/download/release.txt"
 mkdir -p "$root/bin" "$root/updates" "$apps" "$agents"
 work=$(mktemp -d "$root/updates/install-$tag.XXXXXX")
 cd "$work"
-files=(telemetry-desktop-macos.zip telemetry-panel-macos.zip telemetry-extension.tar.gz telemetry-macos-jobs.tar.gz telemetry-update-macos.sh release.txt)
+files=(telemetry-desktop-macos.zip telemetry-panel-macos.zip telemetry-extension.tar.gz telemetry-extension.crx telemetry-macos-jobs.tar.gz telemetry-update-macos.sh release.txt)
 for name in SHA256SUMS SHA256SUMS.sig $files; do
   curl -fsSL -o "$name" "https://github.com/$repo/releases/download/$tag/$name"
 done
@@ -76,6 +76,7 @@ mv "new/Telemetry Desktop.app" "$desktop"
 mv new/Telemetry.app "$panel"
 [[ -d "$root/extension" ]] && mv "$root/extension" before/extension
 mv new/extension "$root/extension"
+install -m 644 telemetry-extension.crx "$root/extension.crx"
 install -m 755 telemetry-update-macos.sh "$root/bin/telemetry-update"
 collector="$desktop/Contents/MacOS/telemetry-desktop"
 
