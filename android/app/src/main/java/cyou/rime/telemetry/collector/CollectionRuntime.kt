@@ -158,6 +158,7 @@ object CollectionRuntime {
             states.keys().forEach { key -> append("\n$key: ${states.optString(key)}") }
         }
         prefs.edit().putString("latest_summary", summary).putString("latest_json", payload.toString()).apply()
+        SyncNotice.update(context, pending.pendingRevisions, delivered.lastSuccessfulAt, pending.oldestPendingCollectedAt, now)
         return CollectionCycle(budget.intervalMillis, "${pending.pendingRevisions} queued; $deliveryState")
     }
 
@@ -216,6 +217,11 @@ object CollectionRuntime {
                 prefs.edit().putLong("metered_used", used + attempted).commit()
             }
         }
+    }
+
+    /** Ends the wait after failed syncs, for a sync the owner asked for. */
+    fun clearRetryWait(context: Context) {
+        preferences(context).edit().putLong("retry_at", 0L).apply()
     }
 
     private fun due(now: Long, previous: Long, interval: Long): Boolean =

@@ -148,6 +148,9 @@
             android:name=".FollowUpDoneReceiver"
             android:exported="false" />
         <receiver
+            android:name=".SyncNowReceiver"
+            android:exported="false" />
+        <receiver
             android:name=".RestartReceiver"
             android:exported="false">
             <intent-filter>
