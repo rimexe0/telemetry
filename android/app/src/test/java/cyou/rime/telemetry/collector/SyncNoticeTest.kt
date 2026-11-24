@@ -45,6 +45,6 @@ class SyncNoticeTest {
 
     @Test
     fun theNoisyKindsStartOff() {
-        assertEquals(listOf(NoticeKind.COMPUTER_PROBLEMS, NoticeKind.TASKS), NoticeKind.entries.filter { !it.defaultOn })
+        assertEquals(listOf(NoticeKind.SYNC, NoticeKind.FOLLOW_UPS), NoticeKind.entries.filter { it.defaultOn })
     }
 }

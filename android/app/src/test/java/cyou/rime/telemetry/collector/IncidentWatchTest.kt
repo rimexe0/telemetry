@@ -30,7 +30,7 @@ class IncidentWatchTest {
     }
 
     @Test
-    fun aStoppedComputerHasItsOwnSwitchAndOtherProblemsStartOff() {
+    fun computerProblemsHaveTwoSwitchesBothStartingOff() {
         val json = """{"collection_incidents":[
             {"id":11,"device":"mac-00000001","kind":"stopped_while_on","started_at":"2026-10-15T06:00:00Z","detail":{"device_name":"plagiarism.local"}},
             {"id":12,"device":"catchy","kind":"silent","started_at":"2026-10-15T06:00:00Z","detail":{"device_name":"ri-desktop"}}]}"""
@@ -38,7 +38,7 @@ class IncidentWatchTest {
         assertEquals(true, IncidentWatch.title(stopped).startsWith("Telemetry is off on plagiarism since"))
         assertEquals(NoticeKind.COMPUTER_STOPPED, IncidentWatch.kind(stopped))
         assertEquals(NoticeKind.COMPUTER_PROBLEMS, IncidentWatch.kind(silent))
-        assertEquals(true, NoticeKind.COMPUTER_STOPPED.defaultOn)
+        assertEquals(false, NoticeKind.COMPUTER_STOPPED.defaultOn)
         assertEquals(false, NoticeKind.COMPUTER_PROBLEMS.defaultOn)
     }
 }

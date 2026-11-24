@@ -24,7 +24,9 @@ const (
 	// KindStoppedWhileOn: the collector is not running although its machine
 	// is on (it answers over Tailscale): it was stopped or unloaded, which
 	// leaves the machine untracked and unblocked. Sleep and shutdown do not
-	// count: a sleeping or switched-off machine does not answer.
+	// count: a switched-off machine does not answer, and a sleeping Mac only
+	// answers in the minute or so it wakes for now and then, so the machine
+	// must answer every check for SteadilyOnFor first.
 	KindStoppedWhileOn = "stopped_while_on"
 	// KindModulePrefix plus a module name: that module kept failing.
 	KindModulePrefix = "module_failing:"
@@ -38,6 +40,11 @@ const (
 	// StoppedWhileOnAfter is how long a collector may be quiet while its
 	// machine answers before that counts as stopped.
 	StoppedWhileOnAfter = 3 * time.Minute
+	// SteadilyOnFor is how long a quiet collector's machine must keep
+	// answering before it counts as on. A sleeping Mac wakes briefly for
+	// Power Nap and network access and answers then; that raised false
+	// "stopped while on" alarms on 2026-11-15.
+	SteadilyOnFor = 10 * time.Minute
 	WindowStaleAfter    = 5 * time.Minute
 	ModuleFailingAfter  = 10 * time.Minute
 	// DiskLowBelow is the free space on the server's disk below which

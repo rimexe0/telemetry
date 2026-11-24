@@ -16,6 +16,7 @@ import (
 // runSilenceChecker opens and closes collection incidents every minute until
 // ctx ends (#28).
 func runSilenceChecker(ctx context.Context, repository store.Repository) {
+	answers := steadyAnswers{}
 	check := func() {
 		checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
@@ -31,7 +32,7 @@ func runSilenceChecker(ctx context.Context, repository store.Repository) {
 		}
 		now := time.Now().UTC()
 		evidence.Desktops = withoutRetired(evidence.Desktops, os.Getenv("TELEMETRY_RETIRED_DEVICES"))
-		askMachines(checkCtx, evidence.Desktops, now)
+		askMachines(checkCtx, evidence.Desktops, answers, now)
 		opened, err := repository.SyncCollectionIncidents(checkCtx, silence.Evaluate(evidence, now), now)
 		if err != nil {
 			log.Printf("silence check: %v", err)
@@ -86,18 +87,38 @@ func tailscaleNames() map[string]string {
 
 // askMachines pings each machine whose collector has gone quiet, unless it
 // said it was going to sleep, so a collector stopped on a computer that is
-// still on can be told from one that is asleep or switched off.
-func askMachines(ctx context.Context, desktops []silence.DesktopStatus, now time.Time) {
+// still on can be told from one that is asleep or switched off. Only a
+// machine that has answered every check for silence.SteadilyOnFor is on.
+func askMachines(ctx context.Context, desktops []silence.DesktopStatus, answers steadyAnswers, now time.Time) {
 	names := tailscaleNames()
 	for i := range desktops {
 		status := &desktops[i]
 		name, known := names[status.DeviceID]
 		if !known || status.State == "sleeping" || now.Sub(status.At) < silence.StoppedWhileOnAfter {
+			answers.on(status.DeviceID, false, now)
 			continue
 		}
-		on := machineAnswers(ctx, name)
+		on := answers.on(status.DeviceID, machineAnswers(ctx, name), now)
 		status.On = &on
 	}
+}
+
+// steadyAnswers holds, for each machine, since when it has answered every
+// check without a miss.
+type steadyAnswers map[string]time.Time
+
+// on records one check and reports whether the machine has now answered
+// steadily for silence.SteadilyOnFor.
+func (s steadyAnswers) on(device string, answered bool, now time.Time) bool {
+	if !answered {
+		delete(s, device)
+		return false
+	}
+	since, ok := s[device]
+	if !ok {
+		s[device], since = now, now
+	}
+	return now.Sub(since) >= silence.SteadilyOnFor
 }
 
 // machineAnswers pings over Tailscale. A sleeping or switched-off machine

@@ -15,4 +15,9 @@ class GrayscaleTest {
         assertEquals(Grayscale.Step.NONE, Grayscale.step(wanted = false, owned = true, screenGray = false))
         assertEquals(Grayscale.Step.NONE, Grayscale.step(wanted = true, owned = true, screenGray = true))
     }
+
+    @Test
+    fun switchedOffDuringTheWindDownItComesBack() {
+        assertEquals(Grayscale.Step.ON, Grayscale.step(wanted = true, owned = true, screenGray = false))
+    }
 }

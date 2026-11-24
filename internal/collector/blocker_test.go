@@ -334,6 +334,19 @@ func TestWindDownGrayscaleOnlyUndoesWhatItTurnedOn(t *testing.T) {
 	if screen {
 		t.Fatal("still gray after the wind-down")
 	}
+	// Switched off during the wind-down, it comes back.
+	load(true)
+	blocker.grayscale(ctx, host, now)
+	screen = false
+	blocker.grayscale(ctx, host, now)
+	if !screen {
+		t.Fatal("switched off in the wind-down and not put back")
+	}
+	load(false)
+	blocker.grayscale(ctx, host, now)
+	if screen {
+		t.Fatal("still gray after the wind-down")
+	}
 	// The owner's own grayscale stays on.
 	screen = true
 	load(true)

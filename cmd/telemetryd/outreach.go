@@ -356,12 +356,19 @@ func morningFacts(ctx context.Context, repository store.Repository, config polic
 	case plan == nil && config.PlanGate.FromWake:
 		lines = append(lines, "Today has no plan yet. Everything except the essentials is locked until the day is planned.")
 	case plan == nil:
-		lines = append(lines, "Today has no plan yet.")
+		lines = append(lines, "Today has no plan, and none is needed.")
 	default:
 		lines = append(lines, "Today already has a plan:")
 		for _, block := range plan.Blocks {
 			lines = append(lines, "- "+block.StartTime.In(location).Format("15:04")+" "+block.Title)
 		}
+	}
+	if config.ClosedByDefault && len(config.DistractionTimes) > 0 {
+		windows := []string{}
+		for _, window := range config.DistractionTimes {
+			windows = append(windows, window.Start+"–"+window.End)
+		}
+		lines = append(lines, "Distractions are closed today outside the distraction times ("+strings.Join(windows, ", ")+"), plan or no plan.")
 	}
 	if len(recent.Tasks) > 0 {
 		lines = append(lines, "Open tasks:")

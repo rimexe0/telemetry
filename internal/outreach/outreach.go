@@ -144,8 +144,9 @@ const rules = "You are the owner's assistant, writing to them on Telegram withou
 // MorningPrompt asks for the message that starts the owner's day.
 func MorningPrompt(facts string) string {
 	return rules + "\n\nThey just woke up. Tell them what the records say about yesterday in two or three lines, what is waiting, " +
-		"and ask what today is for, offering the most likely one to three things from the facts. " +
-		"If the day is locked, say in one line that everything opens once the day is planned with you.\n\nFacts:\n" + facts
+		"and when distractions open today if the facts say. " +
+		"Only if the facts say the day is locked until it is planned, say in one line that everything opens once the day is planned with you; " +
+		"otherwise do not ask them to plan the day or what it is for: they asked not to be pushed to plan (2026-11-24).\n\nFacts:\n" + facts
 }
 
 // A planned block counts as not started when, between MissedStartAfter and
@@ -214,8 +215,8 @@ func OffPlanPrompt(facts string) string {
 	return rules + "\n\nThey have drifted for a while: on distractions, or jumping between unrelated things, and on none of today's tasks. Decide whether a message helps. " +
 		"If the plan says they are resting or the facts show nothing they need to get back to, answer exactly NOTHING. " +
 		"Look forward, not back: do not say how long it has been or count minutes. " +
-		"If an agent is waiting for them, name that task and the next step there. Otherwise, if today has no plan, offer to agree on one to three things for today with them. " +
-		"Otherwise offer the next smallest concrete step of one task, or to make today's plan smaller. " +
+		"If an agent is waiting for them, name that task and the next step there. " +
+		"Otherwise offer the next smallest concrete step of one open task, or to make today's plan smaller; never offer to plan a day that has no plan. " +
 		"Never repeat the suggestion of their last check-in; if there is nothing new to offer, answer exactly NOTHING. " +
 		"They may be avoiding a task they dread: do not say so; make the step small enough to start. Two sentences at most.\n\nFacts:\n" + facts
 }

@@ -11,9 +11,10 @@ import (
 const grayscaleCursor = "blocker:grayscale_owned"
 
 // grayscale turns the screen grayscale while the decision asks for it (the
-// wind-down before bedtime) and back afterwards. A filter the owner turned
-// on themselves is left alone: the blocker only turns off what it turned on,
-// and remembers that across restarts.
+// wind-down before bedtime) and back afterwards. Switched off during the
+// wind-down, it is turned on again (owner request 2026-11-24). A filter the
+// owner turned on themselves is left alone: the blocker only turns off what
+// it turned on, and remembers that across restarts.
 func (b *Blocker) grayscale(ctx context.Context, host Host, now time.Time) {
 	get, set := b.GetGrayscale, b.SetGrayscale
 	// Only the Mac has a grayscale switch so far; on Linux agents share the
@@ -40,7 +41,7 @@ func (b *Blocker) grayscale(ctx context.Context, host Host, now time.Time) {
 	owned := b.grayscaleOwned
 	b.mu.Unlock()
 	wanted := decision != nil && decision.Grayscale
-	if wanted == owned {
+	if !wanted && !owned {
 		return
 	}
 	on, err := get()
@@ -50,9 +51,11 @@ func (b *Blocker) grayscale(ctx context.Context, host Host, now time.Time) {
 	}
 	switch {
 	case wanted && on:
-		// The owner already has it on; nothing to do and nothing to undo.
+		// Already gray: by the blocker, or the owner's own, which it
+		// then never turns off.
 		return
 	case wanted:
+		// Off during the wind-down: turn it on, or put it back.
 		err = set(true)
 	case on:
 		err = set(false)

@@ -7,8 +7,9 @@ import java.util.concurrent.TimeUnit
 /**
  * Turns the screen grayscale while the decision asks for it (the wind-down
  * before bedtime) and back afterwards, using Android's own monochrome display
- * mode. A grayscale the owner turned on is left alone: only what this app
- * turned on is turned off again.
+ * mode. Switched off during the wind-down, it is turned on again at the next
+ * check (owner request 2026-11-24). A grayscale the owner turned on is left
+ * alone: only what this app turned on is turned off again.
  */
 object Grayscale {
     private const val PREFS = "telemetry-grayscale"
@@ -22,10 +23,10 @@ object Grayscale {
     enum class Step { ON, OFF, NONE }
 
     fun step(wanted: Boolean, owned: Boolean, screenGray: Boolean): Step = when {
-        wanted == owned -> Step.NONE
         wanted && screenGray -> Step.NONE
+        // Turn it on, or put it back after it was switched off.
         wanted -> Step.ON
-        screenGray -> Step.OFF
+        owned && screenGray -> Step.OFF
         else -> Step.NONE
     }
 
@@ -33,14 +34,14 @@ object Grayscale {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val wanted = decision?.grayscale == true
         val owned = prefs.getBoolean(KEY_OWNED, false)
-        if (wanted == owned) return
+        if (!wanted && !owned) return
         val resolver = context.contentResolver
         val enabled = Settings.Secure.getInt(resolver, ENABLED, 0) == 1
         val gray = enabled && Settings.Secure.getInt(resolver, MODE, -1) == MONOCHROME
         when (step(wanted, owned, gray)) {
             Step.NONE -> if (wanted && gray) return
             Step.ON -> {
-                prefs.edit().putInt(KEY_PREVIOUS_MODE, Settings.Secure.getInt(resolver, MODE, -1)).apply()
+                if (!owned) prefs.edit().putInt(KEY_PREVIOUS_MODE, Settings.Secure.getInt(resolver, MODE, -1)).apply()
                 if (!put(context, MODE, MONOCHROME) || !put(context, ENABLED, 1)) return
             }
             Step.OFF -> {
