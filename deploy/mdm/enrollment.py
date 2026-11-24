@@ -57,6 +57,9 @@ payloads = [
         "IdentityCertificateUUID": identity,
         "SignMessage": True,
         "CheckOutWhenRemoved": True,
+        # macOS refuses an MDM payload that does not say it handles the user
+        # channel too; NanoMDM does.
+        "ServerCapabilities": ["com.apple.mdm.per-user-connections"],
         # 1: list profiles, 2: install and remove profiles. Nothing else.
         "AccessRights": 3,
     },
