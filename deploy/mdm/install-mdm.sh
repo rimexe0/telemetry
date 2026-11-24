@@ -98,6 +98,10 @@ cat > Caddyfile <<CADDY
 	admin off
 	auto_https off
 	persist_config off
+	# macOS's MDM client failed on HTTP/3 ("bad URL", 2026-11-24).
+	servers {
+		protocols h1 h2
+	}
 }
 https://$host:$public_port {
 	bind $address
