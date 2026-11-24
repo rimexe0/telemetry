@@ -20,6 +20,27 @@ refused="$root/.release-failed"
 
 log() { echo "$(date -u +%FT%TZ) telemetry-update: $*"; }
 
+# Browsers install the packed extension from an External Extensions file in
+# their own data folder, so Telemetry installs and updates it from outside
+# the browser, as browser policy does on Linux (owner request 2026-11-24).
+# The browser asks once whether to turn it on, and it can be switched off
+# there. Policy cannot do this on a Mac: Chromium force-installs extensions
+# from outside its Web Store only on a Mac enrolled in MDM.
+external_extension() {
+  local crx="$root/extension.crx" manifest="$root/extension/manifest.json" version dir file json
+  [[ -f "$crx" && -f "$manifest" ]] || return 0
+  version=$(plutil -extract version raw -o - "$manifest" 2>/dev/null) || return 0
+  json="{\"external_crx\": \"$crx\", \"external_version\": \"$version\"}"
+  for dir in net.imput.helium Google/Chrome Chromium BraveSoftware/Brave-Browser "Microsoft Edge"; do
+    [[ -d "$HOME/Library/Application Support/$dir" ]] || continue
+    file="$HOME/Library/Application Support/$dir/External Extensions/fachbjhigbkfbbplbnoephgnkgghhbfa.json"
+    [[ "$(cat "$file" 2>/dev/null)" == "$json" ]] && continue
+    mkdir -p "${file:h}"
+    print -r -- "$json" > "$file.new" && mv -f "$file.new" "$file"
+  done
+}
+external_extension
+
 # The latest release's release.txt names it. Download links are not counted
 # against GitHub's API limit of 60 requests an hour per address, which other
 # programs on the same machine also use; the file is checked against the
@@ -117,6 +138,7 @@ mv new/extension "$root/extension"
 # updates it from there by itself.
 install -m 644 telemetry-extension.crx "$root/extension.crx.new"
 mv -f "$root/extension.crx.new" "$root/extension.crx"
+external_extension
 
 echo "$tag" > "$installed"
 log "$tag installed"

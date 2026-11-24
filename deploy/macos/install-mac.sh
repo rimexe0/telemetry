@@ -10,6 +10,26 @@ set -euo pipefail
 
 repo="${TELEMETRY_REPO:-rimexe0/telemetry}"
 root="$HOME/Library/Application Support/Telemetry"
+
+# Browsers install the packed extension from an External Extensions file in
+# their own data folder, so Telemetry installs and updates it from outside
+# the browser, as browser policy does on Linux (owner request 2026-11-24).
+# The browser asks once whether to turn it on, and it can be switched off
+# there. Policy cannot do this on a Mac: Chromium force-installs extensions
+# from outside its Web Store only on a Mac enrolled in MDM.
+external_extension() {
+  local crx="$root/extension.crx" manifest="$root/extension/manifest.json" version dir file json
+  [[ -f "$crx" && -f "$manifest" ]] || return 0
+  version=$(plutil -extract version raw -o - "$manifest" 2>/dev/null) || return 0
+  json="{\"external_crx\": \"$crx\", \"external_version\": \"$version\"}"
+  for dir in net.imput.helium Google/Chrome Chromium BraveSoftware/Brave-Browser "Microsoft Edge"; do
+    [[ -d "$HOME/Library/Application Support/$dir" ]] || continue
+    file="$HOME/Library/Application Support/$dir/External Extensions/fachbjhigbkfbbplbnoephgnkgghhbfa.json"
+    [[ "$(cat "$file" 2>/dev/null)" == "$json" ]] && continue
+    mkdir -p "${file:h}"
+    print -r -- "$json" > "$file.new" && mv -f "$file.new" "$file"
+  done
+}
 apps="$HOME/Applications"
 desktop="$apps/Telemetry Desktop.app"
 panel="$apps/Telemetry.app"
@@ -77,6 +97,7 @@ mv new/Telemetry.app "$panel"
 [[ -d "$root/extension" ]] && mv "$root/extension" before/extension
 mv new/extension "$root/extension"
 install -m 644 telemetry-extension.crx "$root/extension.crx"
+external_extension
 install -m 755 telemetry-update-macos.sh "$root/bin/telemetry-update"
 collector="$desktop/Contents/MacOS/telemetry-desktop"
 
@@ -129,12 +150,11 @@ say "What is left is yours to grant"
 open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" 2>/dev/null || true
 print -- "
 1. Accessibility: turn on Telemetry Desktop in the settings window just opened.
-2. Browser: restart it once. Helium, Chrome, Chromium, Brave and Edge get the
-   extension by browser policy, so chrome://extensions shows it as installed
-   by your administrator. Remove a copy you loaded unpacked earlier, or it
-   covers pages twice. In its Details, turn on Allow in Incognito. If it does
-   not appear, load it yourself: chrome://extensions, Developer mode, Load
-   unpacked, and choose $root/extension.
+2. Browser: restart it once. Helium, Chrome, Chromium, Brave and Edge add the
+   extension from Telemetry's External Extensions file and ask once whether
+   to turn it on; say yes. Telemetry keeps it updated. Remove a copy you
+   loaded unpacked earlier, or it covers pages twice. In its Details, turn on
+   Allow in Incognito.
 3. Phone: install the app from
    https://github.com/$repo/releases/latest/download/telemetry-phone.apk
    and enter this server's address in it; or, with the phone connected by USB
