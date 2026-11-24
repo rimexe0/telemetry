@@ -1,0 +1,15 @@
+[Unit]
+Description=NanoMDM for the owner's Mac (browser extension policy)
+After=network-online.target
+
+[Service]
+# Listens on the loopback only; `tailscale serve` publishes it on the
+# tailnet over HTTPS. The device identity is checked from the Mdm-Signature
+# header, since TLS ends at Tailscale.
+ExecStart=%h/mdm/bin/nanomdm -listen 127.0.0.1:9004 -ca %h/mdm/ca/ca.pem -storage filekv -storage-dsn %h/mdm/db -api ${NANOMDM_API}
+EnvironmentFile=%h/mdm/api.env
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

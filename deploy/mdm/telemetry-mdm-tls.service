@@ -1,0 +1,11 @@
+[Unit]
+Description=HTTPS for the owner's MDM on the tailnet address only
+After=network-online.target telemetry-mdm.service
+
+[Service]
+ExecStart=%h/mdm/bin/caddy run --config %h/mdm/Caddyfile --adapter caddyfile
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
