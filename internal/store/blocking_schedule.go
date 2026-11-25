@@ -173,6 +173,9 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 		}
 		return false
 	}
+	// previous keeps copies of the rules it replaces: the variables below
+	// are overwritten with the new rules, and a pointer to one would log the
+	// new rule as the one it replaced, so a revert would change nothing.
 	closed, times, addresses := config.ClosedByDefault, append([]policy.Window{}, config.DistractionTimes...), append([]string{}, config.OpenAddresses...)
 	locked := config.PlanGate.FromWake
 	outside := config.OutsideAt(now)
@@ -191,7 +194,8 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 	}
 	openingRule, morning := config.OpeningRuleAt(now), config.MorningAt(now)
 	if change.OpeningRule != nil {
-		previous.OpeningRule = &openingRule
+		replaced := openingRule
+		previous.OpeningRule = &replaced
 		if err := change.OpeningRule.Normalize(); err != nil {
 			return ScheduleChange{}, config, 0, fmt.Errorf("%w: %s", ErrInvalidAgentChange, err)
 		}
@@ -199,7 +203,8 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 	}
 	config = config.WithOpeningRule(openingRule, now)
 	if change.Morning != nil {
-		previous.Morning = &morning
+		replaced := morning
+		previous.Morning = &replaced
 		if err := change.Morning.Normalize(); err != nil {
 			return ScheduleChange{}, config, 0, fmt.Errorf("%w: %s", ErrInvalidAgentChange, err)
 		}
@@ -208,7 +213,8 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 	config = config.WithMorning(morning, now)
 	lock, bedtime := config.SettingsLockAt(now), config.BedtimeAt(now)
 	if change.SettingsLock != nil {
-		previous.SettingsLock = &lock
+		replaced := lock
+		previous.SettingsLock = &replaced
 		if err := change.SettingsLock.Normalize(); err != nil {
 			return ScheduleChange{}, config, 0, fmt.Errorf("%w: %s", ErrInvalidAgentChange, err)
 		}
@@ -216,7 +222,8 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 	}
 	config = config.WithSettingsLock(lock, now)
 	if change.Bedtime != nil {
-		previous.Bedtime = &bedtime
+		replaced := bedtime
+		previous.Bedtime = &replaced
 		if err := change.Bedtime.Normalize(); err != nil {
 			return ScheduleChange{}, config, 0, fmt.Errorf("%w: %s", ErrInvalidAgentChange, err)
 		}
@@ -225,7 +232,8 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 	config = config.WithBedtime(bedtime, now)
 	extension := config.ExtensionRuleAt(now)
 	if change.Extension != nil {
-		previous.Extension = &extension
+		replaced := extension
+		previous.Extension = &replaced
 		if err := change.Extension.Normalize(); err != nil {
 			return ScheduleChange{}, config, 0, fmt.Errorf("%w: %s", ErrInvalidAgentChange, err)
 		}
