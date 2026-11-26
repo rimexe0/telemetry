@@ -19,13 +19,13 @@
 {/if}
 
 <style>
-  .strip { display: grid; gap: 4px; grid-template-columns: repeat(7, 14px); }
-  .cell { box-sizing: border-box; display: block; height: 14px; width: 14px; }
+  .strip { display: grid; gap: 4px; grid-template-columns: repeat(7, minmax(0, 1fr)); width: 100%; }
+  .cell { box-sizing: border-box; display: block; height: 18px; width: 100%; }
   .cell.done { background: var(--done); }
   .cell.missed { background: var(--soft); border: 1px solid var(--line); }
   .cell.none { border: 1px dashed var(--line); }
   .cell.unscheduled { position: relative; }
-  .cell.unscheduled::after { background: var(--line); content: ''; height: 2px; left: 6px; position: absolute; top: 6px; width: 2px; }
+  .cell.unscheduled::after { background: var(--line); content: ''; height: 2px; left: calc(50% - 1px); position: absolute; top: 8px; width: 2px; }
   .cell.unknown { background: repeating-linear-gradient(135deg, var(--soft) 0 2px, transparent 2px 4px); }
   /* Today not yet done: the outline alone. */
   .cell.open { background: transparent; }

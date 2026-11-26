@@ -7,8 +7,10 @@
   import DoorScreen from './DoorScreen.svelte';
   import WeekStrip from './WeekStrip.svelte';
 
-  // Today's two cards: the distraction time left, with the door, and the
-  // day's habits to tick, each with its last seven days.
+  // Today's two cards: the day's habits to tick, each with its last seven
+  // days, first, since they are the point of the day (owner 2026-11-26); then
+  // the distraction time left, kept small. Opening early sits inside its
+  // details: the blocked screens offer the door where it is needed.
 
   /** Changes when habits were edited elsewhere, to load again. */
   export let refreshKey = 0;
@@ -91,54 +93,6 @@
   $: strips = Object.fromEntries(habits.map(habit => [habit.id, weekStrip(habit.name, heatmap?.habits.find(row => row.id === habit.id)?.days, today, habit.done)]));
 </script>
 
-<section class="card budget-card" aria-labelledby="budget-label">
-  <div class="card-head">
-    <h2 id="budget-label" class="card-label">Distraction time</h2>
-    {#if bedtimeLabel}<span class="muted small">{bedtimeLabel}</span>{/if}
-  </div>
-  {#if !loaded}<p class="muted small">Loading…</p>
-  {:else if missing}<p class="muted small">This server does not have the distraction budget yet.</p>
-  {:else if !state}<p class="muted small">Unknown: the budget could not be loaded.</p>
-  {:else if !state.enabled}<p class="muted small">The budget is off. Distractions follow the other rules.</p>
-  {:else}
-    <p class="left"><strong>{formatBudgetMinutes(state.left)}</strong> <span class="muted small">left of {formatBudgetMinutes(state.budget)}</span></p>
-    <div class="bar" role="meter" aria-label="Distraction time left" aria-valuemin={0} aria-valuemax={Math.max(0, state.budget)} aria-valuenow={Math.max(0, Math.min(state.left, state.budget))}>
-      <span style="width:{share * 100}%"></span>
-    </div>
-    <p class="muted small">{budgetLine(state, distractionRate)}</p>
-    {#if bedtime}<p class="small note">{bedtime}</p>{/if}
-
-    <div class="door">
-      {#if door && status}
-        <p class="small"><span class="tag">door {status.phase}</span> {status.text}</p>
-        {#if status.phase === 'waiting'}<button class="quiet-button" disabled={doorBusy} on:click={() => cancel(door.id)}>Cancel</button>{/if}
-      {:else}
-        <button class="quiet-button wide" disabled={!state.door_available} on:click={() => { showDoor = true; }}>Open something early…</button>
-        {#if state.door_available}
-          <p class="muted small">{state.settings.wait_minutes} min wait, then {state.in_distraction_time ? 'until the distraction time ends' : `${state.settings.window_use_minutes} min of use in ${state.settings.window_minutes} min`}.</p>
-        {:else}
-          <p class="muted small">Not now{state.door_unavailable_reason ? `: ${state.door_unavailable_reason}` : '.'}{state.next_door_at ? ` From ${clock(state.next_door_at)}.` : ''}</p>
-        {/if}
-      {/if}
-    </div>
-
-    <details class="sum">
-      <summary class="small">How today's time adds up</summary>
-      <dl>
-        <div><dt>Day's budget</dt><dd>{formatBudgetMinutes(state.budget)}</dd></div>
-        <div><dt>Earned by habits</dt><dd>+{formatBudgetMinutes(state.earned)}</dd></div>
-        <div><dt>Habits open yesterday</dt><dd>{state.penalty ? `−${formatBudgetMinutes(state.penalty)}` : '0 min'}</dd></div>
-        <div><dt>Borrowed by yesterday</dt><dd>{state.debt ? `−${formatBudgetMinutes(state.debt)}` : '0 min'}</dd></div>
-        <div><dt>Used</dt><dd>{formatBudgetMinutes(state.spent)}</dd></div>
-        <div><dt>Left</dt><dd>{formatBudgetMinutes(state.left)}</dd></div>
-        {#if state.debt_tomorrow}<div><dt>Borrowed from tomorrow</dt><dd>{formatBudgetMinutes(state.debt_tomorrow)}</dd></div>{/if}
-        <div><dt>Tomorrow can lend</dt><dd>{formatBudgetMinutes(state.borrowable)}</dd></div>
-      </dl>
-    </details>
-  {/if}
-  {#if error}<p class="error" role="alert">{error}</p>{/if}
-</section>
-
 <section class="card habits-card" aria-labelledby="habits-label">
   <div class="card-head">
     <h2 id="habits-label" class="card-label">Habits</h2>
@@ -168,19 +122,65 @@
   {#if tickError}<p class="error" role="alert">{tickError}</p>{/if}
 </section>
 
+<section class="card budget-card" aria-labelledby="budget-label">
+  <div class="card-head">
+    <h2 id="budget-label" class="card-label">Distraction time</h2>
+    {#if bedtimeLabel}<span class="muted small">{bedtimeLabel}</span>{/if}
+  </div>
+  {#if !loaded}<p class="muted small">Loading…</p>
+  {:else if missing}<p class="muted small">This server does not have the distraction budget yet.</p>
+  {:else if !state}<p class="muted small">Unknown: the budget could not be loaded.</p>
+  {:else if !state.enabled}<p class="muted small">The budget is off. Distractions follow the other rules.</p>
+  {:else}
+    <p class="left"><strong>{formatBudgetMinutes(state.left)}</strong> <span class="muted small">left of {formatBudgetMinutes(state.budget)} · {budgetLine(state, distractionRate)}</span></p>
+    <div class="bar" role="meter" aria-label="Distraction time left" aria-valuemin={0} aria-valuemax={Math.max(0, state.budget)} aria-valuenow={Math.max(0, Math.min(state.left, state.budget))}>
+      <span style="width:{share * 100}%"></span>
+    </div>
+    {#if bedtime}<p class="small note">{bedtime}</p>{/if}
+    {#if door && status}
+      <p class="small door"><span class="tag">door {status.phase}</span> {status.text}
+        {#if status.phase === 'waiting'}<button class="link-button" disabled={doorBusy} on:click={() => cancel(door.id)}>Cancel</button>{/if}</p>
+    {/if}
+    <details class="sum">
+      <summary class="small">How today's time adds up</summary>
+      <dl>
+        <div><dt>Day's budget</dt><dd>{formatBudgetMinutes(state.budget)}</dd></div>
+        <div><dt>Earned by habits</dt><dd>+{formatBudgetMinutes(state.earned)}</dd></div>
+        <div><dt>Habits open yesterday</dt><dd>{state.penalty ? `−${formatBudgetMinutes(state.penalty)}` : '0 min'}</dd></div>
+        <div><dt>Borrowed by yesterday</dt><dd>{state.debt ? `−${formatBudgetMinutes(state.debt)}` : '0 min'}</dd></div>
+        <div><dt>Used</dt><dd>{formatBudgetMinutes(state.spent)}</dd></div>
+        <div><dt>Left</dt><dd>{formatBudgetMinutes(state.left)}</dd></div>
+        {#if state.debt_tomorrow}<div><dt>Borrowed from tomorrow</dt><dd>{formatBudgetMinutes(state.debt_tomorrow)}</dd></div>{/if}
+        <div><dt>Tomorrow can lend</dt><dd>{formatBudgetMinutes(state.borrowable)}</dd></div>
+      </dl>
+      {#if !door}
+        <p class="small early">
+          {#if state.door_available}
+            <button class="link-button" on:click={() => { showDoor = true; }}>Open something early</button>
+            <span class="muted">· {state.settings.wait_minutes} min wait, then {state.in_distraction_time ? 'until the distraction time ends' : `${state.settings.window_use_minutes} min of use in ${state.settings.window_minutes} min`}.</span>
+          {:else}
+            <span class="muted">Opening early is not possible now{state.door_unavailable_reason ? `: ${state.door_unavailable_reason}` : '.'}{state.next_door_at ? ` From ${clock(state.next_door_at)}.` : ''}</span>
+          {/if}
+        </p>
+      {/if}
+    </details>
+  {/if}
+  {#if error}<p class="error" role="alert">{error}</p>{/if}
+</section>
+
 {#if showDoor && state}
   <DoorScreen {state} {bedtimeEnd} onclose={() => { showDoor = false; void load(); }} onchanged={() => void load()} />
 {/if}
 
 <style>
   .left { align-items: baseline; display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 6px 0 8px; }
-  .left strong { font-size: 2.1rem; letter-spacing: -.04em; line-height: 1.1; }
-  .bar { background: var(--soft); border: 1px solid var(--fg); height: 10px; margin-bottom: 8px; }
+  .left strong { font-size: 1.25rem; letter-spacing: -.03em; line-height: 1.2; }
+  .bar { background: var(--soft); border: 1px solid var(--line); height: 6px; margin-bottom: 4px; }
   .bar span { background: var(--fg); display: block; height: 100%; }
   .note { border-left: 3px solid var(--fg); padding-left: 8px; }
-  .door { margin-top: 12px; }
-  .door p { margin: 6px 0 0; }
-  .door .wide { min-height: 44px; width: 100%; }
+  .door { margin: 8px 0 0; }
+  .early { margin: 10px 0 0; }
+  .link-button { background: none; border: 0; color: var(--fg); cursor: pointer; min-height: 44px; padding: 0; text-decoration: underline; }
   .tag { border: 1px solid var(--line); font-size: .68rem; padding: 0 4px; text-transform: uppercase; }
   .sum { margin-top: 10px; }
   .sum summary { color: var(--muted); cursor: pointer; }
@@ -198,4 +198,5 @@
   li.done .name { color: var(--muted); }
   .worth { color: var(--muted); white-space: nowrap; }
   .week { padding-left: 32px; }
+  /* The week strip spans the whole row (owner 2026-11-26). */
 </style>
