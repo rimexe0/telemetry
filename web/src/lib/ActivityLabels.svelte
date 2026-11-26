@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { whenFresh } from './fresh';
   import { decideLabelProposal, getActivityLabels, removeActivityLabel, type ActivityLabel, type LabelProposal } from './api';
   import { describeChange } from './activity';
 
@@ -17,6 +18,7 @@
 
   $: pending = proposals.filter(item => item.status === 'pending');
   void load();
+  whenFresh(load);
 
   async function load() {
     try {

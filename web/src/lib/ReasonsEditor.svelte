@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { whenFresh } from './fresh';
   import { getReasons, saveReasons } from './api';
 
   // The owner's own lines about what they want in life and why. The door
@@ -14,6 +15,8 @@
   const lines = (value: string) => value.split('\n').map(line => line.trim()).filter(Boolean);
   $: changed = lines(text).join('\n') !== lines(saved).join('\n');
   void load();
+  // An edit in progress is never replaced.
+  whenFresh(() => { if (!editing) void load(); });
 
   async function load() {
     try {

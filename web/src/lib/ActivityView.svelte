@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { whenFresh } from './fresh';
   import DayPicker from './DayPicker.svelte';
   import ActivityLabels from './ActivityLabels.svelte';
   import { getActivitySummary, type ActivitySummary } from './api';
@@ -15,6 +16,7 @@
   let loadedFor: string | undefined;
 
   $: if (loadedFor !== date) void load();
+  whenFresh(load);
 
   async function load() {
     loadedFor = date;

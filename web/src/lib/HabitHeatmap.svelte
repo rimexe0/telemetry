@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { whenFresh } from './fresh';
   import { getHabitHeatmap, type Heatmap } from './api';
   import { cellState, cellTitle, combinedLevel, combinedTitle, heatmapLayout, runsText } from './habits';
   import { dayKey } from './health';
@@ -14,6 +15,7 @@
   let loading = true;
 
   $: void load(refreshKey);
+  whenFresh(() => load());
 
   async function load(_key = refreshKey) {
     loading = true;

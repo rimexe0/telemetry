@@ -1,8 +1,9 @@
 import { afterEach, expect, test, vi } from 'vitest';
-import { APIError, getCurrentAlignment, getCurrentAttendedExecutionSession, getCurrentPrimaryExecutionSession, getExecutionSummary, iterateObservationHistory, listExecutionInterleaves, listObservations, returnToPrimary, setClerkTokenProvider, startExecutionSession, startPanelSession } from './api';
+import { APIError, clearCache, getBudget, getReasons, listHabits, onFresh, panelSession, saveReasons, updateHabit, getCurrentAlignment, getCurrentAttendedExecutionSession, getCurrentPrimaryExecutionSession, getExecutionSummary, iterateObservationHistory, listExecutionInterleaves, listObservations, returnToPrimary, setClerkTokenProvider, startExecutionSession, startPanelSession } from './api';
 import type { Observation } from './api';
 
 afterEach(() => {
+  clearCache();
   setClerkTokenProvider(undefined);
   vi.unstubAllGlobals();
 });
@@ -243,4 +244,115 @@ test('a tick is sent for the budget day', async () => {
   expect((fetch.mock.calls[0][1] as RequestInit).body).toBe('{"day":"2026-11-26"}');
   expect(fetch.mock.calls[1][0]).toBe('/v1/habits/3/untick');
   expect((fetch.mock.calls[1][1] as RequestInit).body).toBe('{}');
+});
+
+const json = (value: unknown) => new Response(JSON.stringify(value), { status: 200, headers: { 'Content-Type': 'application/json' } });
+const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+
+test('a cached answer comes at once and is asked for again in the background', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  try {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(json({ habits: [{ id: 1, name: 'walk' }] }))
+      .mockResolvedValueOnce(json({ habits: [{ id: 1, name: 'walk far' }] }));
+    vi.stubGlobal('fetch', fetch);
+    const fresh: string[] = [];
+    const stop = onFresh(path => fresh.push(path));
+    expect((await listHabits())[0].name).toBe('walk');
+    vi.setSystemTime(Date.now() + 5_000);
+    // The second read does not wait for the server.
+    expect((await listHabits())[0].name).toBe('walk');
+    await settle();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fresh).toEqual(['/v1/habits']);
+    expect((await listHabits())[0].name).toBe('walk far');
+    stop();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test('an answer that did not change tells no one, and a just-fetched one is not asked for again', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  try {
+    const fetch = vi.fn().mockImplementation(() => Promise.resolve(json({ reasons: ['to sleep'] })));
+    vi.stubGlobal('fetch', fetch);
+    const fresh: string[] = [];
+    const stop = onFresh(path => fresh.push(path));
+    await getReasons();
+    await getReasons();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(Date.now() + 5_000);
+    await getReasons();
+    await settle();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fresh).toEqual([]);
+    stop();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test('a change drops the cached answers it moves', async () => {
+  const fetch = vi.fn().mockImplementation((path: string, init?: RequestInit) => {
+    if (init?.method === 'PATCH') return Promise.resolve(json({ habit: { id: 1, name: 'run' } }));
+    if (path === '/v1/habits') return Promise.resolve(json({ habits: [{ id: 1, name: fetch.mock.calls.length > 3 ? 'run' : 'walk' }] }));
+    if (path.startsWith('/v1/budget')) return Promise.resolve(json({ today: null, days: [] }));
+    return Promise.resolve(json({ reasons: [] }));
+  });
+  vi.stubGlobal('fetch', fetch);
+  await listHabits();
+  await getBudget(7);
+  await updateHabit(1, { name: 'run' });
+  const calls = fetch.mock.calls.length;
+  expect((await listHabits())[0].name).toBe('run');
+  await getBudget(7);
+  // Both were fetched again, not taken from the cache.
+  expect(fetch.mock.calls.length).toBe(calls + 2);
+});
+
+test('saving the reasons is never answered from the cache', async () => {
+  const fetch = vi.fn()
+    .mockResolvedValueOnce(json({ reasons: ['a'] }))
+    .mockResolvedValueOnce(json({ reasons: ['b'] }))
+    .mockResolvedValueOnce(json({ reasons: ['b'] }));
+  vi.stubGlobal('fetch', fetch);
+  expect(await getReasons()).toEqual(['a']);
+  expect(await saveReasons(['b'])).toEqual(['b']);
+  expect(await getReasons()).toEqual(['b']);
+  expect(fetch).toHaveBeenCalledTimes(3);
+});
+
+test('the panel session is never cached', async () => {
+  const fetch = vi.fn()
+    .mockResolvedValueOnce(json({ authenticated: true }))
+    .mockResolvedValueOnce(json({ authenticated: false }));
+  vi.stubGlobal('fetch', fetch);
+  expect(await panelSession()).toBe(true);
+  expect(await panelSession()).toBe(false);
+});
+
+test('what a view changes in an answer never changes the cache', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(() => Promise.resolve(json({ habits: [{ id: 1, name: 'walk' }] }))));
+  const first = await listHabits();
+  first[0].name = 'changed';
+  expect((await listHabits())[0].name).toBe('walk');
+});
+
+test('a background answer refused for signing out empties the cache', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  try {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(json({ habits: [{ id: 1, name: 'walk' }] }))
+      .mockResolvedValueOnce(new Response('{}', { status: 401 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { detail: 'signed out' } }), { status: 401 }));
+    vi.stubGlobal('fetch', fetch);
+    await listHabits();
+    vi.setSystemTime(Date.now() + 5_000);
+    await listHabits();
+    await settle();
+    await expect(listHabits()).rejects.toEqual(new APIError(401, 'signed out'));
+  } finally {
+    vi.useRealTimers();
+  }
 });

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { whenFresh } from './fresh';
   import { APIError, getBudget, type BudgetDay } from './api';
   import { budgetHistory, formatBudgetMinutes, habitsDoneText } from './budget';
   import { shortDate } from './lock';
@@ -18,6 +19,7 @@
   let error = '';
 
   $: void load(refreshKey);
+  whenFresh(() => load());
 
   async function load(_key = refreshKey) {
     try {

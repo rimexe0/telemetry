@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { whenFresh } from './fresh';
   import { createContextRule, disableContextRule, listContextRules, type Activity, type ActivityContextRule, type ContextSignal } from './api';
 
   export let activities: Activity[] = [];
@@ -27,6 +28,7 @@
   let pattern = '';
 
   $: if (!loaded) void load();
+  whenFresh(load);
   $: title = (id: number) => activities.find(activity => activity.id === id)?.title ?? `Activity #${id}`;
 
   async function load() {

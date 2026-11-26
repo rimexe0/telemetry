@@ -44,6 +44,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import cyou.rime.telemetry.collector.ui.HabitEditing
 import cyou.rime.telemetry.collector.ui.HabitsScreen
 import cyou.rime.telemetry.collector.ui.PText
 import cyou.rime.telemetry.collector.ui.PanelUnavailable
@@ -58,6 +59,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.time.Duration
 import java.time.Instant
@@ -82,7 +85,6 @@ class MainActivity : ComponentActivity() {
         val YEAR_EVERY: Duration = Duration.ofMinutes(10)
         const val ACTIVITY_HASH = "#activity"
         const val SETTINGS_HASH = "#settings"
-        const val HABITS_EDIT_HASH = "#habits"
     }
 
     /** Where the panel stands in its web view. */
@@ -96,7 +98,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var web: WebView
 
     private var place by mutableStateOf(Place.TODAY)
-    private var saved by mutableStateOf(Saved(null, null, null, null, emptyList()))
+    // Kept in memory for the life of the app, so each place shows at once on every visit.
+    private var saved by mutableStateOf(HomeMemory.memory.current ?: Saved(null, null, null, null, emptyList()))
     /** Null until the first try; false while the server can't be reached. */
     private var reachable by mutableStateOf<Boolean?>(null)
     private var savedAt by mutableStateOf<Instant?>(null)
@@ -105,6 +108,8 @@ class MainActivity : ComponentActivity() {
     private var removed by mutableStateOf(false)
     private var attention by mutableStateOf<SetupStep?>(null)
     private var notice by mutableStateOf<String?>(null)
+    /** Why an edit on the Habits screen was refused, once. */
+    private var editNotice by mutableStateOf<String?>(null)
     private var doorNotice by mutableStateOf<String?>(null)
     private var doorBusy by mutableStateOf(false)
     private var canGoBack by mutableStateOf(false)
@@ -114,6 +119,10 @@ class MainActivity : ComponentActivity() {
     private var proxy: PanelProxy? = null
     private var opening: Job? = null
     private var yearFetchedAt: Instant = Instant.EPOCH
+    /** One talk with the server at a time, so a fetch never lands over an edit just sent. */
+    private val talking = Mutex()
+    private var sending: Job? = null
+    private var sendAgain = false
     /** The last address of each web place, so each comes back where it was left. */
     private var activityHash = ACTIVITY_HASH
     private var settingsHash = SETTINGS_HASH
@@ -132,6 +141,8 @@ class MainActivity : ComponentActivity() {
         setContent { TelemetryTheme { App() } }
         CollectionStarter.ensureRunning(this)
         if (savedInstanceState == null && SetupActivity.needsSetup(this)) openSetup(null)
+        // The panel loads behind Today, so the first tap on Activity or Settings shows it at once.
+        if (paired && !removed) openPanel(activityHash)
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.RESUMED) {
@@ -167,11 +178,12 @@ class MainActivity : ComponentActivity() {
 
     private fun hashFor(place: Place): String = if (place == Place.SETTINGS) settingsHash else activityHash
 
-    /** Reads the saved answers and the queue again. */
+    /** Reads the saved answers and the queues again; what has not changed comes from memory. */
     private fun reload() {
         saved = Saved.read(this)
         savedAt = NowCache.read(this)?.fetchedAt
         HabitTicks.takeNotice(this)?.let { notice = it }
+        HabitEdits.takeNotice(this)?.let { editNotice = it }
     }
 
     /** Pairing, the strip, the waiting ticks, and fresh answers to save. */
@@ -185,7 +197,8 @@ class MainActivity : ComponentActivity() {
         paired = true
         attention = SetupStep.missing(SetupActivity.syncDone(this)).firstOrNull()
         val wantYear = place == Place.HABITS || saved.year == null || Duration.between(yearFetchedAt, Instant.now()) >= YEAR_EVERY
-        reachable = withContext(Dispatchers.IO) {
+        reachable = talking.withLock { withContext(Dispatchers.IO) {
+            runCatching { HabitEdits.flush(this@MainActivity) }
             runCatching { HabitTicks.flush(this@MainActivity) }
             // Keeps the policy the block screen reads fresh while the app is open.
             val fresh = runCatching { NowCache.refresh(this@MainActivity) }.getOrNull() != null
@@ -195,9 +208,45 @@ class MainActivity : ComponentActivity() {
                 if (wantYear && runCatching { HabitCache.refresh(this@MainActivity, HabitCache.YEAR) }.getOrDefault(false)) yearFetchedAt = Instant.now()
             }
             if (webState == Web.Open) runCatching { proxy?.renewIfDue() }
+            // Read here, off the main thread, so reload() finds it in memory.
+            runCatching { HomeMemory.read(this@MainActivity) }
             fresh
-        }
+        } }
         reload()
+    }
+
+    /**
+     * An edit on the Habits screen: saved on the phone and on the screen at
+     * once, then sent. One that can't be sent now waits in [HabitEdits] and
+     * goes with the next check.
+     */
+    private fun edit(record: (EditQueue) -> Unit) {
+        record(HabitEdits.queue(this))
+        editNotice = null
+        reload()
+        if (sending?.isActive == true) {
+            sendAgain = true
+            return
+        }
+        sending = lifecycleScope.launch {
+            do {
+                sendAgain = false
+                talking.withLock {
+                    withContext(Dispatchers.IO) {
+                        val flushed = runCatching { HabitEdits.flush(this@MainActivity) }.getOrNull()
+                        if (flushed != null && flushed.sent > 0) {
+                            // Today's names and the year's bands follow the edit.
+                            runCatching { NowCache.refresh(this@MainActivity) }
+                            runCatching { HabitCache.refresh(this@MainActivity, HabitCache.LIST) }
+                            runCatching { HabitCache.refresh(this@MainActivity, HabitCache.WEEK) }
+                            if (runCatching { HabitCache.refresh(this@MainActivity, HabitCache.YEAR) }.getOrDefault(false)) yearFetchedAt = Instant.now()
+                        }
+                        runCatching { HomeMemory.read(this@MainActivity) }
+                    }
+                }
+                reload()
+            } while (sendAgain)
+        }
     }
 
     /** A tick or untick: on the screen and saved at once, sent when the server can be reached. */
@@ -303,6 +352,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val habitEditing = HabitEditing(
+        rename = { id, name -> edit { it.change(id, name = name) } },
+        weekdays = { id, days -> edit { it.change(id, weekdays = days) } },
+        archive = { id, archived -> edit { it.change(id, archived = archived) } },
+        add = { name -> edit { it.addHabit(name) } },
+        reasons = { reasons -> edit { it.reasons(reasons) } },
+    )
+
     @Composable
     private fun App() {
         val colors = panelColors()
@@ -352,7 +409,8 @@ class MainActivity : ComponentActivity() {
                     Place.HABITS -> HabitsScreen(
                         state = remember(saved, now) { HomeState.habits(saved, now, zone) },
                         stale = stale,
-                        onEditHabits = { select(Place.SETTINGS, HABITS_EDIT_HASH) },
+                        notice = editNotice,
+                        editing = habitEditing,
                     )
                     Place.ACTIVITY, Place.SETTINGS -> when (val state = webState) {
                         Web.Open -> Unit

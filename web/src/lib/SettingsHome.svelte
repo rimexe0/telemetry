@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getLock, getPolicy, getSignInSettings, listDevices, listSources, type Device, type LockResponse, type PolicyConfig, type SignInSettings, type SourceSummary } from './api';
+  import { whenFresh } from './fresh';
   import { phoneLinks, settingsPages, type SettingsPage } from './nav';
   import { budgetValue, devicesValue, distractionsValue, lockValue, signInValue, sourcesValue, timesValue } from './settings';
 
@@ -18,10 +19,14 @@
   let signIn: SignInSettings | undefined;
 
   // Each value loads on its own; one that fails leaves its row without a value.
-  void getPolicy().then(policy => { config = policy?.config ?? { distractions: [], essentials: [] }; }).catch(() => undefined);
-  void getLock().then(value => { lock = value; }).catch(() => undefined);
-  void listDevices().then(value => { devices = value; }).catch(() => undefined);
-  void listSources().then(value => { sources = value; }).catch(() => undefined);
+  function load() {
+    void getPolicy().then(policy => { config = policy?.config ?? { distractions: [], essentials: [] }; }).catch(() => undefined);
+    void getLock().then(value => { lock = value; }).catch(() => undefined);
+    void listDevices().then(value => { devices = value; }).catch(() => undefined);
+    void listSources().then(value => { sources = value; }).catch(() => undefined);
+  }
+  load();
+  whenFresh(load);
   $: if (!inApp && !signIn) void getSignInSettings().then(value => { signIn = value; }).catch(() => undefined);
 
   type Row = { page: SettingsPage; value: string };

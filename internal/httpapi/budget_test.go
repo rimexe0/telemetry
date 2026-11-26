@@ -32,6 +32,8 @@ type memoryBudget struct {
 	reasons   []string
 	days      []budget.Snapshot
 	changes   [][]store.HabitChange
+	// why is the reason each change was logged with.
+	why []string
 	// phone is when a phone last delivered; nil for no phone.
 	phone *time.Time
 }
@@ -73,11 +75,20 @@ func (m *memoryBudget) ApplyHabitChanges(_ context.Context, changes []store.Habi
 				}
 				found = true
 				if change.Name != nil {
-					m.habits[i].Name = *change.Name
+					name, err := budget.ValidateName(*change.Name)
+					if err != nil {
+						return store.AgentChange{}, nil, fmt.Errorf("%w: %v", store.ErrInvalidAgentChange, err)
+					}
+					m.habits[i].Name = name
+				}
+				if change.Weekdays != nil {
+					m.habits[i].Weekdays = *change.Weekdays
 				}
 				if change.Archived != nil && *change.Archived {
 					now := time.Now().UTC()
 					m.habits[i].ArchivedAt = &now
+				} else if change.Archived != nil {
+					m.habits[i].ArchivedAt = nil
 				}
 				written = append(written, m.habits[i])
 			}
@@ -89,6 +100,7 @@ func (m *memoryBudget) ApplyHabitChanges(_ context.Context, changes []store.Habi
 		}
 	}
 	m.changes = append(m.changes, changes)
+	m.why = append(m.why, reason)
 	encoded, _ := json.Marshal(changes)
 	return store.AgentChange{ID: int64(len(m.changes)), Kind: store.AgentChangeHabits, Changes: encoded, Previous: json.RawMessage(`[]`), Reason: reason}, written, nil
 }
@@ -648,4 +660,71 @@ func TestFingerprintStepsKeepTheEndAhead(t *testing.T) {
 // tests are about refusals and shapes, not about when use is charged.
 func (m *memoryBudget) OpenSpans(_ context.Context, from, to time.Time) ([]budget.OpenSpan, error) {
 	return []budget.OpenSpan{{From: from, To: to}}, nil
+}
+
+func TestHabitsAndReasonsAreEditedOnThePhone(t *testing.T) {
+	server, repository := budgetServer(t, budgetPolicy(t))
+	added := deviceCall(server, http.MethodPost, "/v1/device/habits", `{"name":"  read  "}`)
+	var habit struct {
+		Habit budget.Habit `json:"habit"`
+	}
+	decodeBody(t, added, &habit)
+	if added.Code != http.StatusCreated || habit.Habit.Name != "read" || len(habit.Habit.Weekdays) != 0 {
+		t.Fatalf("add = %d %s", added.Code, added.Body)
+	}
+	if bad := deviceCall(server, http.MethodPost, "/v1/device/habits", `{"name":""}`); bad.Code != http.StatusBadRequest {
+		t.Fatalf("an empty name = %d %s", bad.Code, bad.Body)
+	}
+	path := fmt.Sprintf("/v1/device/habits/%d", habit.Habit.ID)
+	renamed := deviceCall(server, http.MethodPatch, path, `{"name":"read a book","weekdays":[1,3,5]}`)
+	decodeBody(t, renamed, &habit)
+	if renamed.Code != http.StatusOK || habit.Habit.Name != "read a book" || len(habit.Habit.Weekdays) != 3 {
+		t.Fatalf("rename = %d %s", renamed.Code, renamed.Body)
+	}
+	// The order is not the phone's to change.
+	deviceCall(server, http.MethodPatch, path, `{"position":9}`)
+	if repository.changes[len(repository.changes)-1][0].Position != nil {
+		t.Fatalf("the phone moved a habit: %+v", repository.changes[len(repository.changes)-1][0])
+	}
+	archived := deviceCall(server, http.MethodPatch, path, `{"archived":true}`)
+	if archived.Code != http.StatusOK || repository.habits[0].ArchivedAt == nil {
+		t.Fatalf("archive = %d %s", archived.Code, archived.Body)
+	}
+	back := deviceCall(server, http.MethodPatch, path, `{"archived":false}`)
+	if back.Code != http.StatusOK || repository.habits[0].ArchivedAt != nil {
+		t.Fatalf("undo = %d %s", back.Code, back.Body)
+	}
+	if missing := deviceCall(server, http.MethodPatch, "/v1/device/habits/99", `{"name":"x"}`); missing.Code != http.StatusBadRequest {
+		t.Fatalf("missing habit = %d", missing.Code)
+	}
+	for i, why := range repository.why {
+		if !strings.HasSuffix(why, "on the phone") {
+			t.Fatalf("change %d was logged as %q", i, why)
+		}
+	}
+	saved := deviceCall(server, http.MethodPut, "/v1/device/reasons", `{"reasons":["to make music"," ","to sleep"]}`)
+	var reasons struct {
+		Reasons []string `json:"reasons"`
+	}
+	decodeBody(t, saved, &reasons)
+	if saved.Code != http.StatusOK || len(reasons.Reasons) != 2 || reasons.Reasons[1] != "to sleep" {
+		t.Fatalf("reasons = %d %s", saved.Code, saved.Body)
+	}
+	if listed := deviceCall(server, http.MethodGet, "/v1/device/habits", ""); !strings.Contains(listed.Body.String(), "to sleep") {
+		t.Fatalf("listed = %s", listed.Body)
+	}
+	for _, call := range []struct{ method, path, body string }{
+		{http.MethodPost, "/v1/device/habits", `{"name":"x"}`},
+		{http.MethodPatch, path, `{"name":"x"}`},
+		{http.MethodPut, "/v1/device/reasons", `{"reasons":[]}`},
+	} {
+		request := httptest.NewRequest(call.method, call.path, strings.NewReader(call.body))
+		request.Header.Set("X-Telemetry-Device-ID", "android-1")
+		request.Header.Set("Authorization", "Bearer wrong")
+		response := httptest.NewRecorder()
+		server.ServeHTTP(response, request)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s without the device credential = %d", call.method, call.path, response.Code)
+		}
+	}
 }
