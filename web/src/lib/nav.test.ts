@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { inPhoneApp, loadKey, parseHash, routeHash, samePlace, type Route } from './nav';
+import { appDrawsNav, inPhoneApp, loadKey, parseHash, routeHash, samePlace, type Route } from './nav';
 
 const today = '2026-11-26';
 
@@ -100,5 +100,14 @@ describe('inPhoneApp', () => {
     expect(inPhoneApp('Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Chrome/140 Mobile Safari/537.36 TelemetryApp/1.4')).toBe(true);
     expect(inPhoneApp('Mozilla/5.0 (Macintosh) AppleWebKit/537.36 Chrome/140 Safari/537.36')).toBe(false);
     expect(inPhoneApp(undefined)).toBe(false);
+  });
+});
+
+describe('appDrawsNav', () => {
+  it('is true only for an app that draws the places bar itself', () => {
+    expect(appDrawsNav('Mozilla/5.0 (Linux; Android 16) Chrome/140 Mobile TelemetryApp/0.1.600 TelemetryAppNav/1')).toBe(true);
+    expect(appDrawsNav('Mozilla/5.0 (Linux; Android 16) Chrome/140 Mobile TelemetryApp/0.1.512')).toBe(false);
+    expect(appDrawsNav('Mozilla/5.0 (Macintosh) Chrome/140 TelemetryAppNav/1')).toBe(false);
+    expect(appDrawsNav(undefined)).toBe(false);
   });
 });

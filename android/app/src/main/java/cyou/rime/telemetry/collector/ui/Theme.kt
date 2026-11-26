@@ -62,3 +62,28 @@ private val Light = lightColorScheme(
 fun TelemetryTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = if (isSystemInDarkTheme()) Dark else Light, content = content)
 }
+
+/** The panel's own tokens (web/src/routes/+page.svelte), for the screens drawn as the panel draws them. */
+data class PanelColors(
+    val bg: Color,
+    val panel: Color,
+    val fg: Color,
+    val muted: Color,
+    val line: Color,
+    val soft: Color,
+    val done: Color,
+)
+
+private val PanelDark = PanelColors(
+    bg = Color(0xFF111213), panel = Color(0xFF191A1B), fg = Color(0xFFEEEEEB), muted = Color(0xFFAAA9A4),
+    line = Color(0xFF454647), soft = Color(0xFF242628), done = Color(0xFF2F8F5B),
+)
+
+private val PanelLight = PanelColors(
+    bg = Color(0xFFF5F5F2), panel = Color(0xFFFFFFFF), fg = Color(0xFF181918), muted = Color(0xFF63645F),
+    line = Color(0xFFC4C5BF), soft = Color(0xFFE9EAE5), done = Color(0xFF2F8F5B),
+)
+
+/** The panel's colours, light or dark as the phone is set. */
+@Composable
+fun panelColors(): PanelColors = if (isSystemInDarkTheme()) PanelDark else PanelLight

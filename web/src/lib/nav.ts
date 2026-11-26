@@ -139,6 +139,15 @@ export function inPhoneApp(userAgent: string | undefined): boolean {
   return !!userAgent && userAgent.includes('TelemetryApp/');
 }
 
+/**
+ * Whether the phone app draws the four places itself (Today and Habits are
+ * native there), so the panel leaves its own bar out. Older app versions
+ * without it still get the panel's bar.
+ */
+export function appDrawsNav(userAgent: string | undefined): boolean {
+  return inPhoneApp(userAgent) && userAgent!.includes('TelemetryAppNav/');
+}
+
 /** The phone app's own settings screens, which the app opens when these links are followed. */
 export const phoneLinks = {
   permissions: 'telemetry-app://settings/permissions',

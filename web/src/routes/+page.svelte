@@ -20,7 +20,7 @@
   import DevicesView from '$lib/DevicesView.svelte';
   import { performNowAction, type NowAction, type NowSnapshot, type NowView } from '$lib/execution';
   import { dayKey, dayStart } from '$lib/health';
-  import { inPhoneApp, loadKey, parseHash, routeHash, samePlace, settingsPages, type ActivitySection, type LoadKey, type Place, type Route } from '$lib/nav';
+  import { appDrawsNav, inPhoneApp, loadKey, parseHash, routeHash, samePlace, settingsPages, type ActivitySection, type LoadKey, type Place, type Route } from '$lib/nav';
   import { clearClerk, loadClerk, type ClerkClient } from '$lib/clerk';
   import {
     APIError,
@@ -94,6 +94,8 @@
   let dayWindowStart: number | undefined;
   // Inside the phone app's WebView: the phone's own settings show, sign-in is the app's.
   let inApp = false;
+  // The app draws the places bar itself (its Today and Habits are native).
+  let nativeNav = false;
 
   let locationReady = false;
   function setRoute(next: Route): void {
@@ -812,6 +814,7 @@
     themeQuery.addEventListener('change', applyTheme);
     applyTheme();
     inApp = inPhoneApp(navigator.userAgent);
+    nativeNav = appDrawsNav(navigator.userAgent);
     if (inApp) {
       // The app draws edge to edge: the page pads itself for the system bars.
       document.documentElement.dataset.app = 'phone';
@@ -891,8 +894,8 @@
 </svelte:head>
 <svelte:window on:keydown={(event) => { if (event.key === 'Escape') selectedObservation = undefined; }} />
 
-<div class="shell" class:with-nav={authenticated && !checkingSession}>
-  {#if authenticated && !checkingSession}
+<div class="shell" class:with-nav={authenticated && !checkingSession && !nativeNav}>
+  {#if authenticated && !checkingSession && !nativeNav}
     <PlaceNav current={route.place} hrefs={navHrefs} />
   {/if}
 
