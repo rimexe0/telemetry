@@ -8,7 +8,7 @@
 
   // Today: the day's habits, the distraction time left, what is happening
   // right now, and any open collection problem in one quiet line. No plan
-  // section, and no follow-ups (owner 2026-11-26).
+  // section, and no reminders (owner 2026-11-26).
   export let snapshot: NowSnapshot | undefined;
   export let loading = false;
   export let error = '';

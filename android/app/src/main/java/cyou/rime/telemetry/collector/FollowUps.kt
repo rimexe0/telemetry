@@ -125,7 +125,7 @@ object FollowUpWatch {
     private fun notificationId(id: Long) = BASE_ID + (id % 1000).toInt()
 
     private fun notify(context: Context, manager: NotificationManager, followUp: FollowUp) {
-        manager.createNotificationChannel(NotificationChannel(CHANNEL, "Follow-ups", NotificationManager.IMPORTANCE_HIGH))
+        manager.createNotificationChannel(NotificationChannel(CHANNEL, "Reminders", NotificationManager.IMPORTANCE_HIGH))
         // Earlier builds re-posted swiped-away ones quietly on a channel of their own.
         manager.deleteNotificationChannel(QUIET_CHANNEL)
         val open = PendingIntent.getActivity(context, 4, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)

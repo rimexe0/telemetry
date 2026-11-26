@@ -18,7 +18,7 @@ enum class SetupStep(
     // Optional, and never named as missing: the owner may keep them off
     // (2026-11-22). Settings → Notifications picks which kinds are sent.
     NOTIFICATIONS(false, "Allow notifications",
-        "Lets Telemetry tell you when the phone has not synced or a follow-up is due. Everything works without them, and you choose which kinds in Settings.",
+        "Lets Telemetry tell you when the phone has not synced or a reminder is due. Everything works without them, and you choose which kinds in Settings.",
         "Allow"),
     USAGE_ACCESS(true, "Allow usage access",
         "Lets Telemetry see which app is open, so it can tell work from scrolling. Switch it on, then come back.",

@@ -4,13 +4,12 @@
   import { bedtimeLine, budgetInForce, doorLive, doorStatus, formatBudgetMinutes } from './budget';
   import { weekStrip } from './habits';
   import { budgetLine, clock, habitWorth, leftShare } from './today';
-  import DoorScreen from './DoorScreen.svelte';
   import WeekStrip from './WeekStrip.svelte';
 
   // Today's two cards: the day's habits to tick, each with its last seven
   // days, first, since they are the point of the day (owner 2026-11-26); then
-  // the distraction time left, kept small. Opening early sits inside its
-  // details: the blocked screens offer the door where it is needed.
+  // the distraction time left, kept small. There is no way to open
+  // distractions here: the devices ask when the owner opens one.
 
   /** Changes when habits were edited elsewhere, to load again. */
   export let refreshKey = 0;
@@ -25,13 +24,12 @@
   let tickError = '';
   let busyHabit = 0;
   let doorBusy = false;
-  let showDoor = false;
   let bedtimeEnd = '';
   let distractionRate: number | undefined;
   let now = new Date();
 
   const tick = setInterval(() => { now = new Date(); }, 1000);
-  const reload = setInterval(() => { if (!showDoor && document.visibilityState === 'visible') void load(); }, 30_000);
+  const reload = setInterval(() => { if (document.visibilityState === 'visible') void load(); }, 30_000);
   onDestroy(() => { clearInterval(tick); clearInterval(reload); });
 
   $: void load(refreshKey);
@@ -153,24 +151,11 @@
         {#if state.debt_tomorrow}<div><dt>Borrowed from tomorrow</dt><dd>{formatBudgetMinutes(state.debt_tomorrow)}</dd></div>{/if}
         <div><dt>Tomorrow can lend</dt><dd>{formatBudgetMinutes(state.borrowable)}</dd></div>
       </dl>
-      {#if !door}
-        <p class="small early">
-          {#if state.door_available}
-            <button class="link-button" on:click={() => { showDoor = true; }}>Open something early</button>
-            <span class="muted">· {state.settings.wait_minutes} min wait, then {state.in_distraction_time ? 'until the distraction time ends' : `${state.settings.window_use_minutes} min of use in ${state.settings.window_minutes} min`}.</span>
-          {:else}
-            <span class="muted">Opening early is not possible now{state.door_unavailable_reason ? `: ${state.door_unavailable_reason}` : '.'}{state.next_door_at ? ` From ${clock(state.next_door_at)}.` : ''}</span>
-          {/if}
-        </p>
-      {/if}
     </details>
   {/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 </section>
 
-{#if showDoor && state}
-  <DoorScreen {state} {bedtimeEnd} onclose={() => { showDoor = false; void load(); }} onchanged={() => void load()} />
-{/if}
 
 <style>
   .left { align-items: baseline; display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 6px 0 8px; }
@@ -179,7 +164,6 @@
   .bar span { background: var(--fg); display: block; height: 100%; }
   .note { border-left: 3px solid var(--fg); padding-left: 8px; }
   .door { margin: 8px 0 0; }
-  .early { margin: 10px 0 0; }
   .link-button { background: none; border: 0; color: var(--fg); cursor: pointer; min-height: 44px; padding: 0; text-decoration: underline; }
   .tag { border: 1px solid var(--line); font-size: .68rem; padding: 0 4px; text-transform: uppercase; }
   .sum { margin-top: 10px; }
