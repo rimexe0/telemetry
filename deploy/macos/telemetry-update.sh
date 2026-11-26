@@ -31,12 +31,18 @@ external_extension() {
   [[ -f "$crx" && -f "$manifest" ]] || return 0
   version=$(plutil -extract version raw -o - "$manifest" 2>/dev/null) || return 0
   json="{\"external_crx\": \"$crx\", \"external_version\": \"$version\"}"
-  for dir in net.imput.helium Google/Chrome Chromium BraveSoftware/Brave-Browser "Microsoft Edge"; do
+  # Only browsers that are installed: a data folder left by a removed
+  # browser may not be writable (macOS protects other apps' data), and a
+  # browser that cannot be written to must not stop the install.
+  local -A browsers=(net.imput.helium Helium Google/Chrome "Google Chrome" Chromium Chromium
+    BraveSoftware/Brave-Browser "Brave Browser" "Microsoft Edge" "Microsoft Edge")
+  for dir in ${(k)browsers}; do
+    [[ -d "/Applications/${browsers[$dir]}.app" || -d "$HOME/Applications/${browsers[$dir]}.app" ]] || continue
     [[ -d "$HOME/Library/Application Support/$dir" ]] || continue
     file="$HOME/Library/Application Support/$dir/External Extensions/fachbjhigbkfbbplbnoephgnkgghhbfa.json"
     [[ "$(cat "$file" 2>/dev/null)" == "$json" ]] && continue
-    mkdir -p "${file:h}"
-    print -r -- "$json" > "$file.new" && mv -f "$file.new" "$file"
+    { mkdir -p "${file:h}" && print -r -- "$json" > "$file.new" && mv -f "$file.new" "$file"; } 2>/dev/null ||
+      print -- "Could not write the extension file for ${browsers[$dir]}; it is skipped." >&2
   done
 }
 external_extension
