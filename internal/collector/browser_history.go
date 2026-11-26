@@ -28,10 +28,12 @@ import (
 // front; these give every page opened, also in windows the extension could
 // not see.
 type BrowserHistory struct {
-	// Roots are the folders holding browser profiles; empty means this
-	// machine's usual ones.
-	Roots    []string
-	Interval time.Duration
+	// Roots are the folders holding Chromium browser profiles, and
+	// FirefoxRoots those holding Firefox-family ones (with profiles.ini);
+	// both empty means this machine's usual ones.
+	Roots        []string
+	FirefoxRoots []string
+	Interval     time.Duration
 
 	health Health
 	mu     sync.Mutex
@@ -84,8 +86,8 @@ func (b *BrowserHistory) Run(ctx context.Context, host Host) error {
 	if b.Interval == 0 {
 		b.Interval = 10 * time.Minute
 	}
-	if len(b.Roots) == 0 {
-		b.Roots = browserRoots()
+	if len(b.Roots) == 0 && len(b.FirefoxRoots) == 0 {
+		b.Roots, b.FirefoxRoots = browserRoots(), firefoxRoots()
 	}
 	ticker := time.NewTicker(b.Interval)
 	defer ticker.Stop()
@@ -115,13 +117,19 @@ func historyFiles(roots []string) []string {
 
 func (b *BrowserHistory) collect(ctx context.Context, host Host, now time.Time) error {
 	files := historyFiles(b.Roots)
+	places := placesFiles(b.FirefoxRoots)
 	b.mu.Lock()
-	b.files = len(files)
+	b.files = len(files) + len(places)
 	b.mu.Unlock()
 	failures := []string{}
 	for _, file := range files {
 		if err := b.collectFile(ctx, host, file, now); err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", file, err))
+		}
+	}
+	for _, file := range places {
+		if err := b.collectPlaces(ctx, host, file, now); err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", file.path, err))
 		}
 	}
 	if len(failures) > 0 {
@@ -160,26 +168,11 @@ func (b *BrowserHistory) collectFile(ctx context.Context, host Host, file string
 	}
 	last, _ := strconv.ParseInt(value, 10, 64)
 
-	copyDir, err := os.MkdirTemp("", "telemetry-history-")
+	db, done, err := openCopy(file)
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(copyDir)
-	copied := filepath.Join(copyDir, "History")
-	if err := copyFile(file, copied); err != nil {
-		return err
-	}
-	// A journal beside it holds writes not yet in the file.
-	for _, suffix := range []string{"-wal", "-journal"} {
-		if _, err := os.Stat(file + suffix); err == nil {
-			_ = copyFile(file+suffix, copied+suffix)
-		}
-	}
-	db, err := sql.Open("sqlite", "file:"+copied+"?mode=ro")
-	if err != nil {
-		return err
-	}
-	defer db.Close()
+	defer done()
 
 	browser, profile := browserAndProfile(b.Roots, file)
 	instance := "browser-history:" + host.DeviceID + ":" + browser + ":" + profile
@@ -234,6 +227,31 @@ func (b *BrowserHistory) collectFile(ctx context.Context, host Host, file string
 			return nil
 		}
 	}
+}
+
+// openCopy opens a copy of a browser's database: the browser keeps the file
+// open and locked. A journal beside it holds writes not yet in the file.
+func openCopy(file string) (*sql.DB, func(), error) {
+	copyDir, err := os.MkdirTemp("", "telemetry-history-")
+	if err != nil {
+		return nil, nil, err
+	}
+	copied := filepath.Join(copyDir, filepath.Base(file))
+	if err := copyFile(file, copied); err != nil {
+		os.RemoveAll(copyDir)
+		return nil, nil, err
+	}
+	for _, suffix := range []string{"-wal", "-journal"} {
+		if _, err := os.Stat(file + suffix); err == nil {
+			_ = copyFile(file+suffix, copied+suffix)
+		}
+	}
+	db, err := sql.Open("sqlite", "file:"+copied+"?mode=ro")
+	if err != nil {
+		os.RemoveAll(copyDir)
+		return nil, nil, err
+	}
+	return db, func() { db.Close(); os.RemoveAll(copyDir) }, nil
 }
 
 func copyFile(from, to string) error {
