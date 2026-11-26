@@ -46,8 +46,10 @@ class WidgetModelTest {
     fun theHeaderCountsTheHabitsAndTheTimeLeft() {
         val state = WidgetModel.state(Saved(now("2026-11-25", five), list, null, null, emptyList()), wednesdayNoon, wednesdayNoon, istanbul)
         assertEquals("Habits 2 of 5 · 1 h 33 min left", state.header)
-        assertEquals(listOf("Walk", "Gym", "Read", "Stretch", "Cook"), state.rows!!.map { it.name })
-        assertEquals(listOf("+30", "+30", "+15", "+<1", ""), state.rows!!.map { it.worth })
+        // Ticked habits leave the list; they are unticked in the app.
+        assertEquals(listOf("Read", "Stretch", "Cook"), state.rows!!.map { it.name })
+        assertEquals(listOf("+15", "+<1", ""), state.rows!!.map { it.worth })
+        assertTrue(state.rows!!.all { it.week.size == 7 })
         assertTrue(state.ticksOpen)
         assertNull(state.empty)
         assertNull(state.saved)
@@ -66,7 +68,8 @@ class WidgetModelTest {
             // Another day's tick changes nothing today.
             tick(5, "2026-11-24", true))
         val state = WidgetModel.state(Saved(now("2026-11-25", five), list, null, null, queued), wednesdayNoon, wednesdayNoon, istanbul)
-        assertEquals(listOf(true, false, true, false, false), state.rows!!.map { it.done })
+        // Walk and Read are ticked, so only Gym, Stretch and Cook are left to tick.
+        assertEquals(listOf("Gym", "Stretch", "Cook"), state.rows!!.map { it.name })
         assertEquals("Habits 2 of 5 · 1 h 33 min left", state.header)
     }
 
@@ -89,8 +92,7 @@ class WidgetModelTest {
         val savedAt = Instant.parse("2026-11-25T19:10:00Z")
         // Thursday 10:00 local: Walk every day and Thursday's Read, Read ticked from the queue.
         val state = WidgetModel.state(saved, savedAt, Instant.parse("2026-11-26T07:00:00Z"), istanbul)
-        assertEquals(listOf("Walk", "Read"), state.rows!!.map { it.name })
-        assertEquals(listOf(false, true), state.rows!!.map { it.done })
+        assertEquals(listOf("Walk"), state.rows!!.map { it.name })
         // Today's budget is unknown, so no time left; worth unknown too.
         assertEquals("Habits 1 of 2", state.header)
         assertTrue(state.rows!!.all { it.worth.isEmpty() })
@@ -130,5 +132,14 @@ class WidgetModelTest {
         assertEquals(Instant.parse("2026-11-25T20:00:00Z"), WidgetModel.nextChange(saved, wednesdayNoon, istanbul))
         // During bedtime: the next day start, 08:00 local.
         assertEquals(Instant.parse("2026-11-26T05:00:00Z"), WidgetModel.nextChange(saved, Instant.parse("2026-11-25T21:00:00Z"), istanbul))
+    }
+
+    @Test
+    fun whenEveryHabitIsTickedTheWidgetSaysSo() {
+        val queued = listOf(tick(3, "2026-11-25", true), tick(4, "2026-11-25", true), tick(5, "2026-11-25", true))
+        val state = WidgetModel.state(Saved(now("2026-11-25", five), list, null, null, queued), wednesdayNoon, wednesdayNoon, istanbul)
+        assertEquals(emptyList<WidgetRow>(), state.rows)
+        assertEquals("All of today's habits are done.", state.empty)
+        assertEquals("Habits 5 of 5 · 1 h 33 min left", state.header)
     }
 }

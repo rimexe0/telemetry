@@ -37,6 +37,7 @@ import androidx.glance.layout.Box
 import androidx.glance.layout.Column
 import androidx.glance.layout.Row
 import androidx.glance.layout.Spacer
+import androidx.glance.layout.fillMaxHeight
 import androidx.glance.layout.fillMaxSize
 import androidx.glance.layout.fillMaxWidth
 import androidx.glance.layout.height
@@ -109,14 +110,31 @@ class HabitWidget : GlanceAppWidget() {
     @Composable
     private fun HabitRow(row: WidgetRow, open: Boolean, wide: Boolean, onClick: Action) {
         Column(GlanceModifier.fillMaxWidth()) {
-            Spacer(GlanceModifier.fillMaxWidth().height(1.dp).background(Colors.line))
-            Row(GlanceModifier.fillMaxWidth().height(44.dp).clickable(onClick), verticalAlignment = Alignment.CenterVertically) {
-                TickBox(row.done, open)
-                Spacer(GlanceModifier.width(10.dp))
-                Text(row.name, GlanceModifier.defaultWeight(), style = text(if (row.done) Colors.muted else Colors.fg, 14), maxLines = 2)
-                if (wide && row.worth.isNotEmpty()) Text(row.worth, GlanceModifier.padding(start = 8.dp), style = text(Colors.muted, 12), maxLines = 1)
+            Spacer(GlanceModifier.fillMaxWidth().height(4.dp))
+            // The habit's last seven days behind its name (owner 2026-11-26).
+            Box(GlanceModifier.fillMaxWidth().height(48.dp).clickable(onClick)) {
+                Row(GlanceModifier.fillMaxSize()) {
+                    row.week.forEachIndexed { index, cell ->
+                        if (index > 0) Spacer(GlanceModifier.width(2.dp))
+                        Spacer(GlanceModifier.defaultWeight().fillMaxHeight().background(cellColor(cell)))
+                    }
+                }
+                Row(GlanceModifier.fillMaxSize().padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    TickBox(row.done, open)
+                    Spacer(GlanceModifier.width(10.dp))
+                    Text(row.name, GlanceModifier.defaultWeight(), style = text(if (row.done) Colors.muted else Colors.fg, 14), maxLines = 2)
+                    if (wide && row.worth.isNotEmpty()) Text(row.worth, GlanceModifier.padding(start = 8.dp), style = text(Colors.muted, 12), maxLines = 1)
+                }
             }
         }
+    }
+
+    /** Done is the panel's green, toned down so the name stays readable; missed is the soft grey; the rest stays empty. */
+    private fun cellColor(cell: CellState): ColorProvider = when (cell) {
+        CellState.DONE -> Colors.doneCell
+        CellState.MISSED -> Colors.soft
+        CellState.OPEN -> Colors.panel
+        else -> Colors.bg
     }
 
     /** The app's square tick box: a 1dp edge, filled in the middle when done. */
@@ -142,6 +160,15 @@ class HabitWidget : GlanceAppWidget() {
         val fg = pick(PanelLight.fg, PanelDark.fg)
         val muted = pick(PanelLight.muted, PanelDark.muted)
         val line = pick(PanelLight.line, PanelDark.line)
+        val soft = pick(PanelLight.soft, PanelDark.soft)
+        val doneCell = pick(blend(PanelLight.done, PanelLight.bg, .45f), blend(PanelDark.done, PanelDark.bg, .45f))
+
+        /** [top] laid over [under] at [amount], as one opaque colour. */
+        private fun blend(top: Color, under: Color, amount: Float) = Color(
+            red = top.red * amount + under.red * (1 - amount),
+            green = top.green * amount + under.green * (1 - amount),
+            blue = top.blue * amount + under.blue * (1 - amount),
+        )
     }
 }
 

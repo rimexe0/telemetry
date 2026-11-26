@@ -8,7 +8,15 @@ import java.time.format.TextStyle
 import java.util.Locale
 
 /** One habit row of the home-screen widget. */
-data class WidgetRow(val id: Long, val name: String, val done: Boolean, /** "+30", or "" when unknown. */ val worth: String)
+data class WidgetRow(
+    val id: Long,
+    val name: String,
+    val done: Boolean,
+    /** "+30", or "" when unknown. */
+    val worth: String,
+    /** The last seven days, oldest first, drawn behind the name. */
+    val week: List<CellState> = emptyList(),
+)
 
 /** What the home-screen widget shows, from what the phone has saved. */
 data class WidgetState(
@@ -39,11 +47,16 @@ object WidgetModel {
         val worthShown = budget?.enabled != false
         return WidgetState(
             header = header(habits, budget),
-            rows = habits?.map { WidgetRow(it.id, it.name, it.done, if (worthShown) HabitCells.worth(it.value) else "") },
+            // A ticked habit leaves the list; it is unticked in the app
+            // (owner 2026-11-26).
+            rows = habits?.filter { !it.done }?.map {
+                WidgetRow(it.id, it.name, it.done, if (worthShown) HabitCells.worth(it.value) else "", today.strips[it.id].orEmpty().map { cell -> cell.state })
+            },
             empty = when {
                 habits == null -> "Unknown: today's habits were never saved on this phone."
                 habits.isEmpty() -> "No habits scheduled today."
                 !today.ticksOpen -> "Bedtime has started, so today's habits are closed."
+                habits.all { it.done } -> "All of today's habits are done."
                 else -> null
             },
             ticksOpen = today.ticksOpen,
