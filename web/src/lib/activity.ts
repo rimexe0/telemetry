@@ -1,4 +1,4 @@
-import type { LabelChange, ObservedActivity } from './api';
+import type { ActivityUsage, Insight, LabelChange, ObservedActivity } from './api';
 
 export function formatMinutes(minutes: number): string {
   const total = Math.round(minutes);
@@ -31,5 +31,22 @@ export function observedLine(observed: ObservedActivity): string {
 // The most used apps and sites in a stretch, sites named in place of their browser.
 export function observedTop(observed: ObservedActivity, limit = 4): string {
   const rows = observed.devices.flatMap(device => [...(device.sites ?? []), ...(device.apps ?? []).filter(app => !(device.sites ?? []).some(site => site.app === app.name))]);
-  return rows.filter(row => row.minutes >= 1).sort((a, b) => b.minutes - a.minutes).slice(0, limit).map(row => `${row.name} ${formatMinutes(row.minutes)}`).join(', ');
+  return rows.filter(row => row.minutes >= 1).sort((a, b) => b.minutes - a.minutes).slice(0, limit).map(row => `${usageName(row)} ${formatMinutes(row.minutes)}`).join(', ');
+}
+
+// An app as the owner knows it: the phone's name for a package, else the package or app itself.
+export function usageName(usage: ActivityUsage): string {
+  return usage.app_name || usage.name;
+}
+
+// An insight with the packages it mentions given the phone's names for them.
+export function namedInsight(insight: Insight, names: Record<string, string> | null | undefined): Insight {
+  let { text, detail } = insight;
+  for (const raw of insight.names ?? []) {
+    const name = names?.[raw];
+    if (!name) continue;
+    text = text.split(raw).join(name);
+    detail = detail?.split(raw).join(name);
+  }
+  return { ...insight, text, detail };
 }

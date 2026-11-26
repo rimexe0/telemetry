@@ -327,6 +327,11 @@ func addPlanningTools(server *mcp.Server, repository store.Repository, now func(
 		labels := store.LabelsForSummary(stored)
 		result := activity.Build(records, from, to)
 		review := activity.ReviewPlan(store.PlannedBlocks(plan), result, coding, labels, from, to, limit)
+		names, err := repository.AppNames(ctx)
+		if err != nil {
+			return nil, PlanReviewOutput{}, err
+		}
+		names.Review(&review)
 		day, _, err := store.LoadDayInput(ctx, repository, date, from, to, false)
 		if err != nil {
 			return nil, PlanReviewOutput{}, err

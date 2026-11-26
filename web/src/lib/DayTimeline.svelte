@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Observation, SourceSummary } from './api';
+  import { getAppNames, type Observation, type SourceSummary } from './api';
   import DayPicker from './DayPicker.svelte';
   import { tick } from 'svelte';
   import { moveWindow, resizeWindow, tooltipPosition } from './timeline-window';
@@ -11,6 +11,10 @@
   export let date = '';
   // When the shown day starts (ms): when you woke. Midnight when unset.
   export let start: number | undefined = undefined;
+
+  // The phone's names for its packages; without them the packages show.
+  let appNames: Record<string, string> = {};
+  void getAppNames().then(names => { appNames = names; }).catch(() => undefined);
   export let loading = false;
   export let error = '';
   export let status = '';
@@ -69,7 +73,7 @@
   $: displayedDateTitle = dateTitle(date);
   $: midnight = Date.parse(`${date}T00:00:00+03:00`);
   $: dayStart = start !== undefined && Number.isFinite(start) && Math.abs(start - midnight) < dayLength ? start : midnight;
-  $: model = deriveDay(observations, sources, date, dayStart) as DayModel;
+  $: model = deriveDay(observations, sources, date, dayStart, appNames) as DayModel;
   $: dayEnd = dayStart + dayLength;
   $: if (date !== previousDate) {
     previousDate = date;

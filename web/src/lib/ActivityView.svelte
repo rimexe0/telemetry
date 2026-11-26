@@ -3,7 +3,7 @@
   import DayPicker from './DayPicker.svelte';
   import ActivityLabels from './ActivityLabels.svelte';
   import { getActivitySummary, type ActivitySummary } from './api';
-  import { deviceName, formatMinutes, observedLine, observedTop } from './activity';
+  import { deviceName, formatMinutes, namedInsight, observedLine, observedTop } from './activity';
   import { clockLabel } from './plan';
 
   export let date = '';
@@ -50,7 +50,7 @@
   {#if summary}
     {#if (summary.insights ?? []).length}
       <ul class="insights">
-        {#each summary.insights ?? [] as insight (insight.key)}<li><strong>{insight.text}</strong>{#if insight.detail}<span class="muted small">{insight.detail}</span>{/if}</li>{/each}
+        {#each (summary.insights ?? []).map(item => namedInsight(item, summary?.app_names)) as insight (insight.key)}<li><strong>{insight.text}</strong>{#if insight.detail}<span class="muted small">{insight.detail}</span>{/if}</li>{/each}
       </ul>
     {/if}
     {#if summary.plan_review}
@@ -84,7 +84,7 @@
             </ul>
           {/if}
           <h4>Apps</h4>
-          <ul>{#each device.apps ?? [] as item (item.name)}<li><code>{item.name}</code>{#if item.label && item.label !== 'unlabeled'}<span class="tag">{item.label}</span>{/if}<span class="value">{formatMinutes(item.minutes)}</span></li>{:else}<li class="muted">Nothing recorded.</li>{/each}</ul>
+          <ul>{#each device.apps ?? [] as item (item.name)}<li>{#if item.app_name}<span class="app" title={item.name}>{item.app_name}</span>{:else}<code>{item.name}</code>{/if}{#if item.label && item.label !== 'unlabeled'}<span class="tag">{item.label}</span>{/if}<span class="value">{formatMinutes(item.minutes)}</span></li>{:else}<li class="muted">Nothing recorded.</li>{/each}</ul>
           {#if (device.sites ?? []).length}
             <h4>Sites</h4>
             <ul>{#each device.sites ?? [] as item (item.name)}<li><code>{item.name}</code>{#if item.label && item.label !== 'unlabeled'}<span class="tag">{item.label}</span>{/if}<span class="value">{formatMinutes(item.minutes)}</span></li>{/each}</ul>
@@ -102,7 +102,7 @@
   .activity h4 { margin: 8px 0 2px; font-size: .8rem; color: var(--muted); }
   ul { list-style: none; margin: 4px 0; padding: 0; }
   li { align-items: center; border-bottom: 1px solid var(--line); display: flex; gap: 8px; font-size: .85rem; padding: 4px 0; }
-  code { overflow-wrap: anywhere; }
+  code, .app { overflow-wrap: anywhere; }
   .value { margin-left: auto; white-space: nowrap; }
   .tag { border: 1px solid var(--line); font-size: .68rem; padding: 0 4px; text-transform: uppercase; }
   .bars li { border: 0; padding: 2px 0; }

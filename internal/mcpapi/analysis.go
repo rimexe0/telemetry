@@ -92,10 +92,17 @@ func addAnalysisTools(server *mcp.Server, repository store.Repository, now func(
 			return nil, ActivityDailyOutput{}, err
 		}
 		output := ActivityDailyOutput{Timezone: location.String(), Days: []DailyRow{}, Notes: analysisNotes}
+		names, err := repository.AppNames(ctx)
+		if err != nil {
+			return nil, ActivityDailyOutput{}, err
+		}
 		for _, day := range days {
 			row, err := dailyRow(ctx, repository, day, now())
 			if err != nil {
 				return nil, ActivityDailyOutput{}, fmt.Errorf("%s: %w", day.Format("2006-01-02"), err)
+			}
+			for _, device := range row.Devices {
+				names.Apps(device.Device, device.TopApps)
 			}
 			output.Days = append(output.Days, row)
 		}

@@ -51,6 +51,7 @@ class DeviceTelemetryCollector(
         val observations = mutableListOf<LocalObservation>()
         val event = UsageEvents.Event()
         var eventsRead = 0
+        val packages = mutableSetOf<String>()
         while (usageEvents?.hasNextEvent() == true) {
             usageEvents.getNextEvent(event)
             if (event.packageName.isNullOrBlank()) continue
@@ -59,6 +60,7 @@ class DeviceTelemetryCollector(
             val eventType = usageEventName(event.eventType)
             val packageName = event.packageName
             val className = event.className.orEmpty()
+            packages += packageName
             val payload = JSONObject()
                 .put("event_type", eventType)
                 .put("package_name", packageName)
@@ -80,7 +82,11 @@ class DeviceTelemetryCollector(
             eventsRead++
         }
         observations += deviceStateObservation(now)
+        // The names of the apps seen, when one is new or changed, so Activity shows names.
+        val labels = runCatching { AppLabels.pending(context, packages) }.getOrNull()
+        labels?.let { observations += AppLabels.observation(deviceId, it, Instant.ofEpochMilli(now)) }
         val inserted = queue.enqueue(observations).insertedRevisions
+        labels?.let { AppLabels.markSent(context, it) }
         // Advance only after all observations are durably queued. A crash replays
         // the overlap, which the queue deduplicates by source identity and bytes.
         if (usageState == "ok" && !cursors.edit().putLong("last-success", now).commit()) {

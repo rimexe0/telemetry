@@ -149,14 +149,26 @@ func (s *Server) activitySummary(writer http.ResponseWriter, request *http.Reque
 		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
 		return
 	}
+	names, err := s.repository.AppNames(request.Context())
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
 	summaryLabels := store.LabelsForSummary(labels)
+	devices := activity.Summarize(result, 10, summaryLabels)
+	names.Summaries(devices)
+	review := activity.ReviewPlan(store.PlannedBlocks(plan), result, coding, summaryLabels, from, to, 5)
+	names.Review(&review)
+	insights := activity.Insights(result, activity.CodingThreads(coding, from, to), summaryLabels)
 	writeJSON(writer, http.StatusOK, map[string]any{
 		"from": from, "to": to, "timezone": location.String(),
-		"devices":     activity.Summarize(result, 10, summaryLabels),
+		"devices":     devices,
 		"no_data":     result.Gaps,
 		"plan_exists": plan != nil,
-		"plan_review": activity.ReviewPlan(store.PlannedBlocks(plan), result, coding, summaryLabels, from, to, 5),
-		"insights":    activity.Insights(result, activity.CodingThreads(coding, from, to), summaryLabels),
+		"plan_review": review,
+		"insights":    insights,
+		// The phone's names for the packages the insights mention.
+		"app_names": names.Insights(insights),
 	})
 }
 
@@ -220,9 +232,13 @@ func (s *Server) deviceDay(writer http.ResponseWriter, request *http.Request) {
 		woke = wake
 	}
 	planned := s.plannedWake(ctx, day.Format("2006-01-02"), now)
+	built := activity.BuildDay(input)
+	if names, err := s.repository.AppNames(ctx); err == nil {
+		names.Day(&built)
+	}
 	writeJSON(writer, http.StatusOK, map[string]any{
 		"date": day.Format("2006-01-02"), "timezone": location.String(), "from": from, "to": to, "generated_at": now, "plan_exists": plan != nil,
-		"woke_at": woke, "planned_wake": planned, "day": activity.BuildDay(input),
+		"woke_at": woke, "planned_wake": planned, "day": built,
 	})
 }
 
@@ -274,4 +290,22 @@ func (s *Server) decidePolicyProposal(writer http.ResponseWriter, request *http.
 		return
 	}
 	writeJSON(writer, http.StatusOK, proposal)
+}
+
+// appNames gives the owner the newest name each phone showed for each
+// Android package, for the timeline built from raw observations.
+func (s *Server) appNames(writer http.ResponseWriter, request *http.Request) {
+	if !s.ownerAuthorized(request) {
+		writeError(writer, http.StatusUnauthorized, "unauthorized", "owner credentials are required")
+		return
+	}
+	names, err := s.repository.AppNames(request.Context())
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
+	if names == nil {
+		names = activity.AppNames{}
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"names": names})
 }

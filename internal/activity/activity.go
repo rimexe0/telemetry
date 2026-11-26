@@ -46,6 +46,9 @@ type Segment struct {
 	// "mac-20134be9" or "catchy": every computer's time is built on its own,
 	// so one machine's idle time never hides another's use.
 	Machine string `json:"machine,omitempty"`
+	// AppName is the name the phone shows for the Android package in App
+	// (AppNames.Segments). Set only for output.
+	AppName string `json:"app_name,omitempty"`
 }
 
 func (s Segment) Duration() time.Duration { return s.End.Sub(s.Start) }

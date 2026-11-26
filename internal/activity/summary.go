@@ -7,9 +7,11 @@ import (
 
 // Usage is the time spent on one app, site or window.
 type Usage struct {
-	Name     string  `json:"name"`
-	App      string  `json:"app,omitempty"`
-	Label    string  `json:"label,omitempty"`
+	Name  string `json:"name"`
+	App   string `json:"app,omitempty"`
+	Label string `json:"label,omitempty"`
+	// AppName is the name the phone shows for an Android package in Name.
+	AppName  string  `json:"app_name,omitempty"`
 	Minutes  float64 `json:"minutes"`
 	Sessions int     `json:"sessions"`
 }

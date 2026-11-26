@@ -83,3 +83,11 @@ test('a day that starts at the wake time runs 24 hours from it',()=>{
  const late2=d.lanes.find(l=>l.name.startsWith('Computer'))!.segments.at(-1)!;
  expect(late2.end).toBe(Date.parse('2026-09-08T10:00:00+03:00'));
 });
+
+test('phone apps show the phone\'s own names, the package stays in the evidence',()=>{
+ const phone=(time:string,event:string,pkg:string)=>{const o=aw('phone',at(time),at(time),{});o.source_kind='android_usage';o.original_payload={event_type:event,package_name:pkg,class_name:'A'};return o;};
+ const records=[phone('10:00','activity_resumed','com.whatsapp'),phone('10:05','activity_paused','com.whatsapp'),phone('10:06','activity_resumed','org.mozilla.firefox'),phone('10:08','activity_paused','org.mozilla.firefox'),phone('10:09','activity_resumed','com.other'),phone('10:10','activity_paused','com.other')];
+ const rows=deriveDay(records,[],'2026-09-07',undefined,{'com.whatsapp':'WhatsApp'}).lanes.find(l=>l.name.startsWith('Phone'))!.segments;
+ expect(rows.map(r=>r.label)).toEqual(['WhatsApp','Firefox','com.other']);
+ expect((rows[0].evidence[0].original_payload as {package_name:string}).package_name).toBe('com.whatsapp');
+});

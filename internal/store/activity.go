@@ -156,3 +156,30 @@ func PlannedBlocks(plan *Plan) []activity.PlannedBlock {
 	}
 	return blocks
 }
+
+// AppNames gives the newest name each phone showed for each Android package,
+// from its android.app_labels observations. Every observation is kept; only
+// the newest name per package is used for showing.
+func (p *Postgres) AppNames(ctx context.Context) (activity.AppNames, error) {
+	rows, err := p.pool.Query(ctx, `
+		SELECT DISTINCT ON (name.key) name.key, name.value
+		FROM observations o
+		JOIN observation_revisions r ON r.id = o.effective_revision_id
+		CROSS JOIN LATERAL jsonb_each_text(CASE WHEN jsonb_typeof(r.projection->'labels') = 'object' THEN r.projection->'labels' ELSE '{}'::jsonb END) name
+		WHERE o.source_instance_key IN (SELECT source_instance_key FROM source_instances WHERE source_instance_key LIKE 'android:%:apps')
+			AND o.kind = $1 AND name.value <> ''
+		ORDER BY name.key, o.occurred_at DESC, o.id DESC`, activity.AppNameKind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	names := activity.AppNames{}
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			return nil, err
+		}
+		names[key] = value
+	}
+	return names, rows.Err()
+}

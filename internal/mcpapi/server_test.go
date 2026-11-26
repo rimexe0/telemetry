@@ -128,6 +128,7 @@ func TestCollectionHealthToolRejectsMalformedResourceJSON(t *testing.T) {
 }
 
 type fakeRepository struct {
+	appNames    activity.AppNames
 	health      store.CollectionHealth
 	healthQuery store.CollectionHealthQuery
 	healthErr   error
@@ -397,6 +398,10 @@ func (fakeRepository) CodingRecords(context.Context, time.Time) ([]activity.Reco
 
 func (fakeRepository) ActivityRecords(context.Context, time.Time, time.Time) ([]activity.Record, map[string]time.Time, error) {
 	return nil, nil, nil
+}
+
+func (f fakeRepository) AppNames(context.Context) (activity.AppNames, error) {
+	return f.appNames, nil
 }
 
 func (fakeRepository) AndroidAppUsage(context.Context, time.Time, int) ([]store.AppUsageSuggestion, error) {

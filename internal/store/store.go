@@ -107,6 +107,7 @@ type Repository interface {
 	SavePolicy(context.Context, policy.Config, string) (PolicyVersion, error)
 	AndroidAppUsage(context.Context, time.Time, int) ([]AppUsageSuggestion, error)
 	ActivityRecords(context.Context, time.Time, time.Time) ([]activity.Record, map[string]time.Time, error)
+	AppNames(context.Context) (activity.AppNames, error)
 	CodingRecords(context.Context, time.Time) ([]activity.Record, error)
 	HealthRecords(ctx context.Context, from, to time.Time) ([]activity.Record, error)
 	CollectionEvidence(context.Context) (silence.Evidence, error)

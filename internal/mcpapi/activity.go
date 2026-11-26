@@ -13,7 +13,7 @@ import (
 )
 
 const activityNotes = "Mac time excludes periods recorded as AFK (3 minutes without input, or locked); window time with no AFK record is kept and marked afk_unknown. " +
-	"Browser time is split by the open tab's site. Phone apps are Android package names; a phone session ends at pause, the next app, screen off, or after one hour. " +
+	"Browser time is split by the open tab's site. Phone apps are Android package names, with app_name the name the phone shows for it once the phone has sent it; a phone session ends at pause, the next app, screen off, or after one hour. " +
 	"no_data lists periods with no records from a device: the Mac is asleep or its collector stopped; the phone collector reports every minute, so a phone gap usually means collection stopped. Missing data is never inactivity."
 
 type ActivityRangeInput struct {
@@ -185,7 +185,13 @@ func addActivityTools(server *mcp.Server, repository store.Repository, now func(
 		if err != nil {
 			return nil, ActivityNowOutput{}, err
 		}
+		names, err := repository.AppNames(ctx)
+		if err != nil {
+			return nil, ActivityNowOutput{}, err
+		}
 		summaries := activity.Summarize(result, 10, store.LabelsForSummary(labels))
+		names.Summaries(summaries)
+		names.Segments(result.Segments)
 		wake, err := store.LoadWakeTime(ctx, repository, current)
 		if err != nil {
 			return nil, ActivityNowOutput{}, err
@@ -252,7 +258,13 @@ func addActivityTools(server *mcp.Server, repository store.Repository, now func(
 		if err != nil {
 			return nil, ActivitySummaryOutput{}, err
 		}
-		return nil, ActivitySummaryOutput{From: from, To: to, Timezone: location.String(), Devices: activity.Summarize(result, limit, store.LabelsForSummary(labels)), NoData: result.Gaps, Notes: activityNotes}, nil
+		names, err := repository.AppNames(ctx)
+		if err != nil {
+			return nil, ActivitySummaryOutput{}, err
+		}
+		devices := activity.Summarize(result, limit, store.LabelsForSummary(labels))
+		names.Summaries(devices)
+		return nil, ActivitySummaryOutput{From: from, To: to, Timezone: location.String(), Devices: devices, NoData: result.Gaps, Notes: activityNotes}, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "activity_timeline",
@@ -277,6 +289,11 @@ func addActivityTools(server *mcp.Server, repository store.Repository, now func(
 			return nil, ActivityTimelineOutput{}, err
 		}
 		result := activity.Build(records, from, to)
+		names, err := repository.AppNames(ctx)
+		if err != nil {
+			return nil, ActivityTimelineOutput{}, err
+		}
+		names.Segments(result.Segments)
 		output := ActivityTimelineOutput{From: from, To: to, Timezone: location.String(), Segments: []TimelineSegment{}, NoData: result.Gaps, Notes: activityNotes}
 		for _, segment := range result.Segments {
 			if segment.Duration() < time.Duration(minSeconds)*time.Second {

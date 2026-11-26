@@ -118,3 +118,28 @@ func TestPostgresCollectionEvidenceAndActivityRecords(t *testing.T) {
 		t.Fatalf("records = %d, last = %v, %v", len(records), lastSeen, err)
 	}
 }
+
+func TestPostgresAppNamesKeepTheNewestNamePerPackage(t *testing.T) {
+	ctx, database := openCleanIntegration(t)
+	at := time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC)
+	label := func(key string, when time.Time, payload string) model.Observation {
+		return model.Observation{SourceInstanceKey: "android:android-p:apps", SourceKind: "android_apps", DeviceID: "android-p", SourceRecordKey: key,
+			Kind: "android.app_labels", OccurredAt: when, CollectedAt: when, OriginalPayload: json.RawMessage(payload)}
+	}
+	if _, err := database.Ingest(ctx, model.Batch{ID: "labels", DeviceID: "android-p", CollectorVersion: "test", Observations: []model.Observation{
+		label("labels:1", at, `{"labels":{"com.twitter.android":"Twitter","com.whatsapp":"WhatsApp"}}`),
+		label("labels:2", at.Add(time.Hour), `{"labels":{"com.twitter.android":"X"}}`),
+		label("labels:3", at.Add(2*time.Hour), `{"labels":"broken"}`),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	names, err := database.AppNames(ctx)
+	if err != nil || len(names) != 2 || names["com.twitter.android"] != "X" || names["com.whatsapp"] != "WhatsApp" {
+		t.Fatalf("names = %v, %v", names, err)
+	}
+	// The labels never count as phone activity.
+	records, _, err := database.ActivityRecords(ctx, at.Add(-time.Hour), at.Add(3*time.Hour))
+	if err != nil || len(records) != 0 {
+		t.Fatalf("records = %+v, %v", records, err)
+	}
+}

@@ -846,7 +846,8 @@ export async function getAppSuggestions(): Promise<AppUsageSuggestion[]> {
   return result.android_apps ?? [];
 }
 
-export type ActivityUsage = { name: string; app?: string; label?: string; minutes: number; sessions: number };
+// app_name is the name the phone shows for an Android package in name.
+export type ActivityUsage = { name: string; app?: string; label?: string; app_name?: string; minutes: number; sessions: number };
 export type DeviceActivity = {
   device: 'mac' | 'phone';
   active_minutes: number;
@@ -859,11 +860,19 @@ export type DeviceActivity = {
 };
 export type ObservedActivity = { minutes: number; devices: DeviceActivity[]; distraction_minutes: number; coding?: { device: string; title: string; project?: string; messages_sent: number; agent_minutes: number }[] };
 export type BlockReview = { id: number; title: string; task_id?: number; start: string; end: string; state: string; closes_distractions: boolean; status: 'upcoming' | 'in_progress' | 'past'; observed?: ObservedActivity };
-export type Insight = { key: string; text: string; detail?: string };
+export type Insight = { key: string; text: string; detail?: string; names?: string[] };
 export type ActivitySummary = {
   from: string; to: string; timezone: string; devices: DeviceActivity[]; no_data: { device: string; start: string; end: string }[] | null;
   plan_exists?: boolean; plan_review?: { blocks: BlockReview[]; outside_blocks: ObservedActivity }; insights?: Insight[];
+  /** The phone's names for the packages the insights mention. */
+  app_names?: Record<string, string> | null;
 };
+
+/** The newest name each phone showed for each Android package. */
+export async function getAppNames(): Promise<Record<string, string>> {
+  const result = await request<{ names: Record<string, string> | null }>('/v1/app-names');
+  return result.names ?? {};
+}
 
 export async function getActivitySummary(date?: string): Promise<ActivitySummary> {
   return request<ActivitySummary>(`/v1/activity/summary${date ? `?date=${encodeURIComponent(date)}` : ''}`);

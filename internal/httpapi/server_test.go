@@ -259,6 +259,7 @@ func testServer(t *testing.T, repository *fakeRepository) *Server {
 }
 
 type fakeRepository struct {
+	appNames     activity.AppNames
 	preview      policy.Config
 	pin          string
 	lockState    store.SettingsLockState
@@ -796,6 +797,10 @@ func (f *fakeRepository) CodingRecords(context.Context, time.Time) ([]activity.R
 
 func (f *fakeRepository) ActivityRecords(context.Context, time.Time, time.Time) ([]activity.Record, map[string]time.Time, error) {
 	return nil, nil, nil
+}
+
+func (f *fakeRepository) AppNames(context.Context) (activity.AppNames, error) {
+	return f.appNames, nil
 }
 
 func (f *fakeRepository) AndroidAppUsage(context.Context, time.Time, int) ([]store.AppUsageSuggestion, error) {

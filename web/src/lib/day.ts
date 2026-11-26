@@ -46,9 +46,11 @@ export function partitionSegments(rows:DaySegment[]):DaySegment[] {
  }
  return mergeSegments(out);
 }
-const packageName=(p:string)=>({'org.mozilla.firefox':'Firefox','tw.nekomimi.nekogram':'Nekogram','com.ichi2.anki':'Anki','com.android.settings':'Settings','com.google.android.apps.nexuslauncher':'Launcher','com.openai.chatgpt':'ChatGPT','com.google.android.apps.tasks':'Google Tasks','com.opennutritracker.ont.opennutritracker':'OpenNutriTracker','com.sec.android.app.shealth':'Samsung Health','com.android.chrome':'Chrome','com.google.android.calendar':'Calendar','com.google.android.apps.wellbeing':'Digital Wellbeing'}[p] ?? p);
+const knownNames:Record<string,string>={'org.mozilla.firefox':'Firefox','tw.nekomimi.nekogram':'Nekogram','com.ichi2.anki':'Anki','com.android.settings':'Settings','com.google.android.apps.nexuslauncher':'Launcher','com.openai.chatgpt':'ChatGPT','com.google.android.apps.tasks':'Google Tasks','com.opennutritracker.ont.opennutritracker':'OpenNutriTracker','com.sec.android.app.shealth':'Samsung Health','com.android.chrome':'Chrome','com.google.android.calendar':'Calendar','com.google.android.apps.wellbeing':'Digital Wellbeing'};
 
-export function deriveDay(observations:Observation[],sources:SourceSummary[],date:string,start?:number) {
+// appNames are the phone's own names for its packages (/v1/app-names); they win over the few known here.
+export function deriveDay(observations:Observation[],sources:SourceSummary[],date:string,start?:number,appNames:Record<string,string>={}) {
+ const packageName=(p:string)=>appNames[p] || knownNames[p] || p;
  // The day runs 24 hours from when you woke, or from midnight.
  const lo=start!==undefined&&Number.isFinite(start)?start:dayStart(date),hi=lo+dayLength;
  const lanes:Lane[]=[],chapters:DaySegment[]=[],facts:string[]=[],warnings:string[]=[];

@@ -263,8 +263,10 @@ func threadFor(segment Segment, messages []ThreadMessage) threadRef {
 type DayItem struct {
 	Name string `json:"name"`
 	// Detail narrows the name: for T3 Code, the project and thread.
-	Detail  string  `json:"detail,omitempty"`
-	Label   string  `json:"label"`
+	Detail string `json:"detail,omitempty"`
+	Label  string `json:"label"`
+	// AppName is the name the phone shows for an Android package in Name.
+	AppName string  `json:"app_name,omitempty"`
 	Minutes float64 `json:"minutes"`
 	Visits  int     `json:"visits"`
 }
@@ -277,6 +279,8 @@ type DaySegment struct {
 	Detail string    `json:"detail,omitempty"`
 	Title  string    `json:"title,omitempty"`
 	Label  string    `json:"label"`
+	// AppName is the name the phone shows for an Android package in Name.
+	AppName string `json:"app_name,omitempty"`
 }
 
 // Chunk is a stretch of continuous use of one device, summarised. Its items
