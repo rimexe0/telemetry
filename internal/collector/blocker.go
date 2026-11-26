@@ -50,10 +50,13 @@ type Blocker struct {
 	// filter; both default to the desktop package.
 	GetGrayscale func() (bool, error)
 	SetGrayscale func(bool) error
-	// grayscaleOwned is true while the blocker has the filter on; it only
-	// turns off what it turned on.
-	grayscaleOwned  bool
-	grayscaleLoaded bool
+	// Prompt shows the grayscale notice and returns the option chosen, or
+	// -1; desktop.Prompt when unset.
+	Prompt func(title, detail string, options []string, timeout time.Duration) int
+	// async runs the notice and the reports beside the sampling loop; tests
+	// run them in place.
+	async           func(func())
+	gray            grayscaleState
 	AppOfConnection func(remote string) (string, error)
 	extensions      extensionState
 
@@ -74,6 +77,13 @@ type Blocker struct {
 	// host is set by Run; site checks record blocks through it.
 	host      *Host
 	lastSites map[string]bool
+	// budgetRaw is the last answer's budget field as sent, for the
+	// extension; budget is the part the collector reads itself.
+	budgetRaw json.RawMessage
+	budget    budgetState
+	// distractions are the sites the timeline closes outside distraction
+	// times, for the extension's counter.
+	distractions []string
 }
 
 const (
@@ -106,6 +116,15 @@ func (b *Blocker) Status() map[string]any {
 	}
 	status["blocking"] = b.blocking
 	status["block_screen"] = desktop.BlockScreenSupported()
+	if b.gray.screen != "" {
+		status["grayscale"] = b.gray.screen
+	}
+	if b.gray.declined {
+		status["grayscale_declined"] = true
+	}
+	if b.gray.pending != "" {
+		status["grayscale_report_pending"] = b.gray.pending
+	}
 	// Which browsers' extensions checked in, for telling why one is hidden.
 	extensions := map[string]any{}
 	for bundle, seen := range b.extensions.seen {
@@ -330,6 +349,7 @@ func (b *Blocker) load(body []byte, fetchedAt time.Time) error {
 	var now struct {
 		Timeline    []policy.Segment `json:"timeline"`
 		Fingerprint string           `json:"fingerprint"`
+		Budget      json.RawMessage  `json:"budget"`
 	}
 	if err := json.Unmarshal(body, &now); err != nil {
 		return fmt.Errorf("decisions: %w", err)
@@ -342,6 +362,8 @@ func (b *Blocker) load(body []byte, fetchedAt time.Time) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.timeline, b.fingerprint = now.Timeline, now.Fingerprint
+	b.loadBudget(now.Budget)
+	b.learnDistractions(now.Timeline)
 	if !fetchedAt.IsZero() {
 		b.fetchedAt = fetchedAt
 	}
@@ -365,7 +387,7 @@ func (b *Blocker) enforce(ctx context.Context, host Host, window desktop.Window,
 		return
 	}
 	// Hidden, not quit: the app keeps its state for after the block.
-	desktop.BlockApp(window.App+" is closed during "+strings.ToLower(ModeLabel(decision.Mode)), decision.Reason, window.PID)
+	desktop.BlockApp(closedTitle(window.App, *decision), decision.Reason, window.PID)
 	key := fmt.Sprintf("block:%s:%d", window.App, now.Unix()/60)
 	b.mu.Lock()
 	b.blocking = window.App
@@ -410,7 +432,8 @@ func (b *Blocker) alwaysOpen(host string) bool {
 // extension. address is the page's full address when the extension sends it;
 // a page among the decision's open addresses stays open. A page that may be
 // trimmed stays blocked for older extensions, which cover it, and names the
-// trim for current ones. Without a current decision nothing is blocked.
+// trim for current ones. Without a current decision nothing is blocked. An
+// open distraction is named, so the extension can show its counter.
 func (b *Blocker) SiteDecision(host, address string) awserver.SiteDecision {
 	b.mu.Lock()
 	decision := DecisionAt(b.timeline, time.Now())
@@ -426,7 +449,13 @@ func (b *Blocker) SiteDecision(host, address string) awserver.SiteDecision {
 			result.Instead = VideoInstead(*decision, host, address)
 		}
 		b.recordSite(host, result.Trim, *decision)
+		return result
 	}
+	b.mu.Lock()
+	distractions := b.distractions
+	b.mu.Unlock()
+	result.Distraction = domainListed(distractions, host) && !domainListed(decision.AlwaysAllowed.Domains, host) &&
+		!policy.AddressOpen(decision.OpenAddresses, address)
 	return result
 }
 
@@ -491,20 +520,22 @@ func (b *Blocker) BrowserStatus() awserver.BrowserStatus {
 // BlocksSite applies a decision to a website: a domain entry covers its
 // subdomains, and essentials win.
 func BlocksSite(decision policy.Decision, host string) bool {
+	if domainListed(decision.AlwaysAllowed.Domains, host) {
+		return false
+	}
+	return decision.BlockAll || domainListed(decision.Blocked.Domains, host)
+}
+
+// domainListed reports whether host is one of domains or under one.
+func domainListed(domains []string, host string) bool {
 	host = strings.TrimPrefix(strings.ToLower(host), "www.")
-	matches := func(domains []string) bool {
-		for _, domain := range domains {
-			domain = strings.TrimPrefix(strings.ToLower(domain), "www.")
-			if host == domain || strings.HasSuffix(host, "."+domain) {
-				return true
-			}
+	for _, domain := range domains {
+		domain = strings.TrimPrefix(strings.ToLower(domain), "www.")
+		if host == domain || strings.HasSuffix(host, "."+domain) {
+			return true
 		}
-		return false
 	}
-	if matches(decision.AlwaysAllowed.Domains) {
-		return false
-	}
-	return decision.BlockAll || matches(decision.Blocked.Domains)
+	return false
 }
 
 // DecisionAt finds the decision in force at now. A device clock slightly
@@ -564,6 +595,10 @@ func ModeLabel(mode string) string {
 		return "Go outside first"
 	case policy.ModeMorning:
 		return "Morning"
+	case modeDoor:
+		return "Door open"
+	case modeBudgetUsed:
+		return "Distraction time used up"
 	}
 	return mode
 }

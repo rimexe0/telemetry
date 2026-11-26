@@ -1,4 +1,4 @@
-//go:build !darwin
+//go:build !darwin && !linux
 
 package desktop
 
@@ -9,3 +9,6 @@ func Prompt(title, detail string, options []string, timeout time.Duration) int {
 
 // PromptSupported reports whether Prompt shows anything here.
 func PromptSupported() bool { return false }
+
+// PromptShowing reports whether a prompt is showing.
+func PromptShowing() bool { return false }

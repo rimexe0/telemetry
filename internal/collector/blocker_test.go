@@ -315,7 +315,9 @@ func TestWindDownGrayscaleOnlyUndoesWhatItTurnedOn(t *testing.T) {
 	defer q.Close()
 	host := Host{Queue: q, DeviceID: "mac"}
 	screen := false
-	blocker := &Blocker{GetGrayscale: func() (bool, error) { return screen, nil }, SetGrayscale: func(on bool) error { screen = on; return nil }}
+	asked := 0
+	blocker := &Blocker{GetGrayscale: func() (bool, error) { return screen, nil }, SetGrayscale: func(on bool) error { screen = on; return nil },
+		Prompt: func(string, string, []string, time.Duration) int { asked++; return 1 }, async: func(f func()) { f() }}
 	now := time.Now().UTC()
 	load := func(gray bool) {
 		body, _ := json.Marshal(map[string]any{"timeline": []policy.Segment{{From: now.Add(-time.Minute), To: now.Add(time.Hour), Decision: policy.Decision{Mode: policy.ModeClosed, Grayscale: gray}}}})
@@ -334,13 +336,14 @@ func TestWindDownGrayscaleOnlyUndoesWhatItTurnedOn(t *testing.T) {
 	if screen {
 		t.Fatal("still gray after the wind-down")
 	}
-	// Switched off during the wind-down, it comes back.
+	// Switched off during the wind-down, the owner is asked, and "Switch
+	// back" puts it back.
 	load(true)
 	blocker.grayscale(ctx, host, now)
 	screen = false
 	blocker.grayscale(ctx, host, now)
-	if !screen {
-		t.Fatal("switched off in the wind-down and not put back")
+	if !screen || asked != 1 {
+		t.Fatalf("switched off in the wind-down: back on %v, asked %d times", screen, asked)
 	}
 	load(false)
 	blocker.grayscale(ctx, host, now)
@@ -360,7 +363,7 @@ func TestWindDownGrayscaleOnlyUndoesWhatItTurnedOn(t *testing.T) {
 	screen = false
 	load(true)
 	blocker.grayscale(ctx, host, now)
-	restarted := &Blocker{GetGrayscale: blocker.GetGrayscale, SetGrayscale: blocker.SetGrayscale}
+	restarted := &Blocker{GetGrayscale: blocker.GetGrayscale, SetGrayscale: blocker.SetGrayscale, Prompt: blocker.Prompt, async: blocker.async}
 	body, _ := json.Marshal(map[string]any{"timeline": []policy.Segment{{From: now.Add(-time.Minute), To: now.Add(time.Hour), Decision: policy.Decision{Mode: policy.ModeClosed}}}})
 	_ = restarted.load(body, now)
 	restarted.grayscale(ctx, host, now)

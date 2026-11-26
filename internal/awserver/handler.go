@@ -47,6 +47,14 @@ type Handler struct {
 	// ExtensionPackage, when set, names the packed extension kept beside it,
 	// which browser policy installs from here on Linux.
 	ExtensionPackage func() string
+	// Budget, when set, describes the distraction budget for the
+	// extension's door screen and counter.
+	Budget func() any
+	// Device, when set, makes one of the extension's budget calls (the
+	// door, Back, cancelling a waiting door, habit ticks) to the server
+	// with this computer's credentials, which the extension never holds. It
+	// returns the server's status and JSON body.
+	Device func(ctx context.Context, path string, body []byte) (int, []byte)
 }
 
 // ExtensionID is the packed Telemetry extension's ID, fixed by the key the
@@ -77,6 +85,9 @@ type SiteDecision struct {
 	// Instead is the same video as a page the trim allows, for a covered
 	// page that shows one video in a closed format, such as a Short.
 	Instead string `json:"instead,omitempty"`
+	// Distraction marks an open site that is one of the owner's
+	// distractions, where the extension shows its counter.
+	Distraction bool `json:"distraction,omitempty"`
 }
 
 func (h Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
@@ -128,6 +139,24 @@ func (h Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			decision = h.Site(host, request.URL.Query().Get("url"))
 		}
 		writeJSON(writer, http.StatusOK, decision)
+		return
+	}
+	if request.URL.Path == "/api/telemetry/budget" && request.Method == http.MethodGet && h.Budget != nil {
+		writeJSON(writer, http.StatusOK, h.Budget())
+		return
+	}
+	// Only the extension and local programs get here: a web page's request
+	// carries its own origin and was refused above.
+	if call, ok := strings.CutPrefix(request.URL.Path, "/api/telemetry/device/"); ok && request.Method == http.MethodPost && h.Device != nil {
+		body, err := io.ReadAll(http.MaxBytesReader(writer, request.Body, 4<<10))
+		if err != nil {
+			writeError(writer, http.StatusBadRequest, "request body too large")
+			return
+		}
+		status, reply := h.Device(request.Context(), call, body)
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(status)
+		writer.Write(reply)
 		return
 	}
 	if request.URL.Path == "/api/telemetry/extension.xml" && request.Method == http.MethodGet && h.ExtensionPackage != nil {
