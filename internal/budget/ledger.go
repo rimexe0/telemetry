@@ -19,6 +19,10 @@ type Inputs struct {
 	Grayscale []GrayscaleEvent
 	Segments  []activity.Segment
 	Reasons   []string
+	// Open are the other stretches that opened distractions: openings
+	// from the panel or the assistant, and emergency unlocks from older
+	// phone apps. Use during them is charged like use during a door.
+	Open []OpenSpan
 	// DebtIn is what the first day owes from the day before it: that day's
 	// snapshot's debt passed on, or nothing without one.
 	DebtIn float64
@@ -57,10 +61,13 @@ type DayLedger struct {
 
 // calc holds what every part of one computation shares.
 type calc struct {
-	in     Inputs
-	now    time.Time
-	since  time.Time
-	spans  []span
+	in    Inputs
+	now   time.Time
+	since time.Time
+	spans []span
+	// doored is the part of spans that a door, an opening or an emergency
+	// opened: only that part may borrow from the next day.
+	doored []span
 	pieces []ratePiece
 }
 
@@ -70,8 +77,18 @@ func newCalc(in Inputs, from, now time.Time) *calc {
 		since = *in.Config.BudgetSince
 	}
 	surcharges := declines(in.Config, in.Grayscale)
+	// Only use while distractions were open is charged: in a distraction
+	// time, a door, an opening or an emergency. A closed site that stays
+	// usable with its feeds hidden, or an app shown its block screen, costs
+	// nothing.
+	used := uses(in.Config, in.Segments)
+	doors := doorSpans(in.Doors, in.Open)
+	open := doors
+	for _, window := range policy.DistractionWindows(in.Config, from.Add(-24*time.Hour), now.Add(36*time.Hour)) {
+		open = append(open, span{window[0], window[1]})
+	}
 	// Rates run past now so sliding ends can look ahead.
-	return &calc{in: in, now: now, since: since, spans: uses(in.Config, in.Segments),
+	return &calc{in: in, now: now, since: since, spans: within(used, open), doored: within(used, doors),
 		pieces: rates(in.Config, surcharges, from, now.Add(36*time.Hour))}
 }
 
@@ -178,11 +195,14 @@ func (c *calc) charge(day *DayLedger, previous DayLedger) {
 				day.Spent += cost
 				continue
 			}
-			// The day runs out inside this stretch; the rest is borrowed.
+			// The day runs out inside this stretch. The rest is borrowed, but
+			// only where a door or opening opened it: a used-up distraction
+			// time closes, so what shows after is not borrowing.
 			used := day.Left / piece.rate.Total
 			day.Spent += day.Left
 			day.Left = 0
-			borrowed := (length - used) * piece.rate.Total * settings.BorrowMultiplier
+			over := a.Add(time.Duration(used * float64(time.Minute)))
+			borrowed := useMinutes(c.doored, over, b) * piece.rate.Total * settings.BorrowMultiplier
 			before := day.DebtPassed
 			day.DebtPassed += borrowed
 			if day.ExhaustedAt == nil && day.DebtPassed >= borrowable {

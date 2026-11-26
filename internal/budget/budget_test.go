@@ -66,6 +66,12 @@ func habits(ids ...int64) []Habit {
 	return result
 }
 
+// opened stands for doors or openings over the days the tests use, for
+// tests about the arithmetic rather than about when use is charged.
+func opened() []OpenSpan {
+	return []OpenSpan{{From: at(24, 0, 0).UTC(), To: at(29, 0, 0).UTC()}}
+}
+
 func near(a, b float64) bool { return math.Abs(a-b) < 0.01 }
 
 func sameTime(a, b time.Time) bool { return a.Sub(b).Abs() < time.Second }
@@ -160,7 +166,7 @@ func TestRatesAndTheGrayscaleSurcharge(t *testing.T) {
 	}
 	// Use is charged at the rate in force, minute by minute.
 	segments := []activity.Segment{phone(at(26, 15, 0), at(26, 15, 10)), phone(at(26, 20, 0), at(26, 20, 30)), phone(at(26, 23, 15), at(26, 23, 25))}
-	result := Compute(Inputs{Config: config, Segments: segments, Grayscale: events}, "2026-11-26", at(26, 23, 30))
+	result := Compute(Inputs{Config: config, Open: opened(), Segments: segments, Grayscale: events}, "2026-11-26", at(26, 23, 30))
 	if !near(result.Today.Spent, 30+30+10*4) || !near(result.Today.UseMinutes, 50) {
 		t.Fatalf("spent %v use %v", result.Today.Spent, result.Today.UseMinutes)
 	}
@@ -182,7 +188,7 @@ func TestOnlyMeasuredDistractionUseIsCharged(t *testing.T) {
 		// The phone and the Mac at once are one person: charged once.
 		phone(at(26, 11, 0), at(26, 11, 10)), site("www.youtube.com", "https://www.youtube.com/", at(26, 11, 5), at(26, 11, 15)),
 	}
-	result := Compute(Inputs{Config: config, Segments: segments}, "2026-11-26", at(26, 18, 0))
+	result := Compute(Inputs{Config: config, Open: opened(), Segments: segments}, "2026-11-26", at(26, 18, 0))
 	if !near(result.Today.UseMinutes, 5+15) || !near(result.Today.Spent, 60) {
 		t.Fatalf("use %v spent %v", result.Today.UseMinutes, result.Today.Spent)
 	}
@@ -196,7 +202,7 @@ func TestBorrowingChargesTomorrowUntilItReachesTheFloor(t *testing.T) {
 	config := testConfig()
 	// 150 minutes in distraction time with 120 to spend: 30 borrowed at 1x2.
 	segments := []activity.Segment{phone(at(26, 19, 0), at(26, 21, 30))}
-	result := Compute(Inputs{Config: config, Segments: segments}, "2026-11-26", at(26, 21, 30))
+	result := Compute(Inputs{Config: config, Open: opened(), Segments: segments}, "2026-11-26", at(26, 21, 30))
 	today := result.Today
 	if today.Left != 0 || !near(today.Spent, 120) || !near(today.DebtPassed, 60) || !near(today.Borrowable, 30) || today.ExhaustedAt != nil {
 		t.Fatalf("borrowed = %+v", today)
@@ -206,7 +212,7 @@ func TestBorrowingChargesTomorrowUntilItReachesTheFloor(t *testing.T) {
 	}
 	// 15 more minutes borrow the last 30; tomorrow is down to the floor.
 	segments = append(segments, phone(at(26, 21, 30), at(26, 21, 50)))
-	result = Compute(Inputs{Config: config, Segments: segments}, "2026-11-26", at(26, 22, 0))
+	result = Compute(Inputs{Config: config, Open: opened(), Segments: segments}, "2026-11-26", at(26, 22, 0))
 	today = result.Today
 	if !near(today.DebtPassed, 100) || today.Borrowable != 0 || today.ExhaustedAt == nil || !sameTime(*today.ExhaustedAt, at(26, 21, 45).UTC()) {
 		t.Fatalf("exhausted = %+v at %v", today, today.ExhaustedAt)
@@ -216,15 +222,15 @@ func TestBorrowingChargesTomorrowUntilItReachesTheFloor(t *testing.T) {
 	}
 	// The next day owes it; habits ticked that day still earn.
 	fresh := []Habit{{ID: 1, Name: "made that morning", CreatedAt: at(27, 9, 0).UTC()}}
-	next := Compute(Inputs{Config: config, Segments: segments, Habits: fresh, Events: ticks("2026-11-27", 1)}, "2026-11-26", at(27, 10, 0))
+	next := Compute(Inputs{Config: config, Open: opened(), Segments: segments, Habits: fresh, Events: ticks("2026-11-27", 1)}, "2026-11-26", at(27, 10, 0))
 	if !near(next.Today.Debt, 100) || !near(next.Today.Budget, 50) || !near(next.Today.Earned, 30) {
 		t.Fatalf("next day = %+v", next.Today)
 	}
-	if floored := Compute(Inputs{Config: config, Segments: segments}, "2026-11-26", at(27, 10, 0)); !near(floored.Today.Budget, 30) {
+	if floored := Compute(Inputs{Config: config, Open: opened(), Segments: segments}, "2026-11-26", at(27, 10, 0)); !near(floored.Today.Budget, 30) {
 		t.Fatalf("floored = %+v", floored.Today)
 	}
 	// A snapshot's debt carries into the first day worked out.
-	if carried := Compute(Inputs{Config: config, DebtIn: 40}, "2026-11-27", at(27, 10, 0)); !near(carried.Today.Budget, 80) || !near(carried.Today.Debt, 40) {
+	if carried := Compute(Inputs{Config: config, Open: opened(), DebtIn: 40}, "2026-11-27", at(27, 10, 0)); !near(carried.Today.Budget, 80) || !near(carried.Today.Debt, 40) {
 		t.Fatalf("carried = %+v", carried.Today)
 	}
 }
@@ -234,7 +240,7 @@ func TestNothingBeforeTheBudgetWasSwitchedOn(t *testing.T) {
 	since := at(26, 12, 0).UTC()
 	config.BudgetSince = &since
 	segments := []activity.Segment{phone(at(25, 19, 0), at(25, 23, 59)), phone(at(26, 10, 0), at(26, 10, 10)), phone(at(26, 13, 0), at(26, 13, 10))}
-	result := Compute(Inputs{Config: config, Habits: habits(1, 2), Segments: segments}, "2026-11-25", at(26, 14, 0))
+	result := Compute(Inputs{Config: config, Open: opened(), Habits: habits(1, 2), Segments: segments}, "2026-11-25", at(26, 14, 0))
 	if result.Days[0].Enabled || result.Today.Penalty != 0 || result.Today.Debt != 0 || !near(result.Today.Spent, 30) {
 		t.Fatalf("today = %+v", result.Today)
 	}
@@ -244,16 +250,16 @@ func TestSlidingEndOfTheDistractionTime(t *testing.T) {
 	config := testConfig()
 	segments := []activity.Segment{phone(at(26, 15, 0), at(26, 15, 10)), phone(at(26, 19, 0), at(26, 19, 30))}
 	// 120 - 30 - 30 = 60 left at 1x: from 21:00 it runs out at 22:00.
-	result := Compute(Inputs{Config: config, Segments: segments}, "2026-11-26", at(26, 21, 0))
+	result := Compute(Inputs{Config: config, Open: opened(), Segments: segments}, "2026-11-26", at(26, 21, 0))
 	if result.Budget == nil || result.Budget.Used || !sameTime(result.Budget.EndsAt, at(26, 22, 0).UTC()) || !result.Budget.DayEnd.Equal(at(27, 8, 0).UTC()) {
 		t.Fatalf("budget fact = %+v", result.Budget)
 	}
 	// Not using distractions keeps moving it later.
-	if later := Compute(Inputs{Config: config, Segments: segments}, "2026-11-26", at(26, 21, 30)); !sameTime(later.Budget.EndsAt, at(26, 22, 30).UTC()) {
+	if later := Compute(Inputs{Config: config, Open: opened(), Segments: segments}, "2026-11-26", at(26, 21, 30)); !sameTime(later.Budget.EndsAt, at(26, 22, 30).UTC()) {
 		t.Fatalf("later = %v", later.Budget.EndsAt)
 	}
 	// Before the distraction time it counts from the time's start.
-	early := Compute(Inputs{Config: config, Segments: segments[:1]}, "2026-11-26", at(26, 16, 0))
+	early := Compute(Inputs{Config: config, Open: opened(), Segments: segments[:1]}, "2026-11-26", at(26, 16, 0))
 	if !sameTime(early.Budget.EndsAt, at(26, 20, 30).UTC()) {
 		t.Fatalf("early = %v", early.Budget.EndsAt)
 	}
@@ -323,7 +329,7 @@ func TestDoorEndsWhenTheBudgetAndBorrowingRunOut(t *testing.T) {
 	// tomorrow at 3x2 is 1 2/3 minutes, then a minute of grace.
 	segments := []activity.Segment{phone(at(26, 8, 30), at(26, 9, 8))}
 	door := Door{ID: 1, RequestedAt: at(26, 15, 0).UTC(), OpensAt: at(26, 15, 10).UTC(), WindowEnd: at(26, 16, 10).UTC(), UseMinutes: 10, GraceMinutes: 1}
-	result := Compute(Inputs{Config: config, Doors: []Door{door}, Segments: segments}, "2026-11-26", at(26, 15, 10))
+	result := Compute(Inputs{Config: config, Open: opened(), Doors: []Door{door}, Segments: segments}, "2026-11-26", at(26, 15, 10))
 	want := at(26, 15, 14).Add(40 * time.Second).UTC()
 	if !near(result.Today.Left, 6) || result.State.Door.State != DoorOpen || !sameTime(result.State.Door.EndsAt, want) {
 		t.Fatalf("left %v door %+v, want end %v", result.Today.Left, result.State.Door, want)
@@ -475,11 +481,37 @@ func TestHeatmapCellsAndRuns(t *testing.T) {
 
 func TestSnapshotOfAClosedDay(t *testing.T) {
 	config := testConfig()
-	result := Compute(Inputs{Config: config, Habits: habits(1, 2), Events: append(ticks("2026-11-25", 1, 2), ticks("2026-11-26", 1)...), Segments: []activity.Segment{phone(at(26, 19, 0), at(26, 23, 0))}}, "2026-11-26", at(27, 8, 0))
+	result := Compute(Inputs{Config: config, Open: opened(), Habits: habits(1, 2), Events: append(ticks("2026-11-25", 1, 2), ticks("2026-11-26", 1)...), Segments: []activity.Segment{phone(at(26, 19, 0), at(26, 23, 0))}}, "2026-11-26", at(27, 8, 0))
 	day := result.Days[0]
 	snapshot := SnapshotOf(day)
 	if snapshot.Day != "2026-11-26" || snapshot.Budget != 150 || snapshot.Spent != 150 || snapshot.DebtPassed != 180 || !reflect.DeepEqual(snapshot.HabitsMissed, []int64{2}) ||
 		!reflect.DeepEqual(snapshot.HabitsDone, []int64{1}) || !snapshot.Settings.Enabled || !snapshot.ClosedAt.Equal(at(27, 8, 0).UTC()) {
 		t.Fatalf("snapshot = %+v", snapshot)
+	}
+}
+
+func TestOnlyUseWhileDistractionsWereOpenIsCharged(t *testing.T) {
+	config := testConfig()
+	// YouTube at 15:00 with nothing open: a trimmed page or a block screen,
+	// not open use. At 15:30 an opening from the panel; at 20:00 the
+	// distraction time.
+	segments := []activity.Segment{phone(at(26, 15, 0), at(26, 15, 10)), phone(at(26, 15, 30), at(26, 15, 40)), phone(at(26, 20, 0), at(26, 20, 10))}
+	open := []OpenSpan{{From: at(26, 15, 30).UTC(), To: at(26, 16, 0).UTC()}}
+	result := Compute(Inputs{Config: config, Segments: segments, Open: open}, "2026-11-26", at(26, 21, 0))
+	if !near(result.Today.UseMinutes, 20) || !near(result.Today.Spent, 30+10) {
+		t.Fatalf("use %v spent %v", result.Today.UseMinutes, result.Today.Spent)
+	}
+	// A used-up distraction time closes: use after it without a door is
+	// not borrowing.
+	long := []activity.Segment{phone(at(26, 19, 0), at(26, 21, 30))}
+	closed := Compute(Inputs{Config: config, Segments: long}, "2026-11-26", at(26, 21, 30))
+	if closed.Today.Left != 0 || closed.Today.DebtPassed != 0 {
+		t.Fatalf("no door, no borrowing: %+v", closed.Today)
+	}
+	// Through a door from 21:00 the last half hour borrows at 1x2.
+	door := Door{ID: 1, RequestedAt: at(26, 20, 50).UTC(), OpensAt: at(26, 21, 0).UTC(), WindowEnd: at(27, 0, 0).UTC(), InDistractionTime: true, Borrowing: true}
+	borrowed := Compute(Inputs{Config: config, Segments: long, Doors: []Door{door}}, "2026-11-26", at(26, 21, 30))
+	if !near(borrowed.Today.DebtPassed, 60) {
+		t.Fatalf("borrowed through the door: %+v", borrowed.Today)
 	}
 }

@@ -22,6 +22,9 @@ type Settings struct {
 	WindowUseMinutes int     `json:"window_use_minutes"`
 	GraceMinutes     int     `json:"grace_minutes"`
 	BorrowMultiplier float64 `json:"borrow_multiplier"`
+	// RateGrayscaleOff is what keeping grayscale off adds, so a device can
+	// say it before the owner decides.
+	RateGrayscaleOff float64 `json:"rate_grayscale_off"`
 }
 
 // State is today's budget as /v1/device/now gives it in "budget".
@@ -61,7 +64,7 @@ func (c *calc) state(result *Result) {
 	clock := func(t time.Time) string { return t.In(location(config)).Format("15:04") }
 	state := State{Enabled: settings.Enabled && today.Enabled, Day: today.Day, Habits: []HabitValue{}, Reasons: append([]string{}, c.in.Reasons...),
 		Settings: Settings{WaitMinutes: settings.WaitMinutes, WindowMinutes: settings.WindowMinutes, WindowUseMinutes: settings.WindowUseMinutes,
-			GraceMinutes: settings.GraceMinutes, BorrowMultiplier: settings.BorrowMultiplier}}
+			GraceMinutes: settings.GraceMinutes, BorrowMultiplier: settings.BorrowMultiplier, RateGrayscaleOff: settings.RateGrayscaleOff}}
 	if piece, ok := pieceAt(c.pieces, now); ok {
 		state.Rate = piece.rate
 	}

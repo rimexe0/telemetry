@@ -335,3 +335,54 @@ func charge(pieces []ratePiece, from, to time.Time) float64 {
 func anyRate(Rate) bool { return true }
 
 func distractionRate(rate Rate) bool { return rate.Kind == RateKindDistraction }
+
+// OpenSpan is a stretch in which something other than a door opened
+// distractions.
+type OpenSpan struct {
+	From time.Time `json:"from"`
+	To   time.Time `json:"to"`
+}
+
+// doorSpans is when doors and the other openings had distractions open. A
+// door cancelled before it opened opened nothing.
+func doorSpans(doors []Door, others []OpenSpan) []span {
+	out := []span{}
+	for _, door := range doors {
+		end := door.WindowEnd
+		if door.CancelledAt != nil {
+			end = earlier(end, *door.CancelledAt)
+		}
+		if end.After(door.OpensAt) {
+			out = append(out, span{door.OpensAt, end})
+		}
+	}
+	for _, other := range others {
+		if other.To.After(other.From) {
+			out = append(out, span{other.From, other.To})
+		}
+	}
+	return out
+}
+
+// within is the part of spans that falls inside any of cover, merged.
+func within(spans, cover []span) []span {
+	out := []span{}
+	for _, s := range spans {
+		for _, c := range cover {
+			start, end := later(s.start, c.start), earlier(s.end, c.end)
+			if end.After(start) {
+				out = append(out, span{start, end})
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].start.Before(out[j].start) })
+	merged := []span{}
+	for _, s := range out {
+		if n := len(merged); n > 0 && !s.start.After(merged[n-1].end) {
+			merged[n-1].end = later(merged[n-1].end, s.end)
+			continue
+		}
+		merged = append(merged, s)
+	}
+	return merged
+}

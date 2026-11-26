@@ -124,3 +124,20 @@ func TestPostgresHabitsDoorsGrayscaleAndDays(t *testing.T) {
 		t.Fatalf("days = %+v", days)
 	}
 }
+
+func TestPostgresOpenSpansKeepEndedOpenings(t *testing.T) {
+	ctx, database := openCleanIntegration(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	_, opening, err := database.OpenNow(ctx, Opening{Purpose: "a tutorial", Sites: []string{"youtube.com"}, Until: now.Add(20 * time.Minute)}, "a tutorial")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.EndOpening(ctx, opening.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Ended early, its use until then is still charged.
+	spans, err := database.OpenSpans(ctx, now.Add(-time.Hour), now.Add(time.Hour))
+	if err != nil || len(spans) != 1 || !spans[0].To.Before(now.Add(time.Minute)) || spans[0].To.Before(spans[0].From) {
+		t.Fatalf("spans = %+v, %v", spans, err)
+	}
+}

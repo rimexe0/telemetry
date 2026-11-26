@@ -2,6 +2,7 @@ package policy
 
 import (
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -193,4 +194,25 @@ func configLocation(config Config) *time.Location {
 		return time.UTC
 	}
 	return location
+}
+
+// DistractionWindows lists the owner's distraction times that overlap
+// [from, to), each as its start and end.
+func DistractionWindows(config Config, from, to time.Time) [][2]time.Time {
+	location, err := time.LoadLocation(config.Timezone)
+	if err != nil {
+		location = time.UTC
+	}
+	windows := [][2]time.Time{}
+	seen := map[int64]bool{}
+	for day := from.Add(-24 * time.Hour); day.Before(to.Add(24 * time.Hour)); day = day.Add(24 * time.Hour) {
+		for _, bound := range windowBounds(config, location, day) {
+			if bound[1].After(from) && bound[0].Before(to) && !seen[bound[0].UnixNano()] {
+				seen[bound[0].UnixNano()] = true
+				windows = append(windows, bound)
+			}
+		}
+	}
+	sort.Slice(windows, func(i, j int) bool { return windows[i][0].Before(windows[j][0]) })
+	return windows
 }

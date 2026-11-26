@@ -587,3 +587,9 @@ func TestFingerprintStepsKeepTheEndAhead(t *testing.T) {
 		t.Fatalf("door end = %v", door.Door.EndsAt)
 	}
 }
+
+// OpenSpans has distractions open throughout, as an opening would: these
+// tests are about refusals and shapes, not about when use is charged.
+func (m *memoryBudget) OpenSpans(_ context.Context, from, to time.Time) ([]budget.OpenSpan, error) {
+	return []budget.OpenSpan{{From: from, To: to}}, nil
+}

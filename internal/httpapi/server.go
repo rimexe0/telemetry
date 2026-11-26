@@ -142,6 +142,7 @@ func New(repository store.Repository, config Config) (*Server, error) {
 	server.mux.HandleFunc("GET /v1/budget", server.budgetOverview)
 	server.mux.HandleFunc("POST /v1/door", server.ownerCreateDoor)
 	server.mux.HandleFunc("POST /v1/door/{id}/cancel", server.ownerCancelDoor)
+	server.mux.HandleFunc("POST /v1/door/back", server.doorBack)
 	server.mux.HandleFunc("/v1/habits", server.habits)
 	server.mux.HandleFunc("GET /v1/habits/heatmap", server.habitHeatmap)
 	server.mux.HandleFunc("PATCH /v1/habits/{id}", server.habit)

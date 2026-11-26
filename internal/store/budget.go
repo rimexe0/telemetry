@@ -39,6 +39,9 @@ type BudgetStore interface {
 	BudgetDays(ctx context.Context, limit int) ([]budget.Snapshot, error)
 	BudgetDay(ctx context.Context, day string) (*budget.Snapshot, error)
 	SaveBudgetDay(ctx context.Context, snapshot budget.Snapshot) (bool, error)
+	// OpenSpans are the stretches openings and emergency unlocks had
+	// distractions open in [from, to), ended ones included.
+	OpenSpans(ctx context.Context, from, to time.Time) ([]budget.OpenSpan, error)
 }
 
 var _ BudgetStore = (*Postgres)(nil)
@@ -628,6 +631,9 @@ func LoadBudgetInputs(ctx context.Context, repository Repository, budgets Budget
 	if in.Doors, err = budgets.BudgetDoors(ctx, start.Add(-2*time.Hour)); err != nil {
 		return in, err
 	}
+	if in.Open, err = budgets.OpenSpans(ctx, start.Add(-2*time.Hour), at); err != nil {
+		return in, err
+	}
 	// A decline the evening before still holds through that night.
 	if in.Grayscale, err = budgets.GrayscaleEvents(ctx, start.Add(-24*time.Hour)); err != nil {
 		return in, err
@@ -684,4 +690,61 @@ func CloseBudgetDays(ctx context.Context, repository Repository, budgets BudgetS
 		}
 	}
 	return written, nil
+}
+
+// OpenSpans reads the openings that were confirmed and the emergency
+// unlocks from older phone apps that overlap [from, to): use during them is
+// charged, so ending an opening early does not make its use free.
+func (p *Postgres) OpenSpans(ctx context.Context, from, to time.Time) ([]budget.OpenSpan, error) {
+	spans := []budget.OpenSpan{}
+	rows, err := p.pool.Query(ctx, `SELECT starts_at, until, ended_at FROM openings
+		WHERE until > $1 AND starts_at < $2 AND confirmations >= confirmations_needed ORDER BY id LIMIT 500`, from, to)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var start, until time.Time
+		var ended *time.Time
+		if err := rows.Scan(&start, &until, &ended); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if ended != nil && ended.Before(until) {
+			until = *ended
+		}
+		spans = append(spans, budget.OpenSpan{From: start.UTC(), To: until.UTC()})
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows, err = p.pool.Query(ctx, `SELECT r.projection FROM observations o
+		JOIN observation_revisions r ON r.id = o.effective_revision_id
+		WHERE o.kind = 'android.policy_emergency' AND o.occurred_at >= $1 AND o.occurred_at < $2
+		ORDER BY o.occurred_at LIMIT 500`, from.Add(-2*time.Hour), to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		var payload struct {
+			Started string `json:"started_at"`
+			Until   string `json:"until"`
+		}
+		if json.Unmarshal(raw, &payload) != nil {
+			continue
+		}
+		started, err1 := time.Parse(time.RFC3339Nano, payload.Started)
+		until, err2 := time.Parse(time.RFC3339Nano, payload.Until)
+		// A device's own clock sets these; no unlock is longer than two hours.
+		if err1 != nil || err2 != nil || !until.After(started) || until.Sub(started) > 2*time.Hour {
+			continue
+		}
+		spans = append(spans, budget.OpenSpan{From: started.UTC(), To: until.UTC()})
+	}
+	return spans, rows.Err()
 }
