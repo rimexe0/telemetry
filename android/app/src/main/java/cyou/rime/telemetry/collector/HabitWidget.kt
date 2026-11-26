@@ -113,7 +113,7 @@ class HabitWidget : GlanceAppWidget() {
             Row(GlanceModifier.fillMaxWidth().height(44.dp).clickable(onClick), verticalAlignment = Alignment.CenterVertically) {
                 TickBox(row.done, open)
                 Spacer(GlanceModifier.width(10.dp))
-                Text(row.name, GlanceModifier.defaultWeight(), style = text(if (row.done) Colors.muted else Colors.fg, 14), maxLines = 1)
+                Text(row.name, GlanceModifier.defaultWeight(), style = text(if (row.done) Colors.muted else Colors.fg, 14), maxLines = 2)
                 if (wide && row.worth.isNotEmpty()) Text(row.worth, GlanceModifier.padding(start = 8.dp), style = text(Colors.muted, 12), maxLines = 1)
             }
         }
