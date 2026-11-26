@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -301,9 +302,90 @@ func TestExtensionsPageIsRecognisedByItsTitle(t *testing.T) {
 		"Extensions for VS Code - Helium - You":          false,
 		"GitHub - Helium - You":                          false,
 	} {
-		if got := extensionsPage(title, "Helium"); got != want {
+		if got := extensionsPage(title, "Helium", false); got != want {
 			t.Errorf("%q: %v, want %v", title, got, want)
 		}
+	}
+	for title, want := range map[string]bool{
+		"Add-ons Manager":                             true,
+		"Add-ons Manager — LibreWolf":                 true,
+		"Add-ons Manager — Private Browsing":          true,
+		"Eklenti Yöneticisi":                          true,
+		"Eklentiler — LibreWolf":                      true,
+		"about:addons":                                true,
+		"Add-ons Manager for Thunderbird — LibreWolf": false,
+		"Extensions":                                  false,
+		"GitHub — LibreWolf":                          false,
+		"chrome://extensions":                         false,
+	} {
+		if got := extensionsPage(title, "LibreWolf", true); got != want {
+			t.Errorf("LibreWolf %q: %v, want %v", title, got, want)
+		}
+	}
+}
+
+// LibreWolf runs the Firefox package; Firefox itself only a signed one.
+func TestLibreWolfIsCoveredByItsExtension(t *testing.T) {
+	q, err := queue.Open(filepath.Join(t.TempDir(), "q.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Close()
+	host := Host{Queue: q, DeviceID: "mac"}
+	hidden, reasons, opened := []string{}, []string{}, []string{}
+	signed := false
+	blocker := &Blocker{
+		Hide:            func(title, reason string, _ int) { hidden = append(hidden, title); reasons = append(reasons, reason) },
+		OpenExtensions:  func(id string) error { opened = append(opened, id); return nil },
+		AppOfConnection: func(string) (string, error) { return "net.librewolf.librewolf", nil },
+		FirefoxSigned:   func() bool { return signed },
+	}
+	decision := policy.Decision{Mode: policy.ModeClosed, RequireExtensionSeconds: 60, Blocked: policy.Targets{Domains: []string{"x.com"}}}
+	librewolf := desktop.Window{App: "LibreWolf", BundleID: "net.librewolf.librewolf", Title: "GitHub", PID: 50}
+	start := time.Now().Add(-2 * time.Minute)
+	ctx := context.Background()
+	blocker.hideBrowser(ctx, host, librewolf, decision, start)
+	if !blocker.hideBrowser(ctx, host, librewolf, decision, start.Add(61*time.Second)) || !strings.Contains(reasons[0], "Add-ons page") && runtime.GOOS != "linux" {
+		t.Fatalf("no extension after a minute: %v", reasons)
+	}
+	page := librewolf
+	page.Title = "Add-ons Manager"
+	if blocker.hideBrowser(ctx, host, page, decision, start.Add(62*time.Second)) {
+		t.Fatal("the Add-ons page was hidden")
+	}
+	yes := true
+	blocker.ExtensionCheckIn("127.0.0.1:50001", &yes)
+	if blocker.hideBrowser(ctx, host, librewolf, decision, time.Now()) {
+		t.Fatal("hidden although its extension runs")
+	}
+	// Firefox puts " — LibreWolf" after the tab's title on Linux.
+	now := time.Now()
+	blocker.ExtensionTabs("127.0.0.1:50001", []string{"GitHub"})
+	own := librewolf
+	own.Title = "GitHub — LibreWolf"
+	if blocker.hideBrowser(ctx, host, own, decision, now.Add(12*time.Second)) {
+		t.Fatal("a window of the profile with the extension was hidden")
+	}
+	library := librewolf
+	library.Title = "Library"
+	if blocker.hideBrowser(ctx, host, library, decision, now.Add(30*time.Second)) {
+		t.Fatal("the Library window was hidden")
+	}
+
+	// Firefox itself cannot install an unsigned package, so it is hidden as
+	// a browser without the extension, saying why.
+	firefox := desktop.Window{App: "Firefox", BundleID: "org.mozilla.firefox", Title: "Apple", PID: 51}
+	blocker.hideBrowser(ctx, host, firefox, decision, start)
+	before := len(opened)
+	if !blocker.hideBrowser(ctx, host, firefox, decision, start.Add(61*time.Second)) || !strings.Contains(reasons[len(reasons)-1], "signed") || len(opened) != before {
+		t.Fatalf("unsigned Firefox: %v, opened %v", reasons[len(reasons)-1], opened)
+	}
+	signed = true
+	firefox.PID = 52
+	blocker.hideBrowser(ctx, host, firefox, decision, start)
+	blocker.hideBrowser(ctx, host, firefox, decision, start.Add(61*time.Second))
+	if strings.Contains(reasons[len(reasons)-1], "signed") {
+		t.Fatalf("signed Firefox: %v", reasons[len(reasons)-1])
 	}
 }
 

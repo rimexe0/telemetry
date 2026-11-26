@@ -50,6 +50,8 @@ jobs:
           for script in deploy/macos/install-mac.sh deploy/macos/install-phone.sh deploy/macos/install-watchdog.sh; do zsh -n "$script"; done
           go vet ./...
           go test ./...
+      - name: Test the browser extension
+        run: for test in extensions/telemetry-blocker/*.test.mjs; do node "$test"; done
       - name: Test and build the panel
         working-directory: web
         run: |
@@ -82,6 +84,21 @@ jobs:
           id=$(go run ./cmd/telemetry-crx -out dist/telemetry-extension.crx)
           grep -q "\"$id;" deploy/linux/telemetry-browser-policy.json
           grep -q "\"$id\"" internal/awserver/handler.go
+      - name: Pack the extension for Firefox and LibreWolf
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        # With Mozilla signing credentials the package is Mozilla's signed
+        # copy (an unlisted add-on), which Firefox and LibreWolf install.
+        # Without them, or when Mozilla is slow, it is unsigned, which only
+        # LibreWolf installs, with xpinstall.signatures.required off; the
+        # installers allow that while the kept package is unsigned.
+        run: |
+          out=$(go run ./cmd/telemetry-xpi -out dist/telemetry-extension.xpi)
+          echo "$out"
+          read -r id version state <<< "$(tail -n 1 <<< "$out")"
+          [[ "$id" == telemetry@rime.cyou ]]
+          echo "### Firefox package: $state ($version)" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: linux

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -18,6 +19,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -28,6 +30,7 @@ import (
 	"github.com/rimexe0/telemetry/internal/ingest"
 	"github.com/rimexe0/telemetry/internal/queue"
 	"github.com/rimexe0/telemetry/internal/sealed"
+	"github.com/rimexe0/telemetry/internal/xpi"
 )
 
 // collectorVersion is replaced with the release name in released builds.
@@ -55,14 +58,57 @@ func main() {
 		if err := guard(os.Args[2:]); err != nil {
 			log.Fatal(err)
 		}
+	case "browser-policy":
+		if err := browserPolicy(os.Args[2:], os.Stdout); err != nil {
+			log.Fatal(err)
+		}
 	default:
 		usage()
 	}
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: telemetry-desktop <run|login|permissions|diagnose|guard> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: telemetry-desktop <run|login|permissions|diagnose|guard|browser-policy> [flags]")
 	os.Exit(2)
+}
+
+// browserPolicy writes the enterprise policy that installs the extension in
+// a Firefox-family browser, with the policies the browser ships itself, for
+// the installers to put where the browser reads it.
+func browserPolicy(arguments []string, out io.Writer) error {
+	flags := flag.NewFlagSet("browser-policy", flag.ExitOnError)
+	base := flags.String("base", "", "the browser's own distribution/policies.json, if it has one")
+	packed := flags.String("xpi", "", "the kept Firefox package; an unsigned one is allowed to install (required)")
+	mac := flags.Bool("mac", false, "write macOS managed preferences (as JSON, for plutil) instead of a Linux policies.json")
+	flags.Parse(arguments)
+	data, err := os.ReadFile(*packed)
+	if err != nil {
+		return fmt.Errorf("-xpi: %w", err)
+	}
+	info, err := xpi.Read(data)
+	if err != nil {
+		return err
+	}
+	var shipped []byte
+	if *base != "" {
+		if shipped, err = os.ReadFile(*base); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	// A Linux system policies.json replaces the browser's own; macOS managed
+	// preferences only replace the policies they name.
+	policies, err := xpi.Merge(shipped, xpi.Policies(info.Signed), !*mac)
+	if err != nil {
+		return err
+	}
+	var document any = map[string]any{"policies": policies}
+	if *mac {
+		policies["EnterprisePoliciesEnabled"] = true
+		document = policies
+	}
+	encoder := json.NewEncoder(out)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(document)
 }
 
 // permissions asks macOS for the Accessibility access that window titles need.
@@ -124,6 +170,32 @@ func keptExtensionVersion(dir string) string {
 	return manifest.Version
 }
 
+// signedPackage reports whether the kept Firefox package carries Mozilla's
+// signature, read again only when the file changes.
+func signedPackage(path string) func() bool {
+	var mu sync.Mutex
+	var modified time.Time
+	var signed bool
+	return func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		stat, err := os.Stat(path)
+		if err != nil {
+			modified, signed = time.Time{}, false
+			return false
+		}
+		if !stat.ModTime().Equal(modified) {
+			modified, signed = stat.ModTime(), false
+			if data, err := os.ReadFile(path); err == nil {
+				if info, err := xpi.Read(data); err == nil {
+					signed = info.Signed
+				}
+			}
+		}
+		return signed
+	}
+}
+
 func buildModules(names, listen, t3Dir, t3Token, t3MCPToken, extensionDir, notices string, distractionsOnly bool, credentials *collector.Credentials) ([]collector.Module, error) {
 	modules := []collector.Module{}
 	seen := map[string]bool{}
@@ -149,7 +221,7 @@ func buildModules(names, listen, t3Dir, t3Token, t3MCPToken, extensionDir, notic
 		case "t3-open":
 			modules = append(modules, &collector.T3Open{Dir: t3Dir, TokenFile: t3Token})
 		case "blocker":
-			blocker = &collector.Blocker{Credentials: credentials, DistractionsOnly: distractionsOnly}
+			blocker = &collector.Blocker{Credentials: credentials, DistractionsOnly: distractionsOnly, FirefoxSigned: signedPackage(extensionDir + ".xpi")}
 			modules = append(modules, blocker)
 		case "tracker":
 			tracker = &collector.Tracker{Credentials: credentials, Notices: notices}
@@ -165,6 +237,7 @@ func buildModules(names, listen, t3Dir, t3Token, t3MCPToken, extensionDir, notic
 		api.Budget, api.Device = func() any { return blocker.Budget() }, blocker.DeviceCall
 		api.ExtensionVersion = func() string { return keptExtensionVersion(extensionDir) }
 		api.ExtensionPackage = func() string { return extensionDir + ".crx" }
+		api.FirefoxPackage = func() string { return extensionDir + ".xpi" }
 	}
 	// The tracker reads the answers the blocker already fetches.
 	if tracker != nil && blocker != nil {

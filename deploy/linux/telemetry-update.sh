@@ -32,14 +32,14 @@ flock -n 9 || exit 0
 tag=$(curl -fsSL "https://github.com/$REPO/releases/latest/download/release.txt" | awk '{print $1}')
 [[ "$tag" =~ ^r[0-9]+$ ]] || { log "the latest release has no usable name: $tag"; exit 1; }
 # A collector installed before releases carried the packed extension gets
-# its release again once, to fetch it.
-[[ "$tag" == "$(cat "$installed" 2>/dev/null)" && ( "$KIND" != collector || -f "$DIR/extension.crx" ) ]] && exit 0
+# its release again once, to fetch it; the same for the Firefox package.
+[[ "$tag" == "$(cat "$installed" 2>/dev/null)" && ( "$KIND" != collector || ( -f "$DIR/extension.crx" && -f "$DIR/extension.xpi" ) ) ]] && exit 0
 # A release that failed here once is not retried; the next one is.
 [[ "$tag" == "$(cat "$refused" 2>/dev/null)" ]] && exit 0
 
 case "$KIND" in
   server) files=(telemetryd telemetry-places panel.tar.gz migrations.txt) ;;
-  collector) files=(telemetry-desktop telemetry-extension.tar.gz telemetry-extension.crx) ;;
+  collector) files=(telemetry-desktop telemetry-extension.tar.gz telemetry-extension.crx telemetry-extension.xpi) ;;
   *) log "unknown KIND $KIND"; exit 1 ;;
 esac
 files+=(telemetry-update.sh release.txt)
@@ -126,6 +126,9 @@ if [[ "$KIND" == collector ]]; then
   # Browser policy installs this packed copy from the collector.
   install -m 644 telemetry-extension.crx "$DIR/extension.crx.new"
   mv -f "$DIR/extension.crx.new" "$DIR/extension.crx"
+  # LibreWolf's and Firefox's policy installs the Firefox package from here.
+  install -m 644 telemetry-extension.xpi "$DIR/extension.xpi.new"
+  mv -f "$DIR/extension.xpi.new" "$DIR/extension.xpi"
 fi
 
 echo "$tag" > "$installed"

@@ -55,12 +55,13 @@ tag=$(curl -fsSL "https://github.com/$repo/releases/latest/download/release.txt"
 [[ "$tag" =~ ^r[0-9]+$ ]] || { log "the latest release has no usable name: $tag"; exit 1; }
 # A Mac installed before its updater fetched the packed extension gets its
 # release again once, to fetch it: browser policy installs that copy, which
-# cannot be switched off (owner request 2026-11-22).
-[[ "$tag" == "$(cat "$installed" 2>/dev/null)" && -f "$root/extension.crx" ]] && exit 0
+# cannot be switched off (owner request 2026-11-22). The same for the Firefox
+# package, which LibreWolf's policy installs.
+[[ "$tag" == "$(cat "$installed" 2>/dev/null)" && -f "$root/extension.crx" && -f "$root/extension.xpi" ]] && exit 0
 # A release that failed here once is not retried; the next one is.
 [[ "$tag" == "$(cat "$refused" 2>/dev/null)" ]] && exit 0
 
-files=(telemetry-desktop-macos.zip telemetry-panel-macos.zip telemetry-extension.tar.gz telemetry-extension.crx telemetry-update-macos.sh release.txt)
+files=(telemetry-desktop-macos.zip telemetry-panel-macos.zip telemetry-extension.tar.gz telemetry-extension.crx telemetry-extension.xpi telemetry-update-macos.sh release.txt)
 self="${0:A}"
 work="$root/updates/$tag"
 mkdir -p "$work"
@@ -144,6 +145,10 @@ mv new/extension "$root/extension"
 # updates it from there by itself.
 install -m 644 telemetry-extension.crx "$root/extension.crx.new"
 mv -f "$root/extension.crx.new" "$root/extension.crx"
+# LibreWolf's and Firefox's policy installs the Firefox package from the
+# collector, and they take its updates from there every hour.
+install -m 644 telemetry-extension.xpi "$root/extension.xpi.new"
+mv -f "$root/extension.xpi.new" "$root/extension.xpi"
 external_extension
 
 echo "$tag" > "$installed"

@@ -47,6 +47,9 @@ type Handler struct {
 	// ExtensionPackage, when set, names the packed extension kept beside it,
 	// which browser policy installs from here on Linux.
 	ExtensionPackage func() string
+	// FirefoxPackage, when set, names the extension packed for Firefox and
+	// LibreWolf, which their browser policy installs and updates from here.
+	FirefoxPackage func() string
 	// Budget, when set, describes the distraction budget for the
 	// extension's door screen and counter.
 	Budget func() any
@@ -166,6 +169,15 @@ func (h Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	if request.URL.Path == "/api/telemetry/extension.crx" && request.Method == http.MethodGet && h.ExtensionPackage != nil {
 		writer.Header().Set("Content-Type", "application/x-chrome-extension")
 		http.ServeFile(writer, request, h.ExtensionPackage())
+		return
+	}
+	if request.URL.Path == "/api/telemetry/updates.json" && request.Method == http.MethodGet && h.FirefoxPackage != nil {
+		h.firefoxUpdate(writer)
+		return
+	}
+	if request.URL.Path == "/api/telemetry/extension.xpi" && request.Method == http.MethodGet && h.FirefoxPackage != nil {
+		writer.Header().Set("Content-Type", "application/x-xpinstall")
+		http.ServeFile(writer, request, h.FirefoxPackage())
 		return
 	}
 	path, ok := strings.CutPrefix(request.URL.EscapedPath(), "/api/0/")

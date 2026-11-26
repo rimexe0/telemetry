@@ -31,6 +31,34 @@ install -o root -g wheel -m 644 "$here/helium-policy.plist" "/Library/Managed Pr
 for browser in com.google.Chrome org.chromium.Chromium com.brave.Browser com.microsoft.Edge; do
   install -o root -g wheel -m 644 "$here/helium-policy.plist" "/Library/Managed Preferences/$browser.plist"
 done
+# LibreWolf and Firefox read enterprise policy from the managed preferences
+# for their bundle ID, which they trust when root owns the file; an MDM
+# profile writes the same file. It force-installs the Firefox package from
+# the collector, keeping the browser's own extension settings beside it. Not
+# the policies.json inside the app: that is part of the app's signature, and
+# LibreWolf ships its own there, which each update replaces. Firefox itself
+# installs only a package Mozilla signed. The policy is made by the copy of
+# the collector only root can change.
+xpi="$owner_home/Library/Application Support/Telemetry/extension.xpi"
+if [[ -f "$xpi" ]]; then
+  for bundle name in net.librewolf.librewolf LibreWolf org.mozilla.firefox Firefox; do
+    found=""
+    for dir in /Applications "$owner_home/Applications"; do
+      [[ -d "$dir/$name.app" ]] && found="$dir/$name.app"
+    done
+    [[ -n "$found" ]] || continue
+    [[ "$bundle" != org.mozilla.firefox ]] || grep -qa META-INF/mozilla.rsa "$xpi" || continue
+    policy=$(mktemp)
+    if /Library/PrivilegedHelperTools/telemetry-watchdog browser-policy -mac -xpi "$xpi" \
+        -base "$found/Contents/Resources/distribution/policies.json" > "$policy" &&
+        plutil -convert xml1 -o "$policy.plist" "$policy"; then
+      install -o root -g wheel -m 644 "$policy.plist" "/Library/Managed Preferences/$bundle.plist"
+    else
+      echo "could not write the $name policy" >&2
+    fi
+    rm -f "$policy" "$policy.plist"
+  done
+fi
 sed -e "s#__UID__#$SUDO_UID#" -e "s#__HOME__#$owner_home#" "$here/$label.plist" > "/Library/LaunchDaemons/$label.plist"
 chown root:wheel "/Library/LaunchDaemons/$label.plist"
 chmod 644 "/Library/LaunchDaemons/$label.plist"

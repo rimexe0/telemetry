@@ -79,7 +79,7 @@ tag=$(curl -fsSL "https://github.com/$repo/releases/latest/download/release.txt"
 mkdir -p "$root/bin" "$root/updates" "$apps" "$agents"
 work=$(mktemp -d "$root/updates/install-$tag.XXXXXX")
 cd "$work"
-files=(telemetry-desktop-macos.zip telemetry-panel-macos.zip telemetry-extension.tar.gz telemetry-extension.crx telemetry-macos-jobs.tar.gz telemetry-update-macos.sh release.txt)
+files=(telemetry-desktop-macos.zip telemetry-panel-macos.zip telemetry-extension.tar.gz telemetry-extension.crx telemetry-extension.xpi telemetry-macos-jobs.tar.gz telemetry-update-macos.sh release.txt)
 for name in SHA256SUMS SHA256SUMS.sig $files; do
   curl -fsSL -o "$name" "https://github.com/$repo/releases/download/$tag/$name"
 done
@@ -103,6 +103,7 @@ mv new/Telemetry.app "$panel"
 [[ -d "$root/extension" ]] && mv "$root/extension" before/extension
 mv new/extension "$root/extension"
 install -m 644 telemetry-extension.crx "$root/extension.crx"
+install -m 644 telemetry-extension.xpi "$root/extension.xpi"
 external_extension
 install -m 755 telemetry-update-macos.sh "$root/bin/telemetry-update"
 collector="$desktop/Contents/MacOS/telemetry-desktop"
@@ -160,7 +161,9 @@ print -- "
    extension from Telemetry's External Extensions file and ask once whether
    to turn it on; say yes. Telemetry keeps it updated. Remove a copy you
    loaded unpacked earlier, or it covers pages twice. In its Details, turn on
-   Allow in Incognito.
+   Allow in Incognito. LibreWolf (and Firefox, with a signed release) install
+   it by the policy the system watcher just wrote, or the MDM profile, at
+   their next start, in private windows too.
 3. Phone: install the app from
    https://github.com/$repo/releases/latest/download/telemetry-phone.apk
    and enter this server's address in it; or, with the phone connected by USB

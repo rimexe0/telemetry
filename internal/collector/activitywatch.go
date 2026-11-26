@@ -29,6 +29,8 @@ type ActivityWatchAPI struct {
 	ExtensionVersion func() string
 	// ExtensionPackage names the packed extension browser policy installs.
 	ExtensionPackage func() string
+	// FirefoxPackage names the package Firefox-family browser policy installs.
+	FirefoxPackage func() string
 	// Budget and Device serve the extension's door screen and counter.
 	Budget func() any
 	Device func(ctx context.Context, path string, body []byte) (int, []byte)
@@ -50,7 +52,7 @@ func (a *ActivityWatchAPI) Run(ctx context.Context, host Host) error {
 	}
 	server := &http.Server{
 		Handler: awserver.Handler{Store: host.Store, Hostname: host.Hostname, Version: a.Version, Site: a.Site, Status: a.Browser, CheckIn: a.CheckIn, Tabs: a.Tabs, Changes: a.Changes, ExtensionVersion: a.ExtensionVersion, ExtensionPackage: a.ExtensionPackage,
-			Budget: a.Budget, Device: a.Device},
+			FirefoxPackage: a.FirefoxPackage, Budget: a.Budget, Device: a.Device},
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 	}

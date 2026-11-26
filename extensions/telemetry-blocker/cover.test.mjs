@@ -5,18 +5,18 @@ const src = fs.readFileSync(new URL("./cover.js", import.meta.url), "utf8");
 const doorSrc = fs.readFileSync(new URL("./door.js", import.meta.url), "utf8");
 // door loads door.js first, as the manifest does; budget is what the
 // collector answers for the budget, and callResult for a door call.
-function world({ readyState, visibility, blocked, trim, instead, pathname = "/a", found = {}, door = false, budget, distraction, callResult = { status: 200, body: {} } }) {
-  const w = { parts: {}, assigned: [], reloads: 0, stops: 0, paused: 0, clicks: 0, listeners: {}, messages: [], visibility, covered: false, styled: false, timers: [], found,
+function world({ readyState, visibility, blocked, trim, instead, pathname = "/a", found = {}, door = false, budget, distraction, callResult = { status: 200, body: {} }, left = 0 }) {
+  const w = { left, removedLeft: 0, parts: {}, assigned: [], reloads: 0, stops: 0, paused: 0, clicks: 0, listeners: {}, messages: [], visibility, covered: false, styled: false, timers: [], found,
     calls: [], backs: 0, chipShown: false, budget, callResult };
   const el = (tag) => tag === "style"
-    ? { get isConnected() { return w.styled; }, remove() { w.styled = false; }, set textContent(v) { w.css = v; } }
+    ? { get isConnected() { return w.styled; }, remove() { w.styled = false; }, set textContent(v) { w.css = v; }, setAttribute(k) { w.styleAttribute = k; } }
     : { tag, children: [], text: "", set textContent(v) { this.text = v; }, append(...nodes) { this.children.push(...nodes); }, addEventListener(n, f) { this.click = f; },
         style: { setProperty: (k, v, p) => ((tag === "telemetry-counter" ? (w.chipStyle ||= {}) : (w.coverStyle ||= {}))[k] = v + " " + p) },
         attachShadow: () => ({ innerHTML: "", querySelector: (q) => (w.parts[q] ||= { hidden: q === ".instead", children: [], replaceChildren(...nodes) { this.children = nodes; }, addEventListener(n, f) { this.click = f; }, set textContent(v) { this.text = v; if (q === ".closed") w.closedText = v; } }) }),
         get isConnected() { return tag === "telemetry-counter" ? w.chipShown : w.covered; }, remove() { if (tag === "telemetry-counter") w.chipShown = false; else w.covered = false; } };
   const visible = { checkVisibility: () => true };
   const document = { readyState, get visibilityState() { return w.visibility; },
-    createElement: el, querySelectorAll: (q) => (q === "video, audio" ? [{ pause: () => w.paused++ }] : w.found[q] ? [visible] : []),
+    createElement: el, querySelectorAll: (q) => (q.startsWith("telemetry-cover,") ? Array.from({ length: w.left }, () => ({ remove: () => w.removedLeft++ })) : q === "video, audio" ? [{ pause: () => w.paused++ }] : w.found[q] ? [visible] : []),
     querySelector: (q) => (q.includes("autonav") && w.found.autoplay ? { closest: () => null, click: () => w.clicks++ } : w.found[q] ? visible : null),
     documentElement: { append(node) { if (node.tag === "telemetry-counter") w.chipShown = true; else if (node.attachShadow) w.covered = true; else w.styled = true; } },
     addEventListener: (n, f) => (w.listeners[n] = f), dispatchEvent() {} };
@@ -152,3 +152,10 @@ w = world({ readyState: "complete", visibility: "visible", blocked: false, distr
 check("other sites have no counter", !w.chipShown);
 w = world({ readyState: "complete", visibility: "visible", blocked: false, distraction: true, door: true, budget: { connected: true, budget: { enabled: false } } });
 check("with the budget off there is no counter", !w.chipShown);
+
+// Firefox stops an updated copy without telling it; the new copy takes away
+// what the old one left on the page.
+w = world({ readyState: "complete", visibility: "visible", blocked: false, left: 3 });
+check("a cover, counter or trim left by a stopped copy is removed", w.removedLeft === 3);
+w = world({ readyState: "complete", visibility: "visible", blocked: true, trim: "youtube", pathname: "/watch" });
+check("the trim is marked as ours", w.styled && w.styleAttribute === "data-telemetry-trim");

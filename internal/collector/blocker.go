@@ -46,6 +46,10 @@ type Blocker struct {
 	// desktop package.
 	OpenExtensions func(bundleID string) error
 	Hide           func(title, reason string, pid int)
+	// FirefoxSigned reports whether the kept Firefox package carries
+	// Mozilla's signature, without which Firefox itself cannot install it
+	// (LibreWolf can). Unset means it does not.
+	FirefoxSigned func() bool
 	// GetGrayscale and SetGrayscale read and set the screen's grayscale
 	// filter; both default to the desktop package.
 	GetGrayscale func() (bool, error)

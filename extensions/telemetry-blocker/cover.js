@@ -10,7 +10,10 @@
 (() => {
   if (window.top !== window) return;
   // After an extension update, a new copy of this script takes over the page.
+  // Firefox stops the old copy without telling it, so what it put on the
+  // page is taken away here too.
   document.dispatchEvent(new Event("telemetry-cover-replaced"));
+  for (const left of document.querySelectorAll("telemetry-cover, telemetry-counter, style[data-telemetry-trim]")) left.remove();
   let cover = null;
   let stopped = false;
   let mediaTimer = null;
@@ -106,6 +109,7 @@
     trimmed = decision;
     if (!trimStyle) {
       trimStyle = document.createElement("style");
+      trimStyle.setAttribute("data-telemetry-trim", "");
       trimStyle.textContent = TRIMS[decision.trim].css;
     }
     if (!trimStyle.isConnected) document.documentElement.append(trimStyle);

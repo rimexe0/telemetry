@@ -18,7 +18,7 @@ tag=$(curl -fsSL "https://github.com/$repo/releases/latest/download/release.txt"
 mkdir -p "$dir" "$config_dir" "$units" "$HOME/.local/bin"
 work=$(mktemp -d)
 cd "$work"
-files=(telemetry-desktop telemetry-extension.tar.gz telemetry-extension.crx telemetry-linux-jobs.tar.gz telemetry-update.sh)
+files=(telemetry-desktop telemetry-extension.tar.gz telemetry-extension.crx telemetry-extension.xpi telemetry-linux-jobs.tar.gz telemetry-update.sh)
 for name in SHA256SUMS SHA256SUMS.sig "${files[@]}"; do
   curl -fsSL -o "$name" "https://github.com/$repo/releases/download/$tag/$name"
 done
@@ -34,6 +34,7 @@ tar -xzf telemetry-linux-jobs.tar.gz -C "$units" telemetry-update@.service telem
 mkdir -p "$dir/extension"
 tar -xzf telemetry-extension.tar.gz -C "$dir/extension"
 install -m 644 telemetry-extension.crx "$dir/extension.crx"
+install -m 644 telemetry-extension.xpi "$dir/extension.xpi"
 mkdir -p jobs
 tar -xzf telemetry-linux-jobs.tar.gz -C jobs
 
@@ -83,6 +84,31 @@ for policy_dir in /etc/chromium /etc/opt/chrome /etc/brave /etc/opt/edge; do
   if ! cmp -s jobs/telemetry-browser-policy.json "$policy"; then
     echo "Installing the browser policy that keeps the Telemetry extension installed in $policy_dir (asks for your password)"
     sudo install -D -m 644 jobs/telemetry-browser-policy.json "$policy"
+  fi
+done
+
+# LibreWolf and Firefox read a system policies.json from /etc/<browser>/policies.
+# It replaces the policies.json they ship in their own folder, so that
+# file's policies are kept in it (the one already in /etc when there is one).
+# It makes every profile install the Telemetry extension from this collector,
+# also in private windows, and it cannot be removed or turned off there.
+# Firefox itself installs only a package Mozilla signed. Flatpak copies read
+# policy from inside their sandbox and are not covered.
+for browser in librewolf firefox; do
+  command -v "$browser" >/dev/null || continue
+  [[ "$browser" != firefox ]] || grep -qa META-INF/mozilla.rsa "$dir/extension.xpi" || continue
+  policy="/etc/$browser/policies/policies.json"
+  base="$policy"
+  if [[ ! -f "$base" ]]; then
+    for install_dir in "$(dirname "$(readlink -f "$(command -v "$browser")")")" "/usr/lib/$browser" "/usr/lib64/$browser" "/opt/$browser" "/usr/share/$browser"; do
+      base="$install_dir/distribution/policies.json"
+      [[ -f "$base" ]] && break
+    done
+  fi
+  "$dir/telemetry-desktop" browser-policy -xpi "$dir/extension.xpi" -base "$base" > "$browser-policies.json"
+  if ! cmp -s "$browser-policies.json" "$policy"; then
+    echo "Installing the browser policy that keeps the Telemetry extension installed in $browser (asks for your password)"
+    sudo install -D -m 644 "$browser-policies.json" "$policy"
   fi
 done
 

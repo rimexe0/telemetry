@@ -194,12 +194,13 @@ function listen() {
 // and the collector names its version. Reloading takes it into use. It reloads
 // once per version, so a copy loaded from another folder does not keep trying.
 // A copy browser policy installed comes from the collector's packed one
-// instead: the browser fetches it when asked to check.
+// instead: Chromium fetches it when asked to check. Firefox and LibreWolf
+// cannot be asked; their policy has them check every hour and at each start.
 async function updateIfNeeded(wanted) {
   if (!wanted || wanted === chrome.runtime.getManifest().version) return;
   const self = await chrome.management.getSelf().catch(() => null);
   if (self && self.installType === "admin") {
-    chrome.runtime.requestUpdateCheck().catch(() => {});
+    if (typeof chrome.runtime.requestUpdateCheck === "function") chrome.runtime.requestUpdateCheck().catch(() => {});
     return;
   }
   const { reloadedFor } = await chrome.storage.local.get("reloadedFor");

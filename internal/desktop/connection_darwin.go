@@ -49,11 +49,10 @@ func AppOfConnection(remote string) (string, error) {
 		if path == "" {
 			continue
 		}
-		app, _, found := strings.Cut(path, ".app/")
-		if !found {
+		app := outerApp(path)
+		if app == "" {
 			continue
 		}
-		app += ".app"
 		if id, ok := bundleIDs.Load(app); ok {
 			return id.(string), nil
 		}
@@ -65,6 +64,18 @@ func AppOfConnection(remote string) (string, error) {
 		return strings.TrimSpace(string(id)), nil
 	}
 	return "", fmt.Errorf("no app holds the connection from port %s", port)
+}
+
+// outerApp is the outermost app bundle holding an executable, empty when it
+// is in none. Chromium's network helper and Firefox's (plugin-container.app
+// inside LibreWolf.app) count as their browser; Firefox makes most requests
+// from the browser's own process.
+func outerApp(path string) string {
+	app, _, found := strings.Cut(path, ".app/")
+	if !found {
+		return ""
+	}
+	return app + ".app"
 }
 
 // pidPath is the executable of a process, or empty when it cannot be read.
