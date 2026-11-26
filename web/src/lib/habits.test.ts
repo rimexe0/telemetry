@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cellState, cellTitle, combinedLevel, combinedTitle, heatmapLayout, moveHabit, normalizeWeekdays, runsText, sortHabits, weekdaysText } from './habits';
+import { cellState, cellTitle, combinedLevel, combinedTitle, heatmapLayout, moveHabit, normalizeWeekdays, runsText, sortHabits, weekdaysText, weekStrip } from './habits';
 
 describe('heatmap layout', () => {
   it('puts days in Monday-first week columns', () => {
@@ -89,5 +89,46 @@ describe('habit list', () => {
     expect(normalizeWeekdays([0, 5, 1, 1])).toEqual([1, 5, 0]);
     expect(weekdaysText(null)).toBe('Every day');
     expect(weekdaysText([0, 6])).toBe('Sat, Sun');
+  });
+});
+
+describe('week strip', () => {
+  // 2026-11-26 is a Thursday.
+  const days = {
+    '2026-11-20': 'none', '2026-11-21': 'done', '2026-11-22': 'missed', '2026-11-23': 'unscheduled',
+    '2026-11-25': 'done', '2026-11-26': 'missed'
+  } as const;
+
+  it('shows the last seven days, oldest first, ending today', () => {
+    const cells = weekStrip('Walk', days, '2026-11-26', false);
+    expect(cells.map(cell => cell.day)).toEqual(['2026-11-20', '2026-11-21', '2026-11-22', '2026-11-23', '2026-11-24', '2026-11-25', '2026-11-26']);
+    expect(cells.map(cell => cell.letter).join('')).toBe('FSSMTWT');
+    expect(cells.map(cell => cell.today)).toEqual([false, false, false, false, false, false, true]);
+  });
+
+  it('keeps recorded days and leaves a day without a record unknown, never missed', () => {
+    const cells = weekStrip('Walk', days, '2026-11-26', false);
+    expect(cells.map(cell => cell.state)).toEqual(['none', 'done', 'missed', 'unscheduled', 'unknown', 'done', 'open']);
+    expect(cells[4].title).toMatch(/^Walk, Tue,? 24 Nov 2026: no record$/);
+  });
+
+  it('shows today as open until ticked, whatever the heatmap said, and done once ticked', () => {
+    expect(weekStrip('Walk', days, '2026-11-26', false).at(-1)?.state).toBe('open');
+    expect(weekStrip('Walk', days, '2026-11-26', true).at(-1)?.state).toBe('done');
+    expect(weekStrip('Walk', { '2026-11-26': 'done' }, '2026-11-26', false).at(-1)?.state).toBe('open');
+  });
+
+  it('keeps today unscheduled or before the habit when the server says so', () => {
+    expect(weekStrip('Walk', { '2026-11-26': 'unscheduled' }, '2026-11-26', false).at(-1)?.state).toBe('unscheduled');
+    expect(weekStrip('Walk', { '2026-11-26': 'none' }, '2026-11-26', false).at(-1)?.state).toBe('none');
+  });
+
+  it('works without any heatmap', () => {
+    const cells = weekStrip('Walk', null, '2026-11-26', true);
+    expect(cells.map(cell => cell.state)).toEqual(['unknown', 'unknown', 'unknown', 'unknown', 'unknown', 'unknown', 'done']);
+  });
+
+  it('crosses a month boundary', () => {
+    expect(weekStrip('Walk', {}, '2026-12-02', false).map(cell => cell.day)[0]).toBe('2026-11-26');
   });
 });

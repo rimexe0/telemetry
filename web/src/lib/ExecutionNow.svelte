@@ -54,7 +54,7 @@
     <p class="error" role="alert">{error}</p>
   {/if}
   {#if !view}
-    <h2 id="now-heading" class="headline">NOW</h2>
+    <h2 id="now-heading" class="headline">TASK</h2>
     <p class="muted">{loading ? 'Loading current task…' : 'Current task is unavailable. Nothing is assumed until the server responds.'}</p>
     {#if !loading}<button on:click={onrefresh}>Retry</button>{/if}
   {:else if view.kind === 'plan_your_day'}
@@ -64,7 +64,7 @@
     <button class="primary" on:click={onopenplan}>Open plan</button>
   {:else}
     <div class="head">
-      <h2 id="now-heading" class="headline">{view.kind === 'recovery' ? 'OFFLINE RECOVERY' : 'NOW'}</h2>
+      <h2 id="now-heading" class="headline">{view.kind === 'recovery' ? 'OFFLINE RECOVERY' : 'TASK'}</h2>
       {#if view.kind !== 'recovery'}<span class="state">{executionStateLabel[view.kind]}</span>{/if}
     </div>
 
@@ -179,9 +179,10 @@
 </section>
 
 <style>
-  .now { border-top: 1px solid var(--line); margin-top: 20px; max-width: 720px; padding-top: 12px; }
+  /* Inside Today's "Right now" card: the task being worked on, under what is on the Mac. */
+  .now { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 10px; }
   .head { align-items: baseline; display: flex; gap: 10px; justify-content: space-between; }
-  .headline { font-size: 1.6rem; letter-spacing: .04em; margin: 0 0 8px; }
+  .headline { font-size: .72rem; font-weight: 700; letter-spacing: .06em; margin: 0 0 4px; }
   .state { border: 1px solid var(--line); font-size: .72rem; padding: 1px 6px; text-transform: uppercase; }
   .title { font-size: 1.2rem; font-weight: 600; margin: 4px 0; }
   .next, .resume, .waiting, .interleave { margin: 6px 0; }

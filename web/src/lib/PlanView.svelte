@@ -22,6 +22,8 @@
   export let currentAlignment: AlignmentView | undefined;
   export let currentAlignmentError = '';
   export let today = '';
+  /** Off when the page shows its own day switcher. */
+  export let picker = true;
 
   export let onrefresh: () => void = () => {};
   export let onchangeday: (day: string) => void = () => {};
@@ -198,12 +200,16 @@
 
 <section class="plan-page" aria-labelledby="plan-heading">
   <header class="day-head">
+    {#if picker}
     <div class="day-nav">
       <button class="quiet-button" aria-label="Previous day" on:click={() => onchangeday(shiftDay(day, -1))}>‹</button>
       <h2 id="plan-heading">{dayLabel(day)}</h2>
       <button class="quiet-button" aria-label="Next day" on:click={() => onchangeday(shiftDay(day, 1))}>›</button>
       {#if !isToday && today}<button class="quiet-button" on:click={() => onchangeday(today)}>Today</button>{/if}
     </div>
+    {:else}
+    <h2 id="plan-heading" class="sr-only">Plan for {dayLabel(day)}</h2>
+    {/if}
     <div class="head-actions">
       {#if editing}
         <button class="quiet-button" on:click={() => { editing = false; }} disabled={saving}>Cancel</button>

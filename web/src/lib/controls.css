@@ -78,3 +78,11 @@
 :where(button.quiet-button) { background: var(--panel); color: var(--fg); white-space: nowrap; }
 :where(button):hover:not(:disabled), :where(button):focus-visible { background: var(--panel); color: var(--fg); outline: 2px solid var(--fg); outline-offset: 2px; }
 :where(button):disabled { cursor: not-allowed; opacity: .5; }
+
+/* On a phone every control is at least a fingertip high. */
+@media (max-width: 699px) {
+  :where(button, select, input:not([type='checkbox']):not([type='radio']):not([type='range'])) { min-height: 44px; }
+  :where(input[type='checkbox']) { height: 22px; width: 22px; }
+  :where(input[type='checkbox'])::before { height: 13px; width: 13px; }
+  :where(summary) { padding-block: 13px; }
+}

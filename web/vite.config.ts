@@ -287,6 +287,10 @@ const fixtureBudget = (() => {
   ];
   const ticks = new Set<number>([1]);
   let reasons = ['Fixture reason: a line the owner writes about what they want.'];
+  const followUps: Record<string, any>[] = [
+    { id: 1, title: 'Fixture follow-up that is due', due_at: new Date(Date.now() - 20 * 60_000).toISOString(), state: 'open' },
+    { id: 2, title: 'Fixture follow-up later today', due_at: new Date(Math.min(Date.now() + 90 * 60_000, Date.parse(`${today}T20:59:00Z`))).toISOString(), state: 'open' }
+  ];
   let door: Record<string, any> | null = null;
   const settings = { enabled: true, base_minutes: 120, max_minutes: 300, floor_minutes: 30, habits_for_max: 6, rate_distraction: 1, rate_day: 3, rate_bedtime: 10,
     rate_grayscale_off: 3, borrow_multiplier: 2, window_minutes: 60, window_use_minutes: 10, grace_minutes: 1, wait_minutes: 10 };
@@ -387,6 +391,24 @@ const fixtureBudget = (() => {
       }
       if (path === '/reasons' && method === 'GET') return [200, { reasons }];
       if (path === '/reasons' && method === 'PUT') { reasons = body.reasons; return [200, { reasons }]; }
+      // Today's follow-ups, what is on the Mac and one open collection problem.
+      if (path === '/device/now' && method === 'GET') {
+        const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+        return [200, {
+          generated_at: new Date().toISOString(), budget: state(),
+          tracking: { state: 'task', task_id: 3, task: 'Fixture task', since: ago(25), context: 'Fixture editor', agent_running: true,
+            your_turn: [{ task_id: 4, task: 'Fixture agent task', since: ago(6) }] },
+          follow_ups: followUps.filter(item => item.state === 'open'),
+          collection_incidents: [{ id: 1, device: 'fixture-mac', kind: 'silent', started_at: ago(50), detected_at: ago(40), detail: { device_name: 'Fixture Mac' } }]
+        }];
+      }
+      const followUpDone = path.match(/^\/device\/follow-ups\/(\d+)\/done$/);
+      if (followUpDone && method === 'POST') {
+        const item = followUps.find(row => row.id === Number(followUpDone[1]));
+        if (!item) return [404, { error: { detail: 'follow-up does not exist' } }];
+        item.state = 'done';
+        return [200, { follow_up: item }];
+      }
       return undefined;
     }
   };
@@ -428,7 +450,7 @@ function fixtureAPI(): Plugin {
           return;
         }
         if (path.startsWith('/execution') || path.startsWith('/plans') || path.startsWith('/activities') || path.startsWith('/activity') || path.startsWith('/policy') || path.startsWith('/context-rules') || path.startsWith('/openings') || path.startsWith('/morning') || path.startsWith('/lock') || path === '/planning/settings' ||
-          path.startsWith('/budget') || path.startsWith('/door') || path.startsWith('/habits') || path === '/reasons') {
+          path.startsWith('/budget') || path.startsWith('/door') || path.startsWith('/habits') || path === '/reasons' || path.startsWith('/device/')) {
           let raw = '';
           request.on('data', chunk => raw += chunk);
           request.on('end', () => {

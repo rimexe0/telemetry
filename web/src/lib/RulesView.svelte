@@ -2,6 +2,7 @@
   import { onDestroy } from 'svelte';
   import { getLock, unlockWithPin, type Activity, type LockResponse, type PlanningSettings } from './api';
   import { formatWindows } from './lock';
+  import ActivityLabels from './ActivityLabels.svelte';
   import BlockedApps from './BlockedApps.svelte';
   import BudgetRules from './BudgetRules.svelte';
   import ContextRules from './ContextRules.svelte';
@@ -12,9 +13,16 @@
   export let planningSettings: PlanningSettings | undefined;
   export let onupdatesettings: (enabled: boolean) => Promise<void> = async () => {};
   export let onleave: () => void = () => {};
+  /**
+   * Which settings page this is: the budget, the times (bedtime, the morning
+   * code, the day without a plan), what counts as a distraction, or the lock.
+   */
+  export let part: 'budget' | 'times' | 'distractions' | 'lock' = 'budget';
 
   // While the settings lock holds, the rules are not shown at all: only the
-  // PIN, entered by the person who holds it (owner request 2026-10-31).
+  // PIN, entered by the person who holds it (owner request 2026-10-31). The
+  // PIN card takes the rules' place on the page, so what sits outside the
+  // rules on the same page (openings) stays usable.
   let lockState: LockResponse | null = null;
   let pin = '';
   let pinBusy = false;
@@ -46,13 +54,6 @@
   let gateBusy = false;
   let gateError = '';
 
-  const sections = [
-    { id: 'rule-budget', label: 'Budget' },
-    { id: 'rule-no-plan', label: 'No plan' }, { id: 'rule-lock', label: 'Settings lock' }, { id: 'rule-bedtime', label: 'Bedtime' },
-    { id: 'rule-extension', label: 'Browser extension' }, { id: 'rule-morning', label: 'Morning code' }, { id: 'rule-apps', label: 'Blocked apps' },
-    { id: 'rule-projects', label: 'Project rules' }
-  ];
-
   async function updateGate(enabled: boolean) {
     gateBusy = true;
     gateError = '';
@@ -60,14 +61,12 @@
     catch (cause) { gateError = cause instanceof Error ? cause.message : 'Saving failed.'; }
     finally { gateBusy = false; }
   }
-
-  const jump = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 </script>
 
 {#if locked && lockState}
-  <div class="pin-gate" role="dialog" aria-modal="true" aria-labelledby="pin-heading">
+  <div class="pin-gate" role="group" aria-labelledby="pin-heading">
     <form class="pin-card" on:submit|preventDefault={unlock}>
-      <h2 id="pin-heading">Rules are locked</h2>
+      <h2 id="pin-heading">These settings are locked</h2>
       <p class="muted">
         {lockState.state.until ? `Locked until ${clock(lockState.state.until)}.` : 'Locked at all times.'}
         The person who holds the PIN enters it here; it opens the rules for {lockState.lock.unlock_minutes} minutes, and changes made then apply at once.
@@ -87,14 +86,12 @@
 {:else}
 <div class="rules">
   {#if unlockedUntil}<p class="unlocked" role="status">Unlocked with the PIN until {clock(unlockedUntil)}. Changes made now apply at once.</p>{/if}
-  <nav class="jump" aria-label="Rules sections">
-    {#each sections as section}<button class="quiet-button" on:click={() => jump(section.id)}>{section.label}</button>{/each}
-  </nav>
-  <p class="muted small intro">What is blocked and when. Distraction times and openings are set on the Now page and through the assistant.</p>
-
-  <div class="grid">
-    <div class="card wide" id="rule-budget"><BudgetRules /></div>
-    <div class="card" id="rule-no-plan">
+  {#if part === 'budget'}
+    <div class="card"><BudgetRules /></div>
+  {:else if part === 'times'}
+    <div class="card"><SettingsLock part="bedtime" /></div>
+    <div class="card"><MorningCode /></div>
+    <div class="card">
       <section aria-labelledby="no-plan-heading">
         <h3 id="no-plan-heading">When the day has no plan</h3>
         <label class="check"><input type="checkbox" checked={planningSettings?.daily_plan_gate_enabled ?? false} disabled={gateBusy || !planningSettings}
@@ -103,33 +100,29 @@
         {#if gateError}<p class="error" role="alert">{gateError}</p>{/if}
       </section>
     </div>
-    <div class="card" id="rule-lock"><SettingsLock part="lock" /></div>
-    <div class="card" id="rule-bedtime"><SettingsLock part="bedtime" /></div>
-    <div class="card" id="rule-extension"><SettingsLock part="extension" /></div>
-    <div class="card" id="rule-morning"><MorningCode /></div>
-    <div class="card wide" id="rule-apps"><BlockedApps /></div>
-    <div class="card wide" id="rule-projects"><ContextRules {activities} /></div>
-  </div>
+    <p class="muted small">Distraction times themselves are set through the assistant.</p>
+  {:else if part === 'distractions'}
+    <div class="card"><BlockedApps /></div>
+    <div class="card"><ActivityLabels /></div>
+    <div class="card"><SettingsLock part="extension" /></div>
+    <div class="card"><ContextRules {activities} /></div>
+  {:else}
+    <div class="card"><SettingsLock part="lock" /></div>
+  {/if}
 </div>
 {/if}
 
 <style>
-  .rules { margin-top: 8px; }
-  .jump { display: flex; flex-wrap: wrap; gap: 6px; }
-  .jump button { font-size: .75rem; padding: 4px 9px; }
-  .intro { margin: 8px 0 12px; }
-  .grid { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
-  @media (min-width: 980px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .wide { grid-column: 1 / -1; } }
-  .card { background: var(--panel); border: 1px solid var(--line); padding: 12px 14px; scroll-margin-top: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--fg); margin-bottom: 12px; padding: 12px 14px; }
   .card :global(> section) { border: 0; margin: 0; padding: 0; }
   .card :global(h3) { font-size: 1rem; margin: 0 0 4px; }
-  .check { align-items: center; display: flex; font-size: .85rem; gap: 8px; margin: 8px 0 4px; }
-  .pin-gate { align-items: center; background: var(--bg); display: flex; inset: 0; justify-content: center; padding: 20px; position: fixed; z-index: 40; }
-  .pin-card { background: var(--panel); border: 1px solid var(--fg); display: flex; flex-direction: column; gap: 12px; max-width: 380px; padding: 24px; width: 100%; }
-  .pin-card h2 { margin: 0; }
+  .check { align-items: center; display: flex; font-size: .85rem; gap: 8px; margin: 8px 0 4px; min-height: 44px; }
+  .pin-gate { display: flex; justify-content: center; }
+  .pin-card { background: var(--panel); border: 1px solid var(--fg); display: flex; flex-direction: column; gap: 12px; max-width: 420px; padding: 24px; width: 100%; }
+  .pin-card h2 { font-size: 1.2rem; margin: 0; }
   .pin-card p { margin: 0; }
   .pin { font-size: 1.6rem; letter-spacing: .4em; min-height: 52px; text-align: center; }
-  .unlocked { border-left: 3px solid var(--fg); font-size: .85rem; margin: 10px 0 0; padding: 4px 10px; }
+  .unlocked { border-left: 3px solid var(--fg); font-size: .85rem; margin: 0 0 12px; padding: 4px 10px; }
   .muted { color: var(--muted); }
   .small { font-size: .78rem; }
 </style>

@@ -1,21 +1,22 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { APIError, cancelDoor, getBudget, getLock, setHabitDone, type BudgetDay, type BudgetState } from './api';
-  import { bedtimeLine, budgetHistory, doorLive, doorStatus, formatBudgetMinutes, habitsDoneText, rateText } from './budget';
-  import { shortDate } from './lock';
+  import { APIError, cancelDoor, getBudget, getHabitHeatmap, getLock, getPolicy, setHabitDone, type BudgetState, type Heatmap } from './api';
+  import { bedtimeLine, budgetInForce, doorLive, doorStatus, formatBudgetMinutes } from './budget';
+  import { weekStrip } from './habits';
+  import { budgetLine, clock, habitWorth, leftShare } from './today';
   import DoorScreen from './DoorScreen.svelte';
+  import WeekStrip from './WeekStrip.svelte';
 
-  /** Also show the last 30 days from the day snapshots. */
-  export let history = false;
+  // Today's two cards: the distraction time left, with the door, and the
+  // day's habits to tick, each with its last seven days.
+
   /** Changes when habits were edited elsewhere, to load again. */
   export let refreshKey = 0;
   /** Called after a tick or untick, so other views can load again. */
   export let onticked: () => void = () => {};
-  /** Today's budget day once loaded, for the heatmap beside it. */
-  export let day = '';
 
   let state: BudgetState | null = null;
-  let days: BudgetDay[] = [];
+  let heatmap: Heatmap | null = null;
   let loaded = false;
   let missing = false;
   let error = '';
@@ -24,22 +25,23 @@
   let doorBusy = false;
   let showDoor = false;
   let bedtimeEnd = '';
+  let distractionRate: number | undefined;
   let now = new Date();
 
-  const clock = (at?: string | null) => (at ? new Date(at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Istanbul' }) : '');
   const tick = setInterval(() => { now = new Date(); }, 1000);
   const reload = setInterval(() => { if (!showDoor && document.visibilityState === 'visible') void load(); }, 30_000);
   onDestroy(() => { clearInterval(tick); clearInterval(reload); });
 
   $: void load(refreshKey);
   void getLock().then(lock => { bedtimeEnd = lock.bedtime?.enabled ? lock.bedtime.end ?? '' : ''; }).catch(() => undefined);
+  // The rate in distraction times is a setting, not part of today's state.
+  void getPolicy().then(policy => { distractionRate = policy ? budgetInForce(policy.config, new Date())?.rate_distraction : undefined; }).catch(() => undefined);
 
   async function load(_key = refreshKey) {
     try {
-      const result = await getBudget(history ? 30 : 1);
+      const [result, weeks] = await Promise.all([getBudget(1), getHabitHeatmap(7).catch(() => null)]);
       state = result.today;
-      days = result.days;
-      if (state?.day) day = state.day;
+      heatmap = weeks;
       error = '';
       missing = false;
     } catch (cause) {
@@ -59,6 +61,7 @@
       onticked();
     } catch (cause) {
       tickError = cause instanceof Error ? cause.message : 'The tick was not saved.';
+      await load();
     } finally {
       busyHabit = 0;
     }
@@ -82,107 +85,87 @@
   $: door = doorLive(state?.door, now) ? state?.door ?? null : null;
   $: status = door ? doorStatus(door, now) : null;
   $: bedtime = state ? bedtimeLine(state, now, bedtimeEnd) : '';
-  $: rows = state && history ? budgetHistory(days, state.day, 30) : [];
-  $: scale = Math.max(1, ...rows.map(row => Math.max(row.record?.budget ?? 0, row.record?.spent ?? 0)));
+  $: bedtimeLabel = !state ? '' : state.rate.kind === 'bedtime' ? (bedtimeEnd ? `bedtime until ${bedtimeEnd}` : 'bedtime now') : state.bedtime_at ? `bedtime ${clock(state.bedtime_at)}` : '';
+  $: share = state ? leftShare(state) : 0;
+  $: today = state?.day ?? '';
+  $: strips = Object.fromEntries(habits.map(habit => [habit.id, weekStrip(habit.name, heatmap?.habits.find(row => row.id === habit.id)?.days, today, habit.done)]));
 </script>
 
-<section class="today-budget" aria-labelledby="today-habits-heading">
-  <div class="columns">
-    <div class="habits-part">
-      <div class="title">
-        <h3 id="today-habits-heading">Today's habits</h3>
-        {#if habits.length}<span class="muted small">{doneCount} of {habits.length} done</span>{/if}
-      </div>
-      {#if !loaded}<p class="muted small">Loading…</p>
-      {:else if missing}<p class="muted small">This server does not have habits and the budget yet.</p>
-      {:else if !habits.length}<p class="muted small">No habits scheduled today. Add your own on the Habits page.</p>
+<section class="card budget-card" aria-labelledby="budget-label">
+  <div class="card-head">
+    <h2 id="budget-label" class="card-label">Distraction time</h2>
+    {#if bedtimeLabel}<span class="muted small">{bedtimeLabel}</span>{/if}
+  </div>
+  {#if !loaded}<p class="muted small">Loading…</p>
+  {:else if missing}<p class="muted small">This server does not have the distraction budget yet.</p>
+  {:else if !state}<p class="muted small">Unknown: the budget could not be loaded.</p>
+  {:else if !state.enabled}<p class="muted small">The budget is off. Distractions follow the other rules.</p>
+  {:else}
+    <p class="left"><strong>{formatBudgetMinutes(state.left)}</strong> <span class="muted small">left of {formatBudgetMinutes(state.budget)}</span></p>
+    <div class="bar" role="meter" aria-label="Distraction time left" aria-valuemin={0} aria-valuemax={Math.max(0, state.budget)} aria-valuenow={Math.max(0, Math.min(state.left, state.budget))}>
+      <span style="width:{share * 100}%"></span>
+    </div>
+    <p class="muted small">{budgetLine(state, distractionRate)}</p>
+    {#if bedtime}<p class="small note">{bedtime}</p>{/if}
+
+    <div class="door">
+      {#if door && status}
+        <p class="small"><span class="tag">door {status.phase}</span> {status.text}</p>
+        {#if status.phase === 'waiting'}<button class="quiet-button" disabled={doorBusy} on:click={() => cancel(door.id)}>Cancel</button>{/if}
       {:else}
-        <ul class="habit-list">
-          {#each habits as habit (habit.id)}
-            <li class:done={habit.done}>
-              <label>
-                <input type="checkbox" checked={habit.done} disabled={busyHabit !== 0}
-                  on:change={(event) => toggle(habit.id, event.currentTarget.checked)} />
-                <span class="name">{habit.name}</span>
-              </label>
-              {#if state?.enabled && habit.value > 0}
-                <span class="worth small" title="Budget minutes this habit is worth today">{habit.done ? `+${formatBudgetMinutes(habit.value)} earned` : `worth ${formatBudgetMinutes(habit.value)}`}</span>
-              {/if}
-            </li>
-          {/each}
-        </ul>
+        <button class="quiet-button wide" disabled={!state.door_available} on:click={() => { showDoor = true; }}>Open something early…</button>
+        {#if state.door_available}
+          <p class="muted small">{state.settings.wait_minutes} min wait, then {state.in_distraction_time ? 'until the distraction time ends' : `${state.settings.window_use_minutes} min of use in ${state.settings.window_minutes} min`}.</p>
+        {:else}
+          <p class="muted small">Not now{state.door_unavailable_reason ? `: ${state.door_unavailable_reason}` : '.'}{state.next_door_at ? ` From ${clock(state.next_door_at)}.` : ''}</p>
+        {/if}
       {/if}
-      {#if tickError}<p class="error" role="alert">{tickError}</p>{/if}
     </div>
 
-    {#if state}
-      <div class="budget-part" aria-labelledby="budget-heading">
-        <div class="title">
-          <h3 id="budget-heading">Distraction budget</h3>
-          <span class="muted small">{state.enabled ? shortDate(state.day) : 'off'}</span>
-        </div>
-        {#if !state.enabled}
-          <p class="muted small">The budget is off. Distractions follow the other rules.</p>
-        {:else}
-          <p class="left"><strong>{formatBudgetMinutes(state.left)}</strong> left of {formatBudgetMinutes(state.budget)}</p>
-          <p class="small">{rateText(state.rate)}{state.in_distraction_time ? '' : state.next_distraction_time ? ` · distraction time from ${clock(state.next_distraction_time)}` : ''}</p>
-          {#if bedtime}<p class="small bedtime">{bedtime}</p>{/if}
-          <dl>
-            <div><dt>Day's budget</dt><dd>{formatBudgetMinutes(state.budget)}</dd></div>
-            <div><dt>Earned by habits</dt><dd>+{formatBudgetMinutes(state.earned)}</dd></div>
-            <div><dt>Habits open yesterday</dt><dd>{state.penalty ? `−${formatBudgetMinutes(state.penalty)}` : '0 min'}</dd></div>
-            <div><dt>Borrowed by yesterday</dt><dd>{state.debt ? `−${formatBudgetMinutes(state.debt)}` : '0 min'}</dd></div>
-            <div><dt>Used</dt><dd>{formatBudgetMinutes(state.spent)}</dd></div>
-            <div><dt>Left</dt><dd>{formatBudgetMinutes(state.left)}</dd></div>
-            {#if state.debt_tomorrow}<div><dt>Borrowed from tomorrow</dt><dd>{formatBudgetMinutes(state.debt_tomorrow)}</dd></div>{/if}
-            <div><dt>Tomorrow can lend</dt><dd>{formatBudgetMinutes(state.borrowable)}</dd></div>
-          </dl>
-
-          <div class="door">
-            {#if door && status}
-              <span class="tag">door {status.phase}</span>
-              <span class="small">{status.text}</span>
-              {#if status.phase === 'waiting'}<button class="quiet-button" disabled={doorBusy} on:click={() => cancel(door.id)}>Cancel</button>{/if}
-            {:else if state.door_available}
-              <button class="quiet-button" on:click={() => { showDoor = true; }}>Make a door</button>
-              <span class="muted small">{state.settings.wait_minutes} min wait, then {state.in_distraction_time ? 'until the distraction time ends' : `${state.settings.window_use_minutes} min of use in ${state.settings.window_minutes} min`}.</span>
-            {:else}
-              <span class="muted small">No door now{state.door_unavailable_reason ? `: ${state.door_unavailable_reason}` : '.'}{state.next_door_at ? ` The next door can open from ${clock(state.next_door_at)}.` : ''}</span>
-            {/if}
-          </div>
-        {/if}
-      </div>
-    {/if}
-  </div>
-  {#if error}<p class="error" role="alert">{error}</p>{/if}
-
-  {#if history && state}
-    <details class="history" open>
-      <summary>Last 30 days</summary>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Day</th><th>Budget</th><th>Used</th><th><span class="sr-only">Used of budget</span></th><th>Passed on</th><th>Habits</th></tr></thead>
-          <tbody>
-            {#each rows as row (row.day)}
-              <tr>
-                <td>{shortDate(row.day)}</td>
-                {#if row.record}
-                  <td>{formatBudgetMinutes(row.record.budget)}</td>
-                  <td>{formatBudgetMinutes(row.record.spent)}</td>
-                  <td class="bar-cell"><span class="bar" aria-hidden="true"><span class="budget-bar" style="width:{(row.record.budget / scale) * 100}%"></span><span class="spent-bar" style="width:{(row.record.spent / scale) * 100}%"></span></span></td>
-                  <td>{row.record.debt_passed_on ? formatBudgetMinutes(row.record.debt_passed_on) : '—'}</td>
-                  <td>{habitsDoneText(row.record)}</td>
-                {:else}
-                  <td class="muted" colspan="5">No record</td>
-                {/if}
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-      <p class="muted small">A day without a record was not written by the server; nothing is assumed about it.</p>
+    <details class="sum">
+      <summary class="small">How today's time adds up</summary>
+      <dl>
+        <div><dt>Day's budget</dt><dd>{formatBudgetMinutes(state.budget)}</dd></div>
+        <div><dt>Earned by habits</dt><dd>+{formatBudgetMinutes(state.earned)}</dd></div>
+        <div><dt>Habits open yesterday</dt><dd>{state.penalty ? `−${formatBudgetMinutes(state.penalty)}` : '0 min'}</dd></div>
+        <div><dt>Borrowed by yesterday</dt><dd>{state.debt ? `−${formatBudgetMinutes(state.debt)}` : '0 min'}</dd></div>
+        <div><dt>Used</dt><dd>{formatBudgetMinutes(state.spent)}</dd></div>
+        <div><dt>Left</dt><dd>{formatBudgetMinutes(state.left)}</dd></div>
+        {#if state.debt_tomorrow}<div><dt>Borrowed from tomorrow</dt><dd>{formatBudgetMinutes(state.debt_tomorrow)}</dd></div>{/if}
+        <div><dt>Tomorrow can lend</dt><dd>{formatBudgetMinutes(state.borrowable)}</dd></div>
+      </dl>
     </details>
   {/if}
+  {#if error}<p class="error" role="alert">{error}</p>{/if}
+</section>
+
+<section class="card habits-card" aria-labelledby="habits-label">
+  <div class="card-head">
+    <h2 id="habits-label" class="card-label">Habits</h2>
+    {#if habits.length}<span class="muted small">{doneCount} of {habits.length}</span>{/if}
+  </div>
+  {#if !loaded}<p class="muted small">Loading…</p>
+  {:else if missing}<p class="muted small">This server does not have habits yet.</p>
+  {:else if !state}<p class="muted small">Unknown: the habits could not be loaded.</p>
+  {:else if !habits.length}<p class="muted small">No habits scheduled today. <a href="#habits">Add your own on Habits</a>.</p>
+  {:else}
+    <ul class="habit-list">
+      {#each habits as habit, index (habit.id)}
+        <li class:done={habit.done}>
+          <label>
+            <input type="checkbox" checked={habit.done} disabled={busyHabit !== 0}
+              on:change={(event) => toggle(habit.id, event.currentTarget.checked)} />
+            <span class="name">{habit.name}</span>
+            {#if state.enabled && habitWorth(habit.value)}
+              <span class="worth small" title={habit.done ? `Earned ${formatBudgetMinutes(habit.value)} of distraction time today` : `Worth ${formatBudgetMinutes(habit.value)} of distraction time today`}>{habitWorth(habit.value)}</span>
+            {/if}
+          </label>
+          <div class="week"><WeekStrip cells={strips[habit.id] ?? []} letters={index === habits.length - 1} /></div>
+        </li>
+      {/each}
+    </ul>
+  {/if}
+  {#if tickError}<p class="error" role="alert">{tickError}</p>{/if}
 </section>
 
 {#if showDoor && state}
@@ -190,42 +173,29 @@
 {/if}
 
 <style>
-  .today-budget { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 8px; }
-  .columns { display: grid; gap: 12px 24px; grid-template-columns: minmax(0, 1fr); }
-  @media (min-width: 860px) { .columns { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
-  .title { align-items: baseline; display: flex; flex-wrap: wrap; gap: 8px; }
-  h3 { font-size: 1rem; margin: 4px 0; }
-  p { margin: 4px 0; }
-  .habit-list { list-style: none; margin: 4px 0; padding: 0; }
-  .habit-list li { align-items: center; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 8px; min-height: 40px; padding: 4px 0; }
-  .habit-list label { align-items: center; cursor: pointer; display: flex; flex: 1; gap: 10px; min-width: 0; }
-  .habit-list input[type='checkbox'] { height: 20px; width: 20px; }
-  .habit-list input[type='checkbox']::before { height: 12px; width: 12px; }
-  .habit-list .name { font-size: 1rem; overflow-wrap: anywhere; }
-  .habit-list li.done .name { color: var(--muted); }
-  .worth { color: var(--muted); white-space: nowrap; }
-  .left { font-size: 1.05rem; }
-  .left strong { font-size: 1.6rem; letter-spacing: -.04em; }
-  .bedtime { border-left: 3px solid var(--fg); padding-left: 8px; }
-  dl { border-top: 1px solid var(--line); display: grid; gap: 3px; margin: 8px 0 0; padding-top: 6px; }
+  .left { align-items: baseline; display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 6px 0 8px; }
+  .left strong { font-size: 2.1rem; letter-spacing: -.04em; line-height: 1.1; }
+  .bar { background: var(--soft); border: 1px solid var(--fg); height: 10px; margin-bottom: 8px; }
+  .bar span { background: var(--fg); display: block; height: 100%; }
+  .note { border-left: 3px solid var(--fg); padding-left: 8px; }
+  .door { margin-top: 12px; }
+  .door p { margin: 6px 0 0; }
+  .door .wide { min-height: 44px; width: 100%; }
+  .tag { border: 1px solid var(--line); font-size: .68rem; padding: 0 4px; text-transform: uppercase; }
+  .sum { margin-top: 10px; }
+  .sum summary { color: var(--muted); cursor: pointer; }
+  dl { border-top: 1px solid var(--line); display: grid; gap: 3px; margin: 6px 0 0; padding-top: 6px; }
   dl div { display: flex; gap: 12px; justify-content: space-between; }
   dt { color: var(--muted); font-size: .75rem; }
   dd { font-size: .8rem; margin: 0; text-align: right; }
-  .door { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-  .tag { border: 1px solid var(--line); font-size: .68rem; padding: 0 4px; text-transform: uppercase; }
-  .history { margin-top: 12px; }
-  summary { cursor: pointer; font-size: .85rem; font-weight: 700; }
-  .table-wrap { border: 1px solid var(--line); margin-top: 6px; max-height: 420px; overflow: auto; }
-  table { border-collapse: collapse; min-width: 520px; width: 100%; }
-  th, td { border-bottom: 1px solid var(--line); font-size: .75rem; padding: 5px 8px; text-align: left; }
-  th { background: var(--soft); font-size: .68rem; letter-spacing: .05em; text-transform: uppercase; }
-  .bar-cell { width: 30%; }
-  .bar { display: block; height: 8px; position: relative; }
-  .budget-bar, .spent-bar { height: 100%; left: 0; position: absolute; top: 0; }
-  .budget-bar { border: 1px solid var(--line); }
-  .spent-bar { background: var(--fg); }
-  .muted { color: var(--muted); }
-  .small { font-size: .78rem; }
-  .error { background: var(--soft); border-left: 4px solid var(--fg); margin: 8px 0; padding: 9px; }
-  .sr-only { height: 1px; margin: -1px; overflow: hidden; position: absolute; width: 1px; }
+  .habit-list { list-style: none; margin: 4px 0 0; padding: 0; }
+  .habit-list li { border-bottom: 1px solid var(--line); padding: 2px 0 10px; }
+  .habit-list li:last-child { border-bottom: 0; padding-bottom: 2px; }
+  .habit-list label { align-items: center; cursor: pointer; display: flex; gap: 12px; min-height: 44px; }
+  .habit-list input[type='checkbox'] { height: 20px; width: 20px; }
+  .habit-list input[type='checkbox']::before { height: 12px; width: 12px; }
+  .name { flex: 1; font-size: .95rem; min-width: 0; overflow-wrap: anywhere; }
+  li.done .name { color: var(--muted); }
+  .worth { color: var(--muted); white-space: nowrap; }
+  .week { padding-left: 32px; }
 </style>

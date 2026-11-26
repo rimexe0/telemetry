@@ -140,3 +140,35 @@ export function runsText(current: number, longest: number): string {
   if (current > 0) return current >= best ? `${days(current)} in a row, the longest so far` : `${days(current)} in a row · longest ${days(best)}`;
   return `Longest run ${days(best)}`;
 }
+
+export type WeekCell = {
+  day: string;
+  state: CellState;
+  /** The weekday's letter, M T W T F S S. */
+  letter: string;
+  today: boolean;
+  title: string;
+};
+
+const weekdayLetters = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+/**
+ * The last `count` days of one habit, oldest first, ending on today's budget
+ * day, for the small strip under each habit on Today. Today follows the
+ * budget's own tick, which is newer than the heatmap: done once ticked, open
+ * until then, unless the habit is not scheduled or did not exist yet. Earlier
+ * days are what the server recorded; a day without a record stays unknown,
+ * never missed.
+ */
+export function weekStrip(name: string, days: Record<string, HabitDayStatus> | null | undefined, today: string, todayDone: boolean, count = 7): WeekCell[] {
+  const cells: WeekCell[] = [];
+  for (let back = Math.max(1, count) - 1; back >= 0; back--) {
+    const day = addDays(today, -back);
+    const recorded = days?.[day];
+    let state: CellState;
+    if (back === 0) state = todayDone ? 'done' : recorded === 'unscheduled' || recorded === 'none' ? recorded : 'open';
+    else state = recorded ?? 'unknown';
+    cells.push({ day, state, letter: weekdayLetters[weekdayOf(day)], today: back === 0, title: cellTitle(name, day, state) });
+  }
+  return cells;
+}

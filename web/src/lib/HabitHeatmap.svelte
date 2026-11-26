@@ -42,9 +42,9 @@
   const weekdayLabels = ['Mon', '', 'Wed', '', 'Fri', '', ''];
 </script>
 
-<section class="heatmap" aria-labelledby="heatmap-heading">
-  <div class="title">
-    <h3 id="heatmap-heading">The last year</h3>
+<section class="card heatmap" aria-labelledby="heatmap-heading">
+  <div class="card-head">
+    <h2 id="heatmap-heading" class="card-label">The last year</h2>
     {#if loading && data}<span class="muted small">Refreshing…</span>{/if}
   </div>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
@@ -102,7 +102,7 @@
       <li><span class="cell missed"></span>not done</li>
       <li><span class="cell open"></span>open today</li>
       <li><span class="cell unscheduled"></span>not scheduled</li>
-      <li><span class="cell none"></span>before the habit</li>
+      <li><span class="cell none"></span>before the habit existed</li>
       <li><span class="cell unknown"></span>no record</li>
     </ul>
     <p class="muted small">Days a habit is not scheduled don't end its run. A day with no record is shown as such, never as not done.</p>
@@ -110,32 +110,30 @@
 </section>
 
 <style>
-  .heatmap { --cell: 11px; --gap: 2px; border-top: 1px solid var(--line); margin-top: 16px; padding-top: 8px; }
-  .title { align-items: baseline; display: flex; gap: 8px; }
-  h3 { font-size: 1rem; margin: 4px 0; }
-  .scroll { border: 1px solid var(--line); max-width: 100%; overflow-x: auto; padding: 8px 10px; }
+  .heatmap { --cell: 11px; --gap: 2px; }
+  .scroll { border: 1px solid var(--line); margin-top: 8px; max-width: 100%; overflow-x: auto; padding: 8px 10px; }
   .scroll:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
-  .band { margin-bottom: 12px; width: max-content; }
+  .band { margin-bottom: 14px; width: max-content; }
   .band:last-child { margin-bottom: 0; }
-  .band-head { align-items: baseline; display: flex; flex-wrap: wrap; font-size: .85rem; gap: 8px; left: 0; margin-bottom: 3px; max-width: calc(100vw - 60px); position: sticky; }
+  .band-head { align-items: baseline; display: flex; flex-wrap: wrap; font-size: .85rem; gap: 8px; left: 0; margin-bottom: 3px; max-width: calc(100vw - 70px); position: sticky; width: fit-content; }
   .months, .grid { display: grid; gap: var(--gap); grid-template-columns: 26px repeat(var(--weeks), var(--cell)); }
   .months { color: var(--muted); font-size: .65rem; height: 14px; }
   .months span { white-space: nowrap; }
   .grid { grid-template-rows: repeat(7, var(--cell)); }
   .weekday { color: var(--muted); font-size: .6rem; grid-column: 1; line-height: var(--cell); }
-  .cell { box-sizing: border-box; display: inline-block; height: var(--cell); width: var(--cell); }
-  .cell.done { background: var(--fg); }
+  .cell { box-sizing: border-box; display: inline-block; height: var(--cell); position: relative; width: var(--cell); }
+  /* The same cells as the week strips on Today. */
+  .cell.done { background: var(--done); }
   .cell.missed { background: var(--soft); border: 1px solid var(--line); }
-  .cell.open { border: 1px solid var(--fg); }
-  .cell.unscheduled { border: 1px dashed var(--line); }
-  .cell.none { background: transparent; }
-  .cell.none::after { background: var(--line); content: ''; display: block; height: 1px; margin: 5px auto 0; width: 3px; }
+  .cell.open { outline: 1px solid var(--fg); outline-offset: -1px; }
+  .cell.none { border: 1px dashed var(--line); }
+  .cell.unscheduled::after { background: var(--line); content: ''; height: 2px; left: 4px; position: absolute; top: 4px; width: 2px; }
   .cell.unknown, .cell.level--1 { background: repeating-linear-gradient(135deg, var(--soft) 0 2px, transparent 2px 4px); }
   .cell.level-0 { background: var(--soft); border: 1px solid var(--line); }
-  .cell.level-1 { background: color-mix(in srgb, var(--fg) 30%, var(--panel)); }
-  .cell.level-2 { background: color-mix(in srgb, var(--fg) 55%, var(--panel)); }
-  .cell.level-3 { background: color-mix(in srgb, var(--fg) 78%, var(--panel)); }
-  .cell.level-4 { background: var(--fg); }
+  .cell.level-1 { background: color-mix(in srgb, var(--done) 35%, var(--panel)); }
+  .cell.level-2 { background: color-mix(in srgb, var(--done) 60%, var(--panel)); }
+  .cell.level-3 { background: color-mix(in srgb, var(--done) 80%, var(--panel)); }
+  .cell.level-4 { background: var(--done); }
   .legend { color: var(--muted); display: flex; flex-wrap: wrap; font-size: .72rem; gap: 4px 14px; list-style: none; margin: 8px 0 4px; padding: 0; }
   .legend li { align-items: center; display: flex; gap: 5px; }
   .tag { border: 1px solid var(--line); font-size: .65rem; padding: 0 4px; text-transform: uppercase; }

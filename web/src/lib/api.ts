@@ -1117,3 +1117,67 @@ export async function saveReasons(reasons: string[]): Promise<string[]> {
   const result = await request<{ reasons?: string[] | null }>('/v1/reasons', { method: 'PUT', ...jsonBody({ reasons }) });
   return result.reasons ?? reasons;
 }
+
+// What a device is told now (GET /v1/device/now, which the owner's panel
+// session may read too): the parts Today shows. The rest of the answer is for
+// devices following the policy and is left out here.
+
+/** Something to come back to. A place follow-up comes here only once its place was reached. */
+export type FollowUp = {
+  id: number;
+  title: string;
+  /** When it is due; for a place follow-up, when the place was reached if that was later. */
+  due_at: string;
+  state: string;
+  triggered_at?: string | null;
+  place?: { label?: string } | null;
+};
+
+export type TurnRef = { task_id: number; task: string; since: string };
+
+export type FocusNow = { task_id: number; task: string; next_action?: string; since: string; on: 'on' | 'off' | 'unknown' | 'away' | string; context?: string; off_since?: string | null };
+
+/** What the server reads at the Mac right now. */
+export type Tracking = {
+  state: 'away' | 'distraction' | 'task' | 'other' | string;
+  task_id?: number;
+  task?: string;
+  since?: string | null;
+  context?: string;
+  excused?: boolean;
+  agent_running: boolean;
+  your_turn: TurnRef[] | null;
+  focus?: FocusNow | null;
+};
+
+export type CollectionIncident = {
+  id: number;
+  device: string;
+  kind: string;
+  started_at: string;
+  detected_at: string;
+  ended_at?: string | null;
+  detail?: Record<string, unknown> | null;
+};
+
+export type DeviceNow = {
+  generated_at: string;
+  tracking: Tracking | null;
+  follow_ups: FollowUp[];
+  collection_incidents: CollectionIncident[];
+};
+
+export async function getDeviceNow(): Promise<DeviceNow> {
+  const result = await request<Partial<DeviceNow> & Record<string, unknown>>('/v1/device/now');
+  return {
+    generated_at: String(result.generated_at ?? ''),
+    tracking: (result.tracking ?? null) as Tracking | null,
+    follow_ups: (result.follow_ups ?? []) as FollowUp[],
+    collection_incidents: (result.collection_incidents ?? []) as CollectionIncident[]
+  };
+}
+
+/** Marks one follow-up done, as the phone's Done button did. */
+export async function followUpDone(id: number): Promise<void> {
+  await request(`/v1/device/follow-ups/${encodeURIComponent(id)}/done`, jsonPost());
+}

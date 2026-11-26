@@ -1,31 +1,27 @@
 <script lang="ts">
   import DayPicker from './DayPicker.svelte';
-  import { decideLabelProposal, getActivityLabels, getActivitySummary, removeActivityLabel, type ActivityLabel, type ActivitySummary, type LabelProposal } from './api';
-  import { describeChange, deviceName, formatMinutes, observedLine, observedTop } from './activity';
+  import ActivityLabels from './ActivityLabels.svelte';
+  import { getActivitySummary, type ActivitySummary } from './api';
+  import { deviceName, formatMinutes, observedLine, observedTop } from './activity';
   import { clockLabel } from './plan';
 
   export let date = '';
+  /** Off when the page shows its own day switcher. */
+  export let picker = true;
 
   let summary: ActivitySummary | undefined;
-  let labels: ActivityLabel[] = [];
-  let proposals: LabelProposal[] = [];
   let loading = false;
-  let busy = false;
   let error = '';
   let loadedFor: string | undefined;
 
   $: if (loadedFor !== date) void load();
-  $: pending = proposals.filter(item => item.status === 'pending');
 
   async function load() {
     loadedFor = date;
     loading = true;
     error = '';
     try {
-      const [day, current] = await Promise.all([getActivitySummary(date || undefined), getActivityLabels()]);
-      summary = day;
-      labels = current.labels;
-      proposals = current.proposals;
+      summary = await getActivitySummary(date || undefined);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : 'Unable to load activity.';
     } finally {
@@ -33,51 +29,20 @@
     }
   }
 
-  async function decide(proposal: LabelProposal, accept: boolean) {
-    busy = true;
-    error = '';
-    try {
-      await decideLabelProposal(proposal, accept);
-      await load();
-    } catch (cause) {
-      error = cause instanceof Error ? cause.message : 'Could not save the decision.';
-    } finally {
-      busy = false;
-    }
-  }
-
-  async function remove(label: ActivityLabel) {
-    busy = true;
-    error = '';
-    try {
-      await removeActivityLabel(label.id);
-      await load();
-    } catch (cause) {
-      error = cause instanceof Error ? cause.message : 'Could not remove the label.';
-    } finally {
-      busy = false;
-    }
-  }
 </script>
 
 <section class="activity" aria-labelledby="activity-heading">
-  <div class="section-title">
-    <h2 id="activity-heading">Where the time went</h2>
-    <DayPicker value={date} onchange={(value) => (date = value)} disabled={loading} />
-  </div>
+  {#if picker}
+    <div class="section-title">
+      <h2 id="activity-heading">Where the time went</h2>
+      <DayPicker value={date} onchange={(value) => (date = value)} disabled={loading} />
+    </div>
+  {:else}
+    <h2 id="activity-heading" class="sr-only">Where the time went</h2>
+  {/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 
-  {#each pending as proposal (proposal.id)}
-    <div class="proposal" role="group" aria-label="Label proposal">
-      <strong>Label proposal</strong>
-      <span class="muted small">{proposal.reason}</span>
-      <ul>{#each proposal.changes as change}<li>{describeChange(change)}</li>{/each}</ul>
-      <div class="actions">
-        <button disabled={busy} on:click={() => decide(proposal, true)}>Accept</button>
-        <button class="quiet-button" disabled={busy} on:click={() => decide(proposal, false)}>Reject</button>
-      </div>
-    </div>
-  {/each}
+  <ActivityLabels show="proposals" onchange={load} />
 
   {#if loading && !summary}<p class="muted">Loading…</p>{/if}
   {#if summary}
@@ -127,11 +92,7 @@
     </div>
   {/if}
 
-  <h3>Labels</h3>
-  <p class="muted small">Tell your assistant what an app or site is to you; it proposes a label and you accept it here.</p>
-  <ul>
-    {#each labels as label (label.id)}<li><span class="tag">{label.label}</span> <code>{label.match}</code> <span class="muted small">{label.kind}</span><button class="quiet-button push" disabled={busy} on:click={() => remove(label)}>Remove</button></li>{:else}<li class="muted">No labels yet.</li>{/each}
-  </ul>
+  <p class="muted small">Labels are kept in Settings, under What counts as a distraction.</p>
 </section>
 
 <style>
@@ -141,20 +102,19 @@
   li { align-items: center; border-bottom: 1px solid var(--line); display: flex; gap: 8px; font-size: .85rem; padding: 4px 0; }
   code { overflow-wrap: anywhere; }
   .value { margin-left: auto; white-space: nowrap; }
-  .push { margin-left: auto; }
   .tag { border: 1px solid var(--line); font-size: .68rem; padding: 0 4px; text-transform: uppercase; }
   .bars li { border: 0; padding: 2px 0; }
   .bars .name { flex: 0 0 7rem; overflow: hidden; text-overflow: ellipsis; }
   .bars .unlabeled { color: var(--muted); }
   .bar { background: var(--text, currentColor); height: 8px; opacity: .55; }
   .insights li { align-items: baseline; flex-wrap: wrap; }
+  .review li { flex-wrap: wrap; }
+  .review .value { white-space: normal; }
   .review .when { flex: 0 0 6.2rem; white-space: nowrap; }
   .review .what { min-width: 0; }
   .review .what .tag { margin-left: 6px; }
   .review .what .small { display: block; }
-  .proposal { border: 1px solid var(--line); margin: 8px 0; padding: 8px; }
-  .proposal ul li { border: 0; padding: 1px 0; }
-  .actions { display: flex; gap: 6px; }
   .muted { color: var(--muted); }
   .small { font-size: .78rem; }
+  .sr-only { height: 1px; margin: -1px; overflow: hidden; position: absolute; width: 1px; }
 </style>

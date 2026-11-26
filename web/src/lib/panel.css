@@ -1,0 +1,15 @@
+/* The parts the four places share, in the panel's own look: square boxes
+   with a 1px rule in the text colour, a 2px rule under each page title, and
+   small labels. :where() keeps these at zero specificity, so a component's
+   own styles still win. */
+:where(.card) { background: var(--panel); border: 1px solid var(--fg); margin: 0 0 12px; padding: 12px 14px; }
+:where(.card-head) { align-items: baseline; display: flex; gap: 8px; justify-content: space-between; }
+:where(.card-label) { font-size: .78rem; font-weight: 700; letter-spacing: .06em; margin: 0; text-transform: uppercase; }
+:where(.page-head) { align-items: baseline; border-bottom: 2px solid var(--fg); display: flex; flex-wrap: wrap; gap: 4px 12px; justify-content: space-between; margin: 0 0 14px; padding-bottom: 10px; }
+:where(.page-head h1) { font-size: 1.45rem; letter-spacing: -.04em; line-height: 1.1; margin: 0; }
+:where(.muted) { color: var(--muted); }
+:where(.small) { font-size: .78rem; }
+:where(.error) { background: var(--soft); border-left: 4px solid var(--fg); margin: 8px 0; padding: 9px; }
+:where(.sr-only) { height: 1px; margin: -1px; overflow: hidden; position: absolute; width: 1px; }
+:where(main a) { color: var(--fg); text-underline-offset: 2px; }
+:where(.card p) { margin: 4px 0; }

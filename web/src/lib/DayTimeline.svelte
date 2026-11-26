@@ -17,6 +17,8 @@
   export let oninspect: (observation: Observation) => void = () => undefined;
   export let ondatechange: () => void = () => undefined;
   export let onrefresh: () => void = () => ondatechange();
+  /** Off when the page shows its own day switcher. */
+  export let picker = true;
 
   type DaySegment = { start: number; end: number; label: string; detail: string; evidence: Observation[]; kind: string };
   type DayLane = { name: string; note: string; segments: DaySegment[] };
@@ -306,7 +308,7 @@
 
 <section class="day-view" aria-label="Day" data-status={status ? 'ready' : undefined}>
   <div class="day-header">
-    <DayPicker value={date} onchange={changeDate} />
+    {#if picker}<DayPicker value={date} onchange={changeDate} />{/if}
     <div class="day-controls" aria-label="Timeline controls">
       <button class:chosen={layout==='timeline'} aria-pressed={layout==='timeline'} on:click={()=>layout='timeline'}>Timeline</button>
       <button class:chosen={layout==='list'} aria-pressed={layout==='list'} on:click={()=>{layout='list'; listLimit=200;}}>List</button>

@@ -72,8 +72,8 @@
   const archive = (habit: Habit, value: boolean) => act(() => updateHabit(habit.id, { archived: value }));
 </script>
 
-<section class="habit-manage" aria-labelledby="habit-manage-heading">
-  <h3 id="habit-manage-heading">Your habits</h3>
+<section class="card habit-manage" aria-labelledby="habit-manage-heading">
+  <h2 id="habit-manage-heading" class="card-label">Edit habits</h2>
   <p class="muted small">Your own habits, ticked by hand. Each is worth the same share of the bonus on the days it is scheduled.</p>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 
@@ -133,8 +133,7 @@
 </section>
 
 <style>
-  .habit-manage { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 8px; }
-  h3 { font-size: 1rem; margin: 4px 0; }
+  .list li { min-height: 44px; }
   p { margin: 4px 0; }
   .row, .edit { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0; }
   .grow { display: flex; flex: 1; min-width: 12em; }

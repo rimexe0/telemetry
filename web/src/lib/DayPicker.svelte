@@ -4,6 +4,8 @@
   export let value = '';
   export let onchange: (date: string) => void = () => undefined;
   export let disabled = false;
+  /** The last day that can be chosen, YYYY-MM-DD; empty for no limit. */
+  export let max = '';
 
   const DAY_MS = 24 * 60 * 60 * 1000;
   const MONTH_FORMAT = new Intl.DateTimeFormat('en-GB', {
@@ -62,7 +64,7 @@
   }
 
   function changeDay(date: string): void {
-    if (disabled || !validDate(date)) return;
+    if (disabled || !validDate(date) || (max && date > max)) return;
     onchange(date);
     open = false;
   }
@@ -109,7 +111,7 @@
 
 <div class="day-picker">
   <div class="day-picker-row">
-    <button type="button" class="day-step" aria-label="Previous day" disabled={disabled} on:click={() => changeDay(shiftDay(selectedDate, -1))}>←</button>
+    <button type="button" class="day-step" aria-label="Previous day" disabled={disabled} on:click={() => changeDay(shiftDay(selectedDate, -1))}>‹</button>
     <button
       type="button"
       class="date-button"
@@ -119,7 +121,7 @@
       disabled={disabled}
       on:click={toggle}
     >{selectedLabel}</button>
-    <button type="button" class="day-step" aria-label="Next day" disabled={disabled} on:click={() => changeDay(shiftDay(selectedDate, 1))}>→</button>
+    <button type="button" class="day-step" aria-label="Next day" disabled={disabled || (!!max && shiftDay(selectedDate, 1) > max)} on:click={() => changeDay(shiftDay(selectedDate, 1))}>›</button>
     <button type="button" class="today-button" aria-label="Go to today" disabled={disabled || selectedDate === todayKey()} on:click={() => changeDay(todayKey())}>Today</button>
   </div>
 
@@ -144,6 +146,7 @@
               class:today={cell.date === todayKey()}
               aria-label={cell.date}
               aria-current={cell.date === selectedDate ? 'date' : undefined}
+              disabled={!!max && cell.date > max}
               on:click={() => changeDay(cell.date)}
             >{cell.day}</button>
           {:else}
@@ -160,10 +163,14 @@
   .day-picker-row { display: flex; align-items: center; gap: 4px; }
   button { border: 1px solid var(--line); border-radius: 0; background: var(--panel); color: var(--fg); cursor: pointer; font: inherit; }
   button:hover, button:focus-visible { outline: 1px solid var(--fg); outline-offset: 1px; }
-  button:disabled { cursor: wait; opacity: .5; }
-  .day-step { width: 27px; height: 27px; padding: 0; line-height: 1; }
-  .date-button { min-width: 136px; height: 27px; padding: 0 7px; text-align: left; white-space: nowrap; }
-  .today-button { height: 27px; padding: 0 7px; }
+  button:disabled { cursor: default; opacity: .4; }
+  .day-step { width: 34px; height: 34px; padding: 0; line-height: 1; font-size: 1.1rem; }
+  .date-button { min-width: 136px; height: 34px; padding: 0 9px; text-align: center; white-space: nowrap; }
+  .today-button { height: 34px; padding: 0 9px; }
+  @media (max-width: 699px) {
+    .day-step { width: 44px; height: 44px; }
+    .date-button, .today-button { height: 44px; }
+  }
   .calendar-popover { position: absolute; z-index: 10; top: calc(100% + 6px); left: 0; width: 244px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); box-shadow: 0 8px 24px rgba(0, 0, 0, .25); padding: 8px; }
   .calendar-head { display: grid; grid-template-columns: 27px 1fr 27px; align-items: center; gap: 5px; margin-bottom: 7px; text-align: center; font-size: .75rem; font-weight: 700; }
   .month-step { width: 27px; height: 25px; padding: 0; line-height: 1; }

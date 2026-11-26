@@ -1,23 +1,26 @@
 <script lang="ts">
-  import AddDevice from '$lib/AddDevice.svelte';
   import '$lib/controls.css';
-  import { onDestroy, onMount } from 'svelte';
+  import '$lib/panel.css';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { replaceState } from '$app/navigation';
-  import TimeSeries from '$lib/TimeSeries.svelte';
   import HealthHistory from '$lib/HealthHistory.svelte';
   import DayTimeline from '$lib/DayTimeline.svelte';
   import EventDetail from '$lib/EventDetail.svelte';
-  import CollectionStatus from '$lib/CollectionStatus.svelte';
   import PlanView from '$lib/PlanView.svelte';
-  import ExecutionNow from '$lib/ExecutionNow.svelte';
   import Openings from '$lib/Openings.svelte';
   import RulesView from '$lib/RulesView.svelte';
   import ActivityView from '$lib/ActivityView.svelte';
   import HabitsView from '$lib/HabitsView.svelte';
-  import TodayBudget from '$lib/TodayBudget.svelte';
   import SignInSettings from '$lib/SignInSettings.svelte';
+  import TodayView from '$lib/TodayView.svelte';
+  import PlaceNav from '$lib/PlaceNav.svelte';
+  import ActivityBar from '$lib/ActivityBar.svelte';
+  import SettingsHome from '$lib/SettingsHome.svelte';
+  import SourcesView from '$lib/SourcesView.svelte';
+  import DevicesView from '$lib/DevicesView.svelte';
   import { performNowAction, type NowAction, type NowSnapshot, type NowView } from '$lib/execution';
   import { dayKey, dayStart } from '$lib/health';
+  import { inPhoneApp, loadKey, parseHash, routeHash, samePlace, settingsPages, type ActivitySection, type LoadKey, type Place, type Route } from '$lib/nav';
   import { clearClerk, loadClerk, type ClerkClient } from '$lib/clerk';
   import {
     APIError,
@@ -75,26 +78,67 @@
 
   const fixtureMode = import.meta.env.VITE_TELEMETRY_FIXTURE === '1';
   const snapshotMode = import.meta.env.VITE_TELEMETRY_SNAPSHOT === '1';
-  let view: 'now' | 'habits' | 'activity' | 'day' | 'plan' | 'rules' | 'health' | 'collection' | 'devices' | 'sign-in' = 'now';
+
+  // Four places: Today, Habits, Activity and Settings. The place, the
+  // Activity section and its day live in the address (#activity/timeline/
+  // 2026-11-19), so a refresh comes back to the same place; old addresses
+  // (#now, #day/…, #rules…) open where their contents went.
+  let route: Route = { place: 'today' };
+  // What the place loads, named as the old tabs were; set with the route so
+  // a refresh started at once loads the new place.
+  let view: LoadKey = 'now';
   let selectedDay = dayKey(Date.now());
+  // The Activity section the nav goes back to.
+  let lastSection: ActivitySection = 'timeline';
   // Where the Day timeline starts: when you woke that day, else midnight.
   let dayWindowStart: number | undefined;
+  // Inside the phone app's WebView: the phone's own settings show, sign-in is the app's.
+  let inApp = false;
 
-  // The open tab, and the day for Day and Plan, live in the address
-  // (#day/2026-11-19), so a refresh comes back to the same place.
-  const viewNames = ['now', 'habits', 'activity', 'day', 'plan', 'rules', 'health', 'collection', 'devices', 'sign-in'];
   let locationReady = false;
-  function readLocation(): void {
-    const [name, day] = window.location.hash.slice(1).split('/');
-    if (viewNames.includes(name)) view = name as typeof view;
-    if ((name === 'day' || name === 'plan') && /^\d{4}-\d{2}-\d{2}$/.test(day ?? '') && day <= dayKey(Date.now())) selectedDay = day;
+  function setRoute(next: Route): void {
+    const moved = !samePlace(route, next);
+    route = next;
+    view = loadKey(next);
+    if (next.place === 'activity') {
+      lastSection = next.section;
+      selectedDay = next.day ?? dayKey(Date.now());
+    }
+    if (moved && locationReady) void tick().then(() => window.scrollTo({ top: 0 }));
   }
-  function writeLocation(current: string, day: string): void {
-    const hash = `#${current}${(current === 'day' || current === 'plan') && day !== dayKey(Date.now()) ? `/${day}` : ''}`;
+  function readLocation(): void {
+    setRoute(parseHash(window.location.hash, dayKey(Date.now())));
+  }
+  function currentHash(current: Route, day: string): string {
+    const today = dayKey(Date.now());
+    return routeHash(current.place === 'activity' ? { ...current, day } : current, today);
+  }
+  function writeLocation(current: Route, day: string): void {
+    const hash = currentHash(current, day);
     if (window.location.hash === hash) return;
     try { replaceState(`${window.location.pathname}${window.location.search}${hash}`, {}); } catch {}
   }
-  $: if (locationReady) writeLocation(view, selectedDay);
+  $: if (locationReady) writeLocation(route, selectedDay);
+  // A link to another place (the nav, a row in Settings) changes the hash.
+  function onHashChange(): void {
+    readLocation();
+    void refresh();
+  }
+  function navigate(hash: string): void {
+    if (window.location.hash === hash) onHashChange();
+    else window.location.hash = hash;
+  }
+  $: navHrefs = {
+    today: '#today',
+    habits: '#habits',
+    activity: routeHash({ place: 'activity', section: lastSection, day: selectedDay }, dayKey(Date.now())),
+    settings: '#settings'
+  } as Record<Place, string>;
+  function changeActivityDay(day: string): void {
+    selectedDay = day;
+    void refresh();
+  }
+  const todayTitle = () => new Date().toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Europe/Istanbul' });
   let dayObservations: Observation[] = [];
   let dayLoading = false;
   let dayError = '';
@@ -134,7 +178,7 @@
   let authenticated = false;
   let checkingSession = true;
   let loading = false;
-  let loadingView: 'now' | 'habits' | 'activity' | 'day' | 'plan' | 'rules' | 'health' | 'collection' | 'devices' | 'sign-in' | undefined;
+  let loadingView: LoadKey | undefined;
   let refreshQueued = false;
   let refreshQueuedForceDay = false;
   let error = '';
@@ -209,27 +253,6 @@
 
   function date(value?: string) {
     return value ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Istanbul' }).format(new Date(value)) : 'No collection yet';
-  }
-
-  function relative(value?: string) {
-    if (!value) return 'Unknown';
-    const minutes = Math.max(0, Math.round((Date.now() - Date.parse(value)) / 60_000));
-    if (minutes < 1) return 'Now';
-    if (minutes < 60) return `${minutes} min ago`;
-    const hours = Math.floor(minutes / 60);
-    return `${hours} hr${hours === 1 ? '' : 's'} ago`;
-  }
-
-  function sourceLabel(source:SourceSummary) {
-    const key=source.source_instance_key;
-    if(key.includes('aw-watcher-window'))return 'Computer windows';
-    if(key.includes('aw-watcher-afk'))return 'Keyboard / mouse';
-    if(key.includes('aw-watcher-web'))return 'Browser tabs';
-    if(key.includes('aw-watcher-codex'))return 'Codex';
-    return ({health_connect:'Health Connect',android_usage:'Phone apps'} as Record<string,string>)[source.source_kind] ?? source.source_kind;
-  }
-  function fingerprint(value: string) {
-    return value.length > 18 ? `${value.slice(0, 10)}…${value.slice(-6)}` : value;
   }
 
   type ThemeMode = 'system' | 'light' | 'dark';
@@ -373,8 +396,7 @@
 
   function openTodayPlan(): void {
     selectedDay = dayKey(Date.now());
-    view = 'plan';
-    void refresh();
+    navigate('#activity/plan');
   }
 
   async function handleSavePlan(input: PlanInput): Promise<void> {
@@ -575,8 +597,8 @@
       const now = new Date();
       if (requestedView === 'now') {
         await refreshNow();
-      } else if (requestedView === 'habits') {
-        // The habits view loads its own parts.
+      } else if (requestedView === 'self') {
+        // Habits, Apps, Sign-in and the Settings list load their own parts.
       } else if (requestedView === 'collection') {
         const [rows] = await Promise.all([listObservations({
           sourceInstanceKey: selectedSource || undefined,
@@ -789,8 +811,16 @@
     themeQuery = window.matchMedia('(prefers-color-scheme: dark)');
     themeQuery.addEventListener('change', applyTheme);
     applyTheme();
+    inApp = inPhoneApp(navigator.userAgent);
+    if (inApp) {
+      // The app draws edge to edge: the page pads itself for the system bars.
+      document.documentElement.dataset.app = 'phone';
+      const viewport = document.querySelector('meta[name="viewport"]');
+      if (viewport && !viewport.getAttribute('content')?.includes('viewport-fit')) viewport.setAttribute('content', `${viewport.getAttribute('content')}, viewport-fit=cover`);
+    }
     readLocation();
     locationReady = true;
+    window.addEventListener('hashchange', onHashChange);
     try {
       pairingId = new URLSearchParams(window.location.search).get('pair') ?? '';
       try {
@@ -842,12 +872,17 @@
   onDestroy(() => {
     if (timer) clearInterval(timer);
     themeQuery?.removeEventListener('change', applyTheme);
+    if (typeof window !== 'undefined') window.removeEventListener('hashchange', onHashChange);
     clerkUnsubscribe?.();
     setClerkTokenProvider(undefined);
     healthRequest?.abort();
     dayRequest?.abort();
     collectionRequest?.abort();
   });
+
+  $: themeLabel = themeMode === 'system' ? `System · ${theme}` : themeMode === 'light' ? 'Light' : 'Dark';
+  $: settingsPage = route.place === 'settings' ? route.page : undefined;
+  $: activitySection = route.place === 'activity' ? route.section : 'timeline';
 </script>
 
 <svelte:head>
@@ -856,212 +891,138 @@
 </svelte:head>
 <svelte:window on:keydown={(event) => { if (event.key === 'Escape') selectedObservation = undefined; }} />
 
-<main>
-  <header class="masthead">
-    <div>
-      <h1>Telemetry</h1>
-    </div>
-    <div class="header-actions"><button class="quiet-button" aria-label="Change theme" on:click={cycleTheme}>{themeMode === 'system' ? `System · ${theme}` : `Theme · ${themeMode}`}</button>
-    {#if authenticated || clerk?.isSignedIn}<button class="quiet-button" on:click={signOut}>Sign out</button>{/if}</div>
-  </header>
-
-  {#if fixtureMode}
-    <aside class="fixture" aria-label="Fixture preview notice">Fixture data</aside>
+<div class="shell" class:with-nav={authenticated && !checkingSession}>
+  {#if authenticated && !checkingSession}
+    <PlaceNav current={route.place} hrefs={navHrefs} />
   {/if}
-  {#if snapshotMode}<aside class="fixture">Local snapshot</aside>{/if}
 
-  {#if checkingSession}
-    <section class="state"><p>Loading…</p></section>
-  {:else if !authenticated}
-    <section class="login state" aria-labelledby="panel-login-heading">
-      <h2 id="panel-login-heading">Sign in</h2>
-      {#if pairingId && clerk?.isSignedIn}
-        <div class="pairing pairing-login" aria-labelledby="pairing-login-heading">
-          <div class="section-title"><h3 id="pairing-login-heading">Connect device</h3><span class="count">{pairing?.status ?? 'pending'}</span></div>
-          {#if pairingLoading}<p class="muted">Checking pairing…</p>
-          {:else if pairingApproved}<p>{pairing?.device_name ?? 'Device'} connected.</p>
-          {:else if pairing}<div class="pairing-row"><strong>{pairing.device_name}</strong><span>{pairing.device_id}</span><button on:click={connectPairing} disabled={pairing.status !== 'pending'}>Connect</button></div>
-          {:else}<p class="error" role="alert">{pairingError || 'Pairing session unavailable.'}</p>{/if}
-          {#if pairingError && pairing}<p class="error" role="alert">{pairingError}</p>{/if}
-        </div>
-      {:else if authConfig?.publishable_key && clerk && !authConfig.panel_token_enabled}
-        <button type="button" on:click={signInWithClerk} disabled={clerkLoading}>{clerkLoading ? 'Loading Clerk…' : 'Sign in with Clerk'}</button>
-        {#if clerkAccessBlocked && clerkUserId}<p class="access-note">Signed in as <code>{clerkUserId}</code></p>{/if}
-        {#if clerkError}<p class="error" role="alert">{clerkError}</p>{/if}
-      {:else}
-        {#if authConfig?.publishable_key && clerk}
+  <main>
+    {#if fixtureMode}
+      <aside class="fixture" aria-label="Fixture preview notice">Fixture data</aside>
+    {/if}
+    {#if snapshotMode}<aside class="fixture">Local snapshot</aside>{/if}
+
+    {#if checkingSession}
+      <section class="state"><p>Loading…</p></section>
+    {:else if !authenticated}
+      <header class="masthead">
+        <h1>Telemetry</h1>
+        <div class="header-actions"><button class="quiet-button" aria-label="Change theme" on:click={cycleTheme}>{themeMode === 'system' ? `System · ${theme}` : `Theme · ${themeMode}`}</button>
+        {#if clerk?.isSignedIn && !inApp}<button class="quiet-button" on:click={signOut}>Sign out</button>{/if}</div>
+      </header>
+      <section class="login state" aria-labelledby="panel-login-heading">
+        <h2 id="panel-login-heading">Sign in</h2>
+        {#if pairingId && clerk?.isSignedIn}
+          <div class="pairing pairing-login" aria-labelledby="pairing-login-heading">
+            <div class="section-title"><h3 id="pairing-login-heading">Connect device</h3><span class="count">{pairing?.status ?? 'pending'}</span></div>
+            {#if pairingLoading}<p class="muted">Checking pairing…</p>
+            {:else if pairingApproved}<p>{pairing?.device_name ?? 'Device'} connected.</p>
+            {:else if pairing}<div class="pairing-row"><strong>{pairing.device_name}</strong><span>{pairing.device_id}</span><button on:click={connectPairing} disabled={pairing.status !== 'pending'}>Connect</button></div>
+            {:else}<p class="error" role="alert">{pairingError || 'Pairing session unavailable.'}</p>{/if}
+            {#if pairingError && pairing}<p class="error" role="alert">{pairingError}</p>{/if}
+          </div>
+        {:else if authConfig?.publishable_key && clerk && !authConfig.panel_token_enabled}
           <button type="button" on:click={signInWithClerk} disabled={clerkLoading}>{clerkLoading ? 'Loading Clerk…' : 'Sign in with Clerk'}</button>
           {#if clerkAccessBlocked && clerkUserId}<p class="access-note">Signed in as <code>{clerkUserId}</code></p>{/if}
           {#if clerkError}<p class="error" role="alert">{clerkError}</p>{/if}
-          <p class="access-note">or with the panel token</p>
+        {:else}
+          {#if authConfig?.publishable_key && clerk}
+            <button type="button" on:click={signInWithClerk} disabled={clerkLoading}>{clerkLoading ? 'Loading Clerk…' : 'Sign in with Clerk'}</button>
+            {#if clerkAccessBlocked && clerkUserId}<p class="access-note">Signed in as <code>{clerkUserId}</code></p>{/if}
+            {#if clerkError}<p class="error" role="alert">{clerkError}</p>{/if}
+            <p class="access-note">or with the panel token</p>
+          {/if}
+          <form on:submit|preventDefault={signIn}>
+            <label for="panel-token">Panel token</label>
+            <input id="panel-token" bind:value={token} type="password" autocomplete="current-password" required />
+            <button type="submit" disabled={loading}>{loading ? 'Opening…' : 'Open panel'}</button>
+          </form>
+          {#if error}<p class="error" role="alert">{error}</p>{/if}
         {/if}
-        <form on:submit|preventDefault={signIn}>
-          <label for="panel-token">Panel token</label>
-          <input id="panel-token" bind:value={token} type="password" autocomplete="current-password" required />
-          <button type="submit" disabled={loading}>{loading ? 'Opening…' : 'Open panel'}</button>
-        </form>
-        {#if error}<p class="error" role="alert">{error}</p>{/if}
-      {/if}
-    </section>
-  {:else}
-    <nav class="view-tabs" aria-label="Panel views">
-      <button class:active={view === 'now'} aria-pressed={view === 'now'} on:click={() => { view = 'now'; void refresh(); }}>Now</button>
-      <button class:active={view === 'habits'} aria-pressed={view === 'habits'} on:click={() => { view = 'habits'; }}>Habits</button>
-      <button class:active={view === 'activity'} aria-pressed={view === 'activity'} on:click={() => { view = 'activity'; }}>Activity</button>
-      <button class:active={view === 'day'} aria-pressed={view === 'day'} on:click={() => { view = 'day'; void refresh(); }}>Day</button>
-      <button class:active={view === 'plan'} aria-pressed={view === 'plan'} on:click={() => { view = 'plan'; void refresh(); }}>Plan</button>
-      <button class:active={view === 'rules'} aria-pressed={view === 'rules'} on:click={() => { view = 'rules'; void refresh(); }}>Rules</button>
-      <button class:active={view === 'health'} aria-pressed={view === 'health'} on:click={() => { view = 'health'; void refresh(); }}>Health</button>
-      <button class:active={view === 'collection'} aria-pressed={view === 'collection'} on:click={() => { view = 'collection'; void refresh(); }}>Sources</button>
-      <button class:active={view === 'devices'} aria-pressed={view === 'devices'} on:click={() => { view = 'devices'; void refresh(); }}>Devices</button>
-      <button class:active={view === 'sign-in'} aria-pressed={view === 'sign-in'} on:click={() => { view = 'sign-in'; }}>Sign-in</button>
-    </nav>
-    {#each pendingPairings as item (item.pairing_id)}
-      <section class="pairing" aria-label="Device waiting to connect">
-        <div class="pairing-row"><strong>{item.device_name || 'A device'} wants to connect{item.returning ? ' again' : ''}</strong><span>{item.device_id}{item.returning ? ' · was connected before; connecting replaces its old key. Only connect it if you just set it up again.' : ''}{item.continues ? ` · the same phone as ${item.continues}, set up again; it keeps that phone's history` : ''}</span>
-          <button on:click={() => approvePending(item)} disabled={pendingApproving === item.pairing_id}>{pendingApproving === item.pairing_id ? 'Connecting…' : 'Connect'}</button></div>
-        {#if pendingError}<p class="error" role="alert">{pendingError}</p>{/if}
-      </section>
-    {/each}
-    {#if pairingId}
-      <section class="pairing" aria-labelledby="pairing-heading">
-        <div class="section-title"><h2 id="pairing-heading">Connect device</h2><span class="count">{pairing?.status ?? 'pending'}</span></div>
-        {#if pairingLoading}<p class="muted">Checking pairing…</p>
-        {:else if pairingApproved}<p>{pairing?.device_name ?? 'Device'} connected.</p>
-        {:else if pairing}
-          <div class="pairing-row"><strong>{pairing.device_name}</strong><span>{pairing.device_id}</span><button on:click={connectPairing} disabled={pairingLoading || pairing.status !== 'pending'}>Connect</button></div>
-        {:else if clerk?.isSignedIn || !clerk}<p class="error" role="alert">{pairingError || 'Pairing session unavailable.'}</p>
-        {:else}<button on:click={signInWithClerk} disabled={clerkLoading}>{clerkLoading ? 'Loading Clerk…' : 'Sign in to connect'}</button>{/if}
-        {#if pairingError && pairing}<p class="error" role="alert">{pairingError}</p>{/if}
-      </section>
-    {/if}
-    {#if view === 'now'}
-      <TodayBudget />
-      <ExecutionNow snapshot={nowSnapshot} loading={nowLoading} error={nowError || error} onaction={handleNowAction} onopenplan={openTodayPlan} onrefresh={() => refresh()} />
-      <Openings />
-    {:else if view === 'habits'}
-      <HabitsView />
-    {:else if view === 'activity'}
-      <ActivityView date={selectedDay} />
-    {:else if view === 'day'}
-      {#if error}<p class="error" role="alert">{error}</p>{/if}
-      <DayTimeline observations={dayObservations} {sources} start={dayWindowStart} bind:date={selectedDay} loading={dayLoading} error={dayError || error} status={dayStatus} ondatechange={refresh} onrefresh={() => refresh(true)} oninspect={(o) => selectedObservation = o} />
-    {:else if view === 'health'}
-      <div class="health-toolbar">
-        {#if healthSources.length > 1}
-          <label>Device <select bind:value={healthSource} on:change={refreshHealth}>{#each healthSources as source}<option value={source.source_instance_key}>{source.device_id}</option>{/each}</select></label>
-        {/if}
-        <span>UTC+03:00</span>
-        <button class="quiet-button" disabled={loading || healthLoading} on:click={() => refresh()}>Refresh health</button>
-      </div>
-      {#if error}<p class="error" role="alert">{error}</p>{/if}
-      <HealthHistory observations={healthObservations} loading={healthLoading} error={healthError} oninspect={(o) => selectedObservation = o} />
-    {:else if view === 'plan'}
-      <PlanView day={selectedDay} today={dayKey(Date.now())} {activities} {plan} {activitiesLoading} {planLoading} activitiesError={activitiesError} planError={planError}
-        {planVersions} assessments={planAssessments} {planEvidenceLoading} {planEvidenceError}
-        {currentAlignment} currentAlignmentError={currentAlignmentError}
-        onrefresh={refreshPlan} onchangeday={(day) => { selectedDay = day; void refresh(); }} onsave={handleSavePlan} onsetstate={handleBlockState}
-        oncreateactivity={handleCreateActivity} onupdateactivity={handleUpdateActivity} />
-    {:else if view === 'rules'}
-      <RulesView {activities} {planningSettings} onupdatesettings={handleUpdatePlanningSettings} onleave={() => { view = 'now'; void refresh(); }} />
-    {:else if view === 'sign-in'}
-      <SignInSettings />
-    {:else if view === 'devices'}
-      <AddDevice onconnected={refreshDevices} />
-      <section class="devices" aria-labelledby="devices-heading">
-        <div class="section-title"><h2 id="devices-heading">Devices</h2><button class="quiet-button" on:click={refreshDevices} disabled={devicesLoading}>{devicesLoading ? 'Refreshing…' : 'Refresh'}</button></div>
-        {#if devicesError}<p class="error" role="alert">{devicesError}</p>{/if}
-        <div class="device-list">
-          {#each devices as device (device.device_id)}
-            <div class:revoked={device.revoked_at} class="device-row">
-              <div><strong>{device.device_name}</strong><span>{device.device_id}</span></div>
-              {#if device.revoked_at}<span class="muted">Removed · add it again with a setup code</span>{:else}<button class="quiet-button" on:click={() => revoke(device)}>Remove</button>{/if}
-            </div>
-          {:else}<p class="empty">No devices</p>{/each}
-        </div>
       </section>
     {:else}
-    {#if error}<p class="error" role="alert">{error}</p>{/if}
+      {#each pendingPairings as item (item.pairing_id)}
+        <section class="pairing" aria-label="Device waiting to connect">
+          <div class="pairing-row"><strong>{item.device_name || 'A device'} wants to connect{item.returning ? ' again' : ''}</strong><span>{item.device_id}{item.returning ? ' · was connected before; connecting replaces its old key. Only connect it if you just set it up again.' : ''}{item.continues ? ` · the same phone as ${item.continues}, set up again; it keeps that phone's history` : ''}</span>
+            <button on:click={() => approvePending(item)} disabled={pendingApproving === item.pairing_id}>{pendingApproving === item.pairing_id ? 'Connecting…' : 'Connect'}</button></div>
+          {#if pendingError}<p class="error" role="alert">{pendingError}</p>{/if}
+        </section>
+      {/each}
+      {#if pairingId}
+        <section class="pairing" aria-labelledby="pairing-heading">
+          <div class="section-title"><h2 id="pairing-heading">Connect device</h2><span class="count">{pairing?.status ?? 'pending'}</span></div>
+          {#if pairingLoading}<p class="muted">Checking pairing…</p>
+          {:else if pairingApproved}<p>{pairing?.device_name ?? 'Device'} connected.</p>
+          {:else if pairing}
+            <div class="pairing-row"><strong>{pairing.device_name}</strong><span>{pairing.device_id}</span><button on:click={connectPairing} disabled={pairingLoading || pairing.status !== 'pending'}>Connect</button></div>
+          {:else if clerk?.isSignedIn || !clerk}<p class="error" role="alert">{pairingError || 'Pairing session unavailable.'}</p>
+          {:else}<button on:click={signInWithClerk} disabled={clerkLoading}>{clerkLoading ? 'Loading Clerk…' : 'Sign in to connect'}</button>{/if}
+          {#if pairingError && pairing}<p class="error" role="alert">{pairingError}</p>{/if}
+        </section>
+      {/if}
 
-    <CollectionStatus data={collectionStatus} {loading} error={collectionError} {selectedSource}
-      onsource={selectSource} oninspect={(observation) => selectedObservation = observation} onrefresh={refresh} />
-
-    {#if !collectionStatus}<section aria-labelledby="sources-heading">
-      <div class="section-title">
-        <div>
-          <h2 id="sources-heading">Sources</h2>
+      {#if route.place === 'today'}
+        <header class="page-head"><h1>Today</h1><span class="muted small">{todayTitle()}</span></header>
+        <div class="narrow">
+          <TodayView snapshot={nowSnapshot} loading={nowLoading} error={nowError || error} onaction={handleNowAction} onopenplan={openTodayPlan} onrefresh={() => refresh()} />
         </div>
-        <span class="count">{sources.length} recorded</span>
-      </div>
-      <div class="source-grid">
-        {#each sources as source (source.source_instance_key)}
-          <button class:chosen={selectedSource === source.source_instance_key} class="source-card" on:click={() => selectSource(source.source_instance_key)}>
-            <span class="source-kind">{sourceLabel(source)}</span>
-            <strong>{source.observation_count.toLocaleString()}</strong>
-            <span>retained observations</span>
-            <dl>
-              <div><dt>Device</dt><dd>{source.device_id}</dd></div>
-              <div><dt>Last collection</dt><dd>{relative(source.last_collected_at)}</dd></div>
-            </dl>
-          </button>
+      {:else if route.place === 'habits'}
+        <header class="page-head"><h1>Habits</h1></header>
+        <div class="narrow wide-ok"><HabitsView /></div>
+      {:else if route.place === 'activity'}
+        <header class="page-head"><h1>Activity</h1></header>
+        <ActivityBar section={activitySection} day={selectedDay} today={dayKey(Date.now())} onday={changeActivityDay} />
+        {#if activitySection === 'timeline'}
+          {#if error}<p class="error" role="alert">{error}</p>{/if}
+          <DayTimeline picker={false} observations={dayObservations} {sources} start={dayWindowStart} bind:date={selectedDay} loading={dayLoading} error={dayError || error} status={dayStatus} ondatechange={refresh} onrefresh={() => refresh(true)} oninspect={(o) => selectedObservation = o} />
+        {:else if activitySection === 'apps'}
+          <ActivityView picker={false} date={selectedDay} />
+        {:else if activitySection === 'health'}
+          <div class="health-toolbar">
+            {#if healthSources.length > 1}
+              <label>Device <select bind:value={healthSource} on:change={refreshHealth}>{#each healthSources as source}<option value={source.source_instance_key}>{source.device_id}</option>{/each}</select></label>
+            {/if}
+            <span>UTC+03:00</span>
+            <button class="quiet-button" disabled={loading || healthLoading} on:click={() => refresh()}>Refresh health</button>
+          </div>
+          {#if error}<p class="error" role="alert">{error}</p>{/if}
+          <HealthHistory observations={healthObservations} loading={healthLoading} error={healthError} oninspect={(o) => selectedObservation = o} />
         {:else}
-          <p class="empty">No sources</p>
-        {/each}
-      </div>
-    </section>{/if}
-
-    <section class="controls" aria-label="History controls">
-      <div class="control-group">
-        <span>Observation window</span>
-        <button class:active={range === '24h'} on:click={() => selectRange('24h')}>24 hours</button>
-        <button class:active={range === '7d'} on:click={() => selectRange('7d')}>7 days</button>
-      </div>
-      <p class="updated">{loading ? 'Refreshing…' : updatedAt ? `Last refreshed ${date(updatedAt.toISOString())}` : 'No data loaded'}</p>
-    </section>
-
-    <section class="timeline-section" aria-labelledby="timeline-heading">
-      <div class="section-title">
-        <div>
-          <h2 id="timeline-heading">Observation times</h2>
-        </div>
-        <span class="count">{observations.length.toLocaleString()} returned in this window</span>
-      </div>
-      <div class="timeline-frame">
-        <TimeSeries {observations} />
-        {#if observations.length === 0}<p class="empty chart-empty">No records</p>{/if}
-      </div>
-      <p class="caption">Records/hour · Limit 1,000</p>
-    </section>
-
-    <section class="records" aria-labelledby="records-heading">
-      <div class="section-title">
-        <div>
-          <h2 id="records-heading">Recent records</h2>
-        </div>
-        {#if selectedSource}<button class="quiet-button" on:click={() => selectSource(selectedSource)}>Clear source filter</button>{/if}
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Occurred</th><th>Source</th><th>Kind</th><th>Revision</th><th><span class="sr-only">Inspect</span></th></tr></thead>
-          <tbody>
-            {#each observations as observation (observation.source_instance_key + observation.source_record_key)}
-              <tr>
-                <td>{date(observation.occurred_at)}</td>
-                <td>{observation.source_kind}</td>
-                <td>{observation.kind}</td>
-                <td><code>{fingerprint(observation.revision_digest)}</code></td>
-                <td><button class="inspect" on:click={() => (selectedObservation = observation)}>Inspect</button></td>
-              </tr>
+          <PlanView picker={false} day={selectedDay} today={dayKey(Date.now())} {activities} {plan} {activitiesLoading} {planLoading} activitiesError={activitiesError} planError={planError}
+            {planVersions} assessments={planAssessments} {planEvidenceLoading} {planEvidenceError}
+            {currentAlignment} currentAlignmentError={currentAlignmentError}
+            onrefresh={refreshPlan} onchangeday={changeActivityDay} onsave={handleSavePlan} onsetstate={handleBlockState}
+            oncreateactivity={handleCreateActivity} onupdateactivity={handleUpdateActivity} />
+        {/if}
+      {:else if !settingsPage}
+        <header class="page-head"><h1>Settings</h1></header>
+        <SettingsHome {inApp} {themeLabel} oncycletheme={cycleTheme} onsignout={signOut} />
+      {:else}
+        <a class="back" href="#settings">‹ Settings</a>
+        <header class="page-head"><h1>{settingsPages[settingsPage]}</h1></header>
+        <div class="settings-page">
+          {#if settingsPage === 'budget' || settingsPage === 'distractions' || settingsPage === 'lock'}
+            <RulesView part={settingsPage} {activities} {planningSettings} onupdatesettings={handleUpdatePlanningSettings} onleave={() => navigate('#settings')} />
+          {:else if settingsPage === 'times'}
+            <div class="card"><Openings /></div>
+            <RulesView part="times" {activities} {planningSettings} onupdatesettings={handleUpdatePlanningSettings} onleave={() => navigate('#settings')} />
+          {:else if settingsPage === 'devices'}
+            <DevicesView {devices} loading={devicesLoading} error={devicesError} onrefresh={refreshDevices} onrevoke={revoke} />
+          {:else if settingsPage === 'sources'}
+            <SourcesView {collectionStatus} {collectionError} {error} {loading} {sources} {observations} {selectedSource} {range} {updatedAt}
+              onsource={selectSource} onrange={selectRange} oninspect={(observation) => selectedObservation = observation} onrefresh={refresh} />
+          {:else if settingsPage === 'sign-in'}
+            {#if inApp}
+              <p class="muted small">Inside the phone app, signing in is the app's own.</p>
             {:else}
-              <tr><td class="empty" colspan="5">No records</td></tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-    </section>
+              <SignInSettings />
+            {/if}
+          {/if}
+        </div>
+      {/if}
     {/if}
-  {/if}
-</main>
+  </main>
+</div>
 
 {#if authenticated && selectedObservation}
   <div class="drawer-backdrop" role="presentation" on:click={() => (selectedObservation = undefined)}></div>
@@ -1072,79 +1033,58 @@
 {/if}
 
 <style>
-  :global(:root) { color-scheme: dark; --bg:#111213; --panel:#191a1b; --fg:#eeeeeb; --muted:#aaa9a4; --line:#454647; --soft:#242628; }
-  :global(:root[data-theme="light"]) { color-scheme:light; --bg:#f5f5f2; --panel:#fff; --fg:#181918; --muted:#63645f; --line:#c4c5bf; --soft:#e9eae5; }
+  :global(:root) { color-scheme: dark; --bg:#111213; --panel:#191a1b; --fg:#eeeeeb; --muted:#aaa9a4; --line:#454647; --soft:#242628; --done:#2f8f5b; }
+  :global(:root[data-theme="light"]) { color-scheme:light; --bg:#f5f5f2; --panel:#fff; --fg:#181918; --muted:#63645f; --line:#c4c5bf; --soft:#e9eae5; --done:#2f8f5b; }
   @media (prefers-color-scheme: light) {
-    :global(:root:not([data-theme])) { color-scheme:light; --bg:#f5f5f2; --panel:#fff; --fg:#181918; --muted:#63645f; --line:#c4c5bf; --soft:#e9eae5; }
+    :global(:root:not([data-theme])) { color-scheme:light; --bg:#f5f5f2; --panel:#fff; --fg:#181918; --muted:#63645f; --line:#c4c5bf; --soft:#e9eae5; --done:#2f8f5b; }
   }
-  .header-actions { display:flex; gap:6px; }
+  /* Inside the phone app the page reaches under the system bars. */
+  :global(:root[data-app="phone"]) { --safe-top: env(safe-area-inset-top, 0px); --safe-right: env(safe-area-inset-right, 0px); --safe-bottom: env(safe-area-inset-bottom, 0px); --safe-left: env(safe-area-inset-left, 0px); }
   :global(*) { box-sizing: border-box; }
-  :global(body) { margin: 0; background: var(--bg); color: var(--fg); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+  :global(body) { margin: 0; background: var(--bg); color: var(--fg); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; overflow-x: hidden; }
   :global(button), :global(input) { font: inherit; }
-  main { width: min(1440px, calc(100% - 24px)); margin: 0 auto; padding: 14px 0 24px; }
-  .view-tabs, .health-toolbar { display:flex; align-items:center; gap:8px; margin:12px 0; flex-wrap:wrap; font-size:12px; }
+
+  .shell { margin: 0 auto; padding: 0 calc(12px + var(--safe-right, 0px)) 0 calc(12px + var(--safe-left, 0px)); width: min(1440px, 100%); }
+  main { min-width: 0; padding: calc(16px + var(--safe-top, 0px)) 0 24px; }
+  .shell.with-nav main { padding-bottom: calc(76px + var(--safe-bottom, 0px)); }
+  @media (min-width: 700px) {
+    .shell { padding: 0 24px; }
+    .shell.with-nav { column-gap: 32px; display: grid; grid-template-columns: 180px minmax(0, 1fr); }
+    .shell.with-nav main { padding: calc(22px + var(--safe-top, 0px)) 0 32px; }
+  }
+  .narrow { max-width: 720px; }
+  .back { color: var(--muted); display: inline-flex; align-items: center; font-size: .85rem; min-height: 44px; margin: -10px 0 0; text-decoration: none; }
+  .back:hover, .back:focus-visible { color: var(--fg); text-decoration: underline; }
+  .settings-page { max-width: 980px; }
+  .settings-page :global(.openings) { border-top: 0; margin-top: 0; padding-top: 0; }
+
+  .header-actions { display:flex; gap:6px; }
+  .health-toolbar { display:flex; align-items:center; gap:8px; margin:0 0 12px; flex-wrap:wrap; font-size:12px; }
   .health-toolbar span { flex:1; color:var(--muted); }
-  .view-tabs button { font-size:12px; padding:7px 10px; }
-  .masthead { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; border-bottom: 2px solid var(--fg); padding-bottom: 16px; }
+  .masthead { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; border-bottom: 2px solid var(--fg); padding-bottom: 16px; flex-wrap: wrap; }
   h1, h2, p { margin-top: 0; }
-  h1 { margin: 0; font-size: 23px; letter-spacing: -.04em; line-height: 1.1; }
-  h2 { margin-bottom: 0; font-size: clamp(1.2rem, 2.5vw, 1.65rem); letter-spacing: -.045em; }
-  .fixture, .state, .controls, .timeline-frame, .source-card, .table-wrap { border: 1px solid var(--fg); background: var(--panel); }
-  .fixture { margin-top: 16px; padding: 9px 12px; font-size: .78rem; font-weight: 700; }
+  .masthead h1 { margin: 0; font-size: 23px; letter-spacing: -.04em; line-height: 1.1; }
+  .fixture, .state { border: 1px solid var(--fg); background: var(--panel); }
+  .fixture { margin: 0 0 12px; padding: 9px 12px; font-size: .78rem; font-weight: 700; }
   .state { width: min(550px, 100%); margin: 36px auto; padding: 20px; }
   .login p { color: var(--muted); line-height: 1.6; }
   .access-note, .muted { color: var(--muted); font-size: .8rem; }
-  .pairing, .devices { border: 1px solid var(--fg); background: var(--panel); margin: 16px 0; padding: 12px; }
-  .pairing h3 { margin: 0; font-size: 1rem; }
+  .pairing { border: 1px solid var(--fg); background: var(--panel); margin: 0 0 14px; padding: 12px; }
+  .pairing h2, .pairing h3 { margin: 0; font-size: 1rem; }
   .pairing-login { border: 0; margin: 18px 0 0; padding: 0; }
-  .pairing-row, .device-row { align-items: center; display: flex; gap: 12px; justify-content: space-between; }
-  .pairing-row span, .device-row span { color: var(--muted); font-size: .78rem; overflow-wrap: anywhere; }
-  .device-list { border-top: 1px solid var(--line); }
-  .device-row { border-bottom: 1px solid var(--line); padding: 11px 0; }
-  .device-row > div { display: grid; gap: 3px; }
-  .device-row.revoked { opacity: .55; }
+  .pairing-row { align-items: center; display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; }
+  .pairing-row span { color: var(--muted); font-size: .78rem; overflow-wrap: anywhere; }
+  .section-title { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 9px; }
+  .count { color: var(--muted); font-size: .8rem; }
   form { display: grid; gap: 8px; margin-top: 16px; }
   label { font-size: .8rem; font-weight: 700; }
   button { border: 1px solid var(--fg); border-radius: 0; background: var(--fg); color: var(--panel); cursor: pointer; padding: 8px 11px; }
-  button:hover, button:focus-visible, .active, .chosen { background: var(--panel); color: var(--fg); outline: 2px solid var(--fg); outline-offset: 2px; }
+  button:hover, button:focus-visible { background: var(--panel); color: var(--fg); outline: 2px solid var(--fg); outline-offset: 2px; }
   button:disabled { cursor: wait; opacity: .55; }
   .quiet-button { background: var(--panel); color: var(--fg); white-space: nowrap; }
-  .controls { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin: 16px 0 26px; padding: 9px 10px; }
-  .control-group { display: flex; align-items: center; gap: 6px; }
-  .control-group span, .updated, .count, .caption { color: var(--muted); font-size: .8rem; }
-  .updated { margin: 0; text-align: right; }
-  .section-title { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 9px; }
-  .source-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
-  .source-card { min-height: 150px; color: var(--fg); display: flex; flex-direction: column; align-items: flex-start; padding: 13px; text-align: left; }
-  .source-card strong { font-size: 2rem; letter-spacing: -.08em; margin: 16px 0 1px; }
-  .source-kind { font-size: .78rem; font-weight: 700; }
-  dl { margin: 0; }
-  .source-card dl { border-top: 1px solid var(--line); display: grid; gap: 5px; margin-top: auto; padding-top: 8px; width: 100%; }
-  dl div { display: flex; justify-content: space-between; gap: 12px; }
-  dt { color: var(--muted); font-size: .72rem; }
-  dd { margin: 0; overflow-wrap: anywhere; text-align: right; }
-  .timeline-section, .records { margin-top: 28px; }
-  .timeline-frame { min-height: 260px; padding: 12px; }
-  .chart-empty { margin: 0; }
-  .caption { margin: 7px 0 0; line-height: 1.5; }
-  .table-wrap { overflow: auto; max-height:480px; position: relative; }
-  table { border-collapse: collapse; min-width: 760px; width: 100%; }
-  th, td { border-bottom: 1px solid var(--line); padding: 9px 11px; text-align: left; font-size: .78rem; }
-  th { background: var(--soft); font-size: .72rem; letter-spacing: .05em; text-transform: uppercase; }
-  tr:last-child td { border-bottom: 0; }
   code { font-size: .75rem; }
-  .inspect { background: var(--panel); color: var(--fg); padding: 6px 9px; font-size: .75rem; }
-  .empty { color: var(--muted); padding: 24px; }
   .error { border-left: 4px solid var(--fg); margin: 12px 0; padding: 9px; background: var(--soft); }
   .drawer-backdrop { background: rgb(0 0 0 / .34); inset: 0; position: fixed; z-index:19; }
-  .drawer { background: var(--panel); border-left: 3px solid var(--fg); bottom: 0; max-width: min(580px, 100vw); overflow: auto; padding: 20px; position: fixed; right: 0; top: 0; width: 100%; z-index: 20; }
+  .drawer { background: var(--panel); border-left: 3px solid var(--fg); bottom: 0; max-width: min(580px, 100vw); overflow: auto; padding: calc(20px + var(--safe-top, 0px)) 20px calc(20px + var(--safe-bottom, 0px)); position: fixed; right: 0; top: 0; width: 100%; z-index: 20; }
   .drawer-close { float: right; }
-  .sr-only { height: 1px; margin: -1px; overflow: hidden; position: absolute; width: 1px; }
-  @media (max-width: 620px) {
-    main { width: min(100% - 20px, 1280px); padding-top: 16px; }
-    .masthead { flex-wrap: wrap; }
-    .controls, .section-title { align-items: flex-start; flex-direction: column; }
-    .updated { text-align: left; }
-    .control-group { flex-wrap: wrap; }
-  }
 </style>

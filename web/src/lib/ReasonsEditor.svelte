@@ -9,6 +9,7 @@
   let busy = false;
   let error = '';
   let notice = '';
+  let editing = false;
 
   const lines = (value: string) => value.split('\n').map(line => line.trim()).filter(Boolean);
   $: changed = lines(text).join('\n') !== lines(saved).join('\n');
@@ -32,6 +33,7 @@
     try {
       saved = text = (await saveReasons(lines(text))).join('\n');
       notice = 'Saved. The door screen shows them from now on.';
+      editing = false;
     } catch (cause) {
       error = cause instanceof Error ? cause.message : 'Your reasons were not saved.';
     } finally {
@@ -40,26 +42,38 @@
   }
 </script>
 
-<section class="reasons" aria-labelledby="reasons-heading">
-  <h3 id="reasons-heading">Your reasons</h3>
-  <p class="muted small">What you want in life and why, in your own words. One per line. The door screen shows them before anything opens.</p>
-  <form on:submit|preventDefault={save}>
-    <label for="reasons-text" class="sr-only">Your reasons, one per line</label>
-    <textarea id="reasons-text" rows="5" disabled={!loaded} bind:value={text}></textarea>
-    <div class="row">
-      <button disabled={busy || !loaded || !changed}>{busy ? 'Saving…' : 'Save'}</button>
-      {#if changed}<button type="button" class="quiet-button" disabled={busy} on:click={() => { text = saved; }}>Undo changes</button>{/if}
-      {#if notice}<span class="muted small" role="status">{notice}</span>{/if}
-    </div>
-  </form>
+<section class="card reasons" aria-labelledby="reasons-heading">
+  <div class="card-head">
+    <h2 id="reasons-heading" class="card-label">Why I'm doing this</h2>
+    {#if !editing}<button class="quiet-button" disabled={!loaded} on:click={() => { editing = true; notice = ''; }}>Edit</button>{/if}
+  </div>
+  {#if !editing}
+    {#if !loaded}<p class="muted small">Loading…</p>
+    {:else if lines(saved).length}
+      <ul>{#each lines(saved) as line}<li>{line}</li>{/each}</ul>
+    {:else}
+      <p class="muted small">No reasons yet. What you want in life and why, in your own words; the door screen shows them before anything opens.</p>
+    {/if}
+    {#if notice}<p class="muted small" role="status">{notice}</p>{/if}
+  {:else}
+    <p class="muted small">One per line. The door screen shows them before anything opens.</p>
+    <form on:submit|preventDefault={save}>
+      <label for="reasons-text" class="sr-only">Your reasons, one per line</label>
+      <textarea id="reasons-text" rows="5" disabled={!loaded} bind:value={text}></textarea>
+      <div class="row">
+        <button disabled={busy || !loaded || !changed}>{busy ? 'Saving…' : 'Save'}</button>
+        <button type="button" class="quiet-button" disabled={busy} on:click={() => { text = saved; editing = false; }}>Cancel</button>
+      </div>
+    </form>
+  {/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 </section>
 
 <style>
-  .reasons { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 8px; }
-  h3 { font-size: 1rem; margin: 4px 0; }
   p { margin: 4px 0; }
-  form { display: grid; gap: 6px; }
+  ul { list-style: none; margin: 8px 0 0; padding: 0; }
+  li { border-left: 2px solid var(--line); margin: 6px 0; padding: 2px 10px; }
+  form { display: grid; gap: 6px; margin-top: 6px; }
   textarea { width: 100%; }
   .row { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
   .muted { color: var(--muted); }
