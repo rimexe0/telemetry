@@ -34,6 +34,19 @@ object NowCache {
             .commit()
     }
 
+    /**
+     * Puts a new `budget` (the answer to a habit tick, say) into the cached
+     * answer, leaving its timeline and when it was fetched as they were.
+     */
+    fun patchBudget(context: Context, budget: org.json.JSONObject) {
+        val entry = read(context) ?: return
+        val json = runCatching { org.json.JSONObject(entry.json).put("budget", budget).toString() }.getOrNull() ?: return
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_JSON, json).commit()
+    }
+
+    /** The budget in the cached answer, or null. */
+    fun budget(context: Context): BudgetView? = read(context)?.json?.let(Budget::parse)
+
     /** The server's fingerprint of the cached answer, or null. */
     fun fingerprint(context: Context): String? =
         read(context)?.json?.let { runCatching { org.json.JSONObject(it).optString("fingerprint") }.getOrNull() }?.takeIf { it.isNotBlank() }

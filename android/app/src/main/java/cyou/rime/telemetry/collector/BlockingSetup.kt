@@ -45,7 +45,7 @@ object BlockingSetup {
             watcher = watcher,
             message = AppSuspender.lastError(context) ?: GuardRoot.lastError(context)
                 ?: if (suspension && watcher) {
-                    "Enforced. The panel decides what is blocked; the 10-minute emergency stays on this phone."
+                    "Enforced. The panel decides what is blocked; the block screen is also the door, which asks the server."
                 } else {
                     "Root answered, but not everything was set up."
                 },

@@ -54,7 +54,47 @@ object BlockPolicy {
     )
 
     /**
-     * Whether [pkg] should be blocked. The owner's essentials, this app and
+     * Every app some decision in the cached timeline closes: the owner's
+     * distractions as the server knows them, also while one is open now (in a
+     * distraction time or through a door). The counter shows on these.
+     */
+    fun distractionPackages(json: String): Set<String> {
+        val root = runCatching { JSONObject(json) }.getOrNull() ?: return emptySet()
+        val packages = mutableSetOf<String>()
+        root.optJSONObject("decision")?.let { packages += parse(it).blocked }
+        val timeline = root.optJSONArray("timeline") ?: return packages
+        for (index in 0 until timeline.length()) {
+            timeline.optJSONObject(index)?.optJSONObject("decision")?.let { packages += parse(it).blocked }
+        }
+        return packages
+    }
+
+    /**
+     * When bedtime ends, if [now] is inside it: the end of the run of bedtime
+     * segments covering [now] in the cached timeline.
+     */
+    fun bedtimeUntil(json: String, now: Instant): Instant? {
+        val timeline = runCatching { JSONObject(json).optJSONArray("timeline") }.getOrNull() ?: return null
+        var end: Instant? = null
+        for (index in 0 until timeline.length()) {
+            val segment = timeline.getJSONObject(index)
+            val from = Instant.parse(segment.getString("from"))
+            val to = Instant.parse(segment.getString("to"))
+            val bedtime = segment.optJSONObject("decision")?.optString("mode") == "bedtime"
+            when {
+                end == null && bedtime && !now.isBefore(from) && now.isBefore(to) -> end = to
+                end != null && bedtime && !from.isAfter(end) -> end = to
+                end != null -> return end
+            }
+        }
+        return end
+    }
+
+    /**
+     * Whether [pkg] should be blocked. Every mode is followed as the server
+     * decided it, including a door that is open (`door`, nothing closed) and a
+     * used-up distraction time (`budget_used`, the distractions closed).
+     * The owner's essentials, this app and
      * [systemSafe] (launcher, system UI, settings, dialer) are never blocked.
      */
     fun shouldBlock(decision: BlockDecision?, pkg: String, systemSafe: Set<String>): Boolean {

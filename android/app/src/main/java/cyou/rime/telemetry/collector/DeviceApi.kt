@@ -12,6 +12,53 @@ object DeviceApi {
     /** A call that changes something, with an optional JSON body; true when the server accepted it. Blocking IO. */
     fun post(context: Context, path: String, body: String? = null): Boolean = call(context, "POST", path, body) != null
 
+    /** What the server answered: its status and body, refusals included. */
+    data class Answer(val status: Int, val body: String)
+
+    /**
+     * Like [post], but keeps a refusal's status and body, so a 409's message
+     * can be shown as the server gave it. Null when the server could not be
+     * reached or the phone is not paired. Blocking IO.
+     */
+    fun send(context: Context, method: String, path: String, body: String? = null): Answer? {
+        val config = DeliveryConfig(context)
+        val token = config.token() ?: return null
+        val headers = mutableMapOf(
+            "Authorization" to "Bearer $token",
+            "X-Telemetry-Device-ID" to DeviceIdentity.get(context),
+            "Accept" to "application/json",
+        )
+        if (body != null) headers["Content-Type"] = "application/json"
+        // Through the sealed relay first; the direct address (Tailscale) only
+        // when the relay cannot be reached.
+        SealedChannel.configured(context)?.let { channel ->
+            val answer = try {
+                channel.exchange(method, path, headers, body?.toByteArray(), 10_000, 10_000)
+            } catch (_: java.io.IOException) {
+                null
+            }
+            if (answer != null) return Answer(answer.status, String(answer.body, Charsets.UTF_8))
+        }
+        return runCatching {
+            val connection = URL(config.serverUrl.trimEnd('/') + path).openConnection() as HttpURLConnection
+            try {
+                connection.requestMethod = method
+                connection.connectTimeout = 10_000
+                connection.readTimeout = 10_000
+                headers.forEach { (name, value) -> connection.setRequestProperty(name, value) }
+                if (body != null) {
+                    connection.doOutput = true
+                    connection.outputStream.use { it.write(body.toByteArray()) }
+                }
+                val status = connection.responseCode
+                val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+                Answer(status, stream?.bufferedReader()?.use { it.readText() }.orEmpty())
+            } finally {
+                connection.disconnect()
+            }
+        }.getOrNull()
+    }
+
     /**
      * Waits up to 50 seconds for the answer to /v1/device/now to differ from
      * [fingerprint]. Returns the new body, an empty string when nothing

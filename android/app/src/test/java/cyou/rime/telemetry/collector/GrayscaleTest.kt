@@ -17,7 +17,31 @@ class GrayscaleTest {
     }
 
     @Test
-    fun switchedOffDuringTheWindDownItComesBack() {
+    fun withTheBudgetOffItComesBackAsBefore() {
         assertEquals(Grayscale.Step.ON, Grayscale.step(wanted = true, owned = true, screenGray = false))
+    }
+
+    @Test
+    fun withTheBudgetOnSwitchingItOffAsksInstead() {
+        assertEquals(Grayscale.Step.ASK, Grayscale.step(wanted = true, owned = true, screenGray = false, ask = true))
+        // The first switch-on is not a question.
+        assertEquals(Grayscale.Step.ON, Grayscale.step(wanted = true, owned = false, screenGray = false, ask = true))
+    }
+
+    @Test
+    fun keptOffItStaysOffAndTurningItOnAgainIsReported() {
+        assertEquals(Grayscale.Step.NONE, Grayscale.step(wanted = true, owned = true, screenGray = false, declinedHere = true, ask = true))
+        assertEquals(Grayscale.Step.RESTORE, Grayscale.step(wanted = true, owned = true, screenGray = true, declinedHere = true, ask = true))
+    }
+
+    @Test
+    fun aDeclineFromAnotherDeviceStopsTheAskingButIsNotThisPhonesToRestore() {
+        assertEquals(Grayscale.Step.NONE, Grayscale.step(wanted = true, owned = true, screenGray = false, declinedElsewhere = true, ask = true))
+        assertEquals(Grayscale.Step.NONE, Grayscale.step(wanted = true, owned = true, screenGray = true, declinedElsewhere = true, ask = true))
+    }
+
+    @Test
+    fun whenTheWindDownEndsItsGrayscaleIsUndone() {
+        assertEquals(Grayscale.Step.OFF, Grayscale.step(wanted = false, owned = true, screenGray = true, declinedHere = true, ask = true))
     }
 }
