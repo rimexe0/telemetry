@@ -64,6 +64,7 @@ type Server struct {
 	repository store.Repository
 	config     Config
 	mux        *http.ServeMux
+	budget     budgetCache
 }
 
 func New(repository store.Repository, config Config) (*Server, error) {
@@ -132,6 +133,21 @@ func New(repository store.Repository, config Config) (*Server, error) {
 	server.mux.HandleFunc("POST /v1/device/focus", server.deviceFocus)
 	server.mux.HandleFunc("POST /v1/device/evidence", server.deviceEvidence)
 	server.mux.HandleFunc("POST /v1/device/panel-session", server.devicePanelSession)
+	server.mux.HandleFunc("POST /v1/device/door", server.createDoor)
+	server.mux.HandleFunc("POST /v1/device/door/back", server.doorBack)
+	server.mux.HandleFunc("POST /v1/device/door/{id}/cancel", server.cancelDoor)
+	server.mux.HandleFunc("POST /v1/device/grayscale", server.deviceGrayscale)
+	server.mux.HandleFunc("POST /v1/device/habits/{id}/tick", server.deviceTick)
+	server.mux.HandleFunc("POST /v1/device/habits/{id}/untick", server.deviceUntick)
+	server.mux.HandleFunc("GET /v1/budget", server.budgetOverview)
+	server.mux.HandleFunc("POST /v1/door", server.ownerCreateDoor)
+	server.mux.HandleFunc("POST /v1/door/{id}/cancel", server.ownerCancelDoor)
+	server.mux.HandleFunc("/v1/habits", server.habits)
+	server.mux.HandleFunc("GET /v1/habits/heatmap", server.habitHeatmap)
+	server.mux.HandleFunc("PATCH /v1/habits/{id}", server.habit)
+	server.mux.HandleFunc("POST /v1/habits/{id}/tick", server.ownerTick)
+	server.mux.HandleFunc("POST /v1/habits/{id}/untick", server.ownerUntick)
+	server.mux.HandleFunc("/v1/reasons", server.reasons)
 	server.mux.HandleFunc("POST /v1/context-rules/{id}/disable", server.disableContextRule)
 	server.mux.HandleFunc("GET /v1/plans/{date}/replan-proposals/{id}", server.replanProposal)
 	server.mux.HandleFunc("POST /v1/plans/{date}/replan-proposals/{id}/accept", server.acceptReplanProposal)

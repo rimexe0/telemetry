@@ -95,6 +95,14 @@ func (s *Server) openings(writer http.ResponseWriter, request *http.Request) {
 				}
 			}
 		}
+		if refused, err := s.openingRefusedByBudget(request.Context()); err != nil || refused != "" {
+			if err != nil {
+				writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+			} else {
+				writeError(writer, http.StatusConflict, "opening_refused", refused)
+			}
+			return
+		}
 		_, saved, err := s.repository.OpenNow(request.Context(), opening, input.Purpose)
 		switch {
 		case errors.Is(err, store.ErrSettingsLocked):
@@ -155,6 +163,14 @@ func (s *Server) confirmOpening(writer http.ResponseWriter, request *http.Reques
 	id, err := strconv.ParseInt(request.PathValue("id"), 10, 64)
 	if err != nil || id < 1 {
 		writeError(writer, http.StatusBadRequest, "invalid_id", "opening id must be a positive integer")
+		return
+	}
+	if refused, err := s.openingRefusedByBudget(request.Context()); err != nil || refused != "" {
+		if err != nil {
+			writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		} else {
+			writeError(writer, http.StatusConflict, "confirmation_refused", refused)
+		}
 		return
 	}
 	confirmed, err := s.repository.ConfirmOpening(request.Context(), id)

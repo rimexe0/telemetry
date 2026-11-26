@@ -207,6 +207,17 @@ func (s *Server) policyInputs(ctx context.Context, from, to time.Time) (policy.C
 		return config, 0, policy.Facts{}, err
 	}
 	facts.Openings = store.PolicyOpenings(config, openings)
+	// The budget's door and sliding end are known only for now; a decision
+	// asked for another time goes without them.
+	if now := time.Now().UTC(); from.Sub(now).Abs() < time.Minute && config.BudgetAt(now).Enabled {
+		result, err := s.budgetNow(ctx, config, version, now)
+		if err != nil {
+			return config, 0, policy.Facts{}, err
+		}
+		if result.State.Enabled {
+			facts.Door, facts.Budget = result.Door, result.Budget
+		}
+	}
 	primary, err := s.repository.CurrentPrimaryExecutionSession(ctx)
 	if err != nil {
 		return config, 0, policy.Facts{}, err

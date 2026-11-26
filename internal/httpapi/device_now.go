@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/rimexe0/telemetry/internal/activity"
+	"github.com/rimexe0/telemetry/internal/budget"
 	"github.com/rimexe0/telemetry/internal/policy"
 	"github.com/rimexe0/telemetry/internal/store"
 )
@@ -180,8 +182,22 @@ func (s *Server) deviceNowBody(ctx context.Context, places bool) (map[string]any
 	// Start in the past so a device whose clock runs slightly behind still
 	// finds a segment covering its own "now".
 	timeline := policy.Timeline(config, version, facts, now.Add(-10*time.Minute), now.Add(deviceTimeline))
+	budgetResult, err := s.budgetNow(ctx, config, version, now)
+	if err != nil {
+		return nil, err
+	}
+	// The budget's sliding ends move with the clock while nothing is used;
+	// the fingerprint follows them in coarse steps so devices are not woken
+	// on every request, yet never keep an end that is already too early.
+	printDecision, printTimeline := decision, timeline
+	if facts.Door != nil || facts.Budget != nil {
+		steady := steadyFacts(facts, now)
+		printDecision = policy.Evaluate(config, version, steady, now)
+		printTimeline = policy.Timeline(config, version, steady, now.Add(-10*time.Minute), now.Add(deviceTimeline))
+	}
 	body := map[string]any{
-		"fingerprint":  nowFingerprint(decision, timeline, task, facts.PlanExists, openFollowUps),
+		"fingerprint":  nowFingerprint(printDecision, printTimeline, task, facts.PlanExists, openFollowUps, budgetPrint(budgetResult.State)),
+		"budget":       budgetResult.State,
 		"generated_at": now,
 		"tracking":     tracking,
 		"tasks":        tasks,
@@ -207,7 +223,7 @@ func (s *Server) deviceNowBody(ctx context.Context, places bool) (map[string]any
 // and its timeline (without the times that move with every request), the
 // current task, whether a plan exists, and the open follow-ups. What is on
 // screen right now is left out, or every device would wake all the time.
-func nowFingerprint(decision policy.Decision, timeline []policy.Segment, task *deviceTask, planExists bool, followUps []store.FollowUp) string {
+func nowFingerprint(decision policy.Decision, timeline []policy.Segment, task *deviceTask, planExists bool, followUps []store.FollowUp, budgetPart any) string {
 	strip := func(decision policy.Decision) policy.Decision {
 		decision.At = time.Time{}
 		return decision
@@ -223,9 +239,61 @@ func nowFingerprint(decision policy.Decision, timeline []policy.Segment, task *d
 		}
 		segments = append(segments, item)
 	}
-	encoded, _ := json.Marshal(map[string]any{"decision": strip(decision), "timeline": segments, "task": task, "plan": planExists, "follow_ups": followUps})
+	fields := map[string]any{"decision": strip(decision), "timeline": segments, "task": task, "plan": planExists, "follow_ups": followUps}
+	// Without a budget the fingerprint is the same as before it existed.
+	if budgetPart != nil {
+		fields["budget"] = budgetPart
+	}
+	encoded, _ := json.Marshal(fields)
 	sum := sha256.Sum256(encoded)
 	return hex.EncodeToString(sum[:12])
+}
+
+// budgetPrint is the part of the budget a device acts on: the day's sums,
+// the habits, the rate, and the door; not what is spent or left, which
+// moves with every minute of use and reaches devices through the ends.
+// While a door is waiting or open its use counts by the minute.
+func budgetPrint(state budget.State) any {
+	if !state.Enabled {
+		return nil
+	}
+	part := map[string]any{"day": state.Day, "budget": state.Budget, "earned": state.Earned, "penalty": state.Penalty, "debt": state.Debt,
+		"rate": state.Rate, "habits": state.Habits, "reasons": state.Reasons, "settings": state.Settings, "door_available": state.DoorAvailable,
+		"next_door_at": state.NextDoorAt}
+	if door := state.Door; door != nil {
+		part["door"] = map[string]any{"id": door.ID, "state": door.State}
+		if door.Active() {
+			part["door_used"] = math.Floor(door.UsedMinutes)
+		}
+	}
+	return part
+}
+
+// steadyFacts rounds the sliding ends so that a fingerprint built from them
+// changes in steps: a door's end by the minute, the budget's end in steps of
+// at most a quarter of the time left to it. A device's end is then never
+// more than a quarter of the remaining time behind, so it never closes while
+// budget is left.
+func steadyFacts(facts policy.Facts, now time.Time) policy.Facts {
+	steady := facts
+	if door := facts.Door; door != nil {
+		rounded := *door
+		rounded.EndsAt = door.EndsAt.Truncate(time.Minute)
+		steady.Door = &rounded
+	}
+	if fact := facts.Budget; fact != nil {
+		rounded := *fact
+		step := time.Minute
+		for _, candidate := range []time.Duration{15 * time.Minute, 10 * time.Minute, 5 * time.Minute, 2 * time.Minute} {
+			if fact.EndsAt.Sub(now) >= 4*candidate {
+				step = candidate
+				break
+			}
+		}
+		rounded.EndsAt = fact.EndsAt.Truncate(step)
+		steady.Budget = &rounded
+	}
+	return steady
 }
 
 // deviceFollowUpDone lets a paired device mark one follow-up done. It is the

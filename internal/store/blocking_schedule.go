@@ -44,6 +44,9 @@ type ScheduleChange struct {
 	Bedtime      *policy.Bedtime      `json:"bedtime,omitempty"`
 	// Extension replaces the rule that hides browsers without the extension.
 	Extension *policy.ExtensionRule `json:"extension,omitempty"`
+	// Budget replaces the distraction budget's settings; asking less waits
+	// for the next day and is a loosening like any other.
+	Budget *policy.Budget `json:"budget,omitempty"`
 }
 
 // windowMinutes marks each minute of the day the windows cover.
@@ -95,7 +98,8 @@ func scheduleLoosens(config policy.Config, change ScheduleChange, now time.Time)
 		change.Morning != nil && config.MorningAt(now).Looser(*change.Morning) ||
 		change.SettingsLock != nil && config.SettingsLockAt(now).Looser(*change.SettingsLock) ||
 		change.Bedtime != nil && config.BedtimeAt(now).Looser(*change.Bedtime) ||
-		change.Extension != nil && config.ExtensionRuleAt(now).Looser(*change.Extension)
+		change.Extension != nil && config.ExtensionRuleAt(now).Looser(*change.Extension) ||
+		change.Budget != nil && config.BudgetAt(now).Looser(*change.Budget)
 }
 
 // noLooser reports whether incoming asks no less than the stored rule.
@@ -146,6 +150,7 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 	before := map[string]any{
 		"outside": config.OutsideAt(now), "opening_rule": config.OpeningRuleAt(now), "morning": config.MorningAt(now),
 		"settings_lock": config.SettingsLockAt(now), "bedtime": config.BedtimeAt(now), "extension": config.ExtensionRuleAt(now),
+		"budget": config.BudgetAt(now),
 	}
 	// A correction applies at once only when it asks no less than the rule
 	// in force before the last change.
@@ -170,6 +175,8 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 			return noLooser(raw, change.SettingsLock, policy.SettingsLock.Looser)
 		case "bedtime":
 			return noLooser(raw, change.Bedtime, policy.Bedtime.Looser)
+		case "budget":
+			return noLooser(raw, change.Budget, policy.Budget.Looser)
 		}
 		return false
 	}
@@ -243,6 +250,19 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 		extension = *change.Extension
 	}
 	config = config.WithExtensionRule(extension, now)
+	budgetRule := config.BudgetAt(now)
+	if change.Budget != nil {
+		replaced := budgetRule
+		previous.Budget = &replaced
+		if err := change.Budget.Normalize(); err != nil {
+			return ScheduleChange{}, config, 0, fmt.Errorf("%w: %s", ErrInvalidAgentChange, err)
+		}
+		budgetRule = *change.Budget
+	}
+	config = config.WithBudget(budgetRule, now)
+	if change.Budget != nil && (immediate || correcting("budget")) {
+		config.Budget, config.BudgetNext, config.BudgetNextFrom = *change.Budget, nil, ""
+	}
 	// Unlocked with the PIN, or correcting a rule that only just changed or
 	// has not yet taken effect: what was asked applies today.
 	if change.Extension != nil && (immediate || correcting("extension")) {
@@ -267,7 +287,7 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 	// before) asks no less than before, so it opens no loophole case.
 	if loosens && !immediate {
 		others := change
-		others.Outside, others.OpeningRule, others.Morning, others.SettingsLock, others.Bedtime, others.Extension = nil, nil, nil, nil, nil, nil
+		others.Outside, others.OpeningRule, others.Morning, others.SettingsLock, others.Bedtime, others.Extension, others.Budget = nil, nil, nil, nil, nil, nil, nil
 		onlyCorrections := !scheduleLoosens(original, others, now)
 		check := func(name string, loosened bool) {
 			if loosened && !correcting(name) {
@@ -280,11 +300,13 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 		check("settings_lock", change.SettingsLock != nil && original.SettingsLockAt(now).Looser(*change.SettingsLock))
 		check("bedtime", change.Bedtime != nil && original.BedtimeAt(now).Looser(*change.Bedtime))
 		check("extension", change.Extension != nil && original.ExtensionRuleAt(now).Looser(*change.Extension))
+		check("budget", change.Budget != nil && original.BudgetAt(now).Looser(*change.Budget))
 		loosens = !onlyCorrections
 	}
 	after := map[string]any{
 		"outside": config.OutsideAt(now), "opening_rule": config.OpeningRuleAt(now), "morning": config.MorningAt(now),
 		"settings_lock": config.SettingsLockAt(now), "bedtime": config.BedtimeAt(now), "extension": config.ExtensionRuleAt(now),
+		"budget": config.BudgetAt(now),
 	}
 	for name := range before {
 		if !reflect.DeepEqual(before[name], after[name]) {
@@ -379,6 +401,7 @@ func describeSchedule(change ScheduleChange, immediate bool) string {
 	add(change.SettingsLock != nil, "settings lock")
 	add(change.Bedtime != nil, "bedtime")
 	add(change.Extension != nil, "browser extension rule")
+	add(change.Budget != nil, "distraction budget")
 	text := "loosened: " + strings.Join(parts, ", ")
 	if immediate {
 		text += " (applied at once, after the PIN)"
@@ -400,6 +423,7 @@ func waitingRules(config policy.Config, now time.Time) map[string]string {
 	add(config.SettingsLockNext != nil, "settings_lock", config.SettingsLockNextFrom)
 	add(config.BedtimeNext != nil, "bedtime", config.BedtimeNextFrom)
 	add(config.ExtensionNext != nil, "extension", config.ExtensionNextFrom)
+	add(config.BudgetNext != nil, "budget", config.BudgetNextFrom)
 	return waits
 }
 

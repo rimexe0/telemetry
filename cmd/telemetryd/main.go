@@ -314,6 +314,7 @@ func main() {
 	// and one that words the message, taking the prompt as its last argument.
 	go runOutreach(context, database, strings.Fields(os.Getenv("TELEMETRY_OUTREACH_COMPOSE_COMMAND")), strings.Fields(os.Getenv("TELEMETRY_OUTREACH_SEND_COMMAND")))
 	go runLoopholes(context, database, database, strings.Fields(os.Getenv("TELEMETRY_OUTREACH_SEND_COMMAND")))
+	go runBudgetDays(context, database, database)
 	log.Printf("Telemetry core listening on %s", *listen)
 	if err := httpServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)

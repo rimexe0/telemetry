@@ -51,6 +51,12 @@ func (p *Postgres) SavePolicy(ctx context.Context, config policy.Config, note st
 	if err != nil {
 		return PolicyVersion{}, err
 	}
+	budgetLoosens := false
+	if latest == nil && config.Budget.Enabled {
+		// Switched on with the first policy: nothing before it is charged.
+		since := time.Now().UTC()
+		config.BudgetSince = &since
+	}
 	if latest != nil {
 		now := time.Now().UTC()
 		outside, openingRule, morning := config.OutsideAt(now), config.OpeningRuleAt(now), config.MorningAt(now)
@@ -67,6 +73,12 @@ func (p *Postgres) SavePolicy(ctx context.Context, config policy.Config, note st
 		config.Bedtime, config.BedtimeNext, config.BedtimeNextFrom = stored.Bedtime, stored.BedtimeNext, stored.BedtimeNextFrom
 		config.Extension, config.ExtensionNext, config.ExtensionNextFrom = stored.Extension, stored.ExtensionNext, stored.ExtensionNextFrom
 		config = config.WithSettingsLock(lock, now).WithBedtime(bedtime, now).WithExtensionRule(extension, now)
+		// The budget waits in the same way, and its loosening is recorded
+		// below: the owner asked that it opens a loophole case (2026-11-26).
+		budgetRule := config.BudgetAt(now)
+		budgetLoosens = stored.BudgetAt(now).Looser(budgetRule)
+		config.Budget, config.BudgetNext, config.BudgetNextFrom, config.BudgetSince = stored.Budget, stored.BudgetNext, stored.BudgetNextFrom, stored.BudgetSince
+		config = config.WithBudget(budgetRule, now)
 	}
 	if err := config.Normalize(); err != nil {
 		return PolicyVersion{}, fmt.Errorf("%w: %s", ErrInvalidPolicy, err)
@@ -84,7 +96,7 @@ func (p *Postgres) SavePolicy(ctx context.Context, config policy.Config, note st
 	if err == nil && latest != nil {
 		stored := latest.Config
 		if (stored.ClosedByDefault && !config.ClosedByDefault) || (stored.PlanGate.FromWake && !config.PlanGate.FromWake) || len(config.Distractions) < len(stored.Distractions) ||
-			len(config.Essentials) > len(stored.Essentials) || len(config.OpenAddresses) > len(stored.OpenAddresses) {
+			len(config.Essentials) > len(stored.Essentials) || len(config.OpenAddresses) > len(stored.OpenAddresses) || budgetLoosens {
 			err = noteLoosening(ctx, p.pool, LoopholeEvent{Source: "policy", What: "a whole blocking policy was saved that blocks less", Reason: note})
 		}
 	}
