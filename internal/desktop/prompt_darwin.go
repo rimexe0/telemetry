@@ -71,3 +71,11 @@ func Prompt(title, detail string, options []string, timeout time.Duration) int {
 
 // PromptSupported reports whether Prompt shows anything here.
 func PromptSupported() bool { return true }
+
+// PromptShowing reports whether a prompt is showing, so another one would
+// not be shown now.
+func PromptShowing() bool {
+	promptMu.Lock()
+	defer promptMu.Unlock()
+	return promptAnswer != nil
+}

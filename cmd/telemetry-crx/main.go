@@ -32,7 +32,7 @@ func main() {
 	if !ok {
 		log.Fatal("the extension key is not RSA")
 	}
-	archive, err := crx.Zip(*dir, []string{"manifest.json", "background.js", "cover.js", "popup.html", "popup.js", "icons/icon-16.png", "icons/icon-32.png", "icons/icon-48.png", "icons/icon-128.png"})
+	archive, err := crx.Zip(*dir, []string{"manifest.json", "background.js", "door.js", "cover.js", "popup.html", "popup.js", "icons/icon-16.png", "icons/icon-32.png", "icons/icon-48.png", "icons/icon-128.png"})
 	if err != nil {
 		log.Fatal(err)
 	}

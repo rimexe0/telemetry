@@ -48,6 +48,10 @@ func Grayscale() (bool, error) {
 	return false, errGrayscale
 }
 
+// GrayscaleSupported reports whether this system has a grayscale filter to
+// follow.
+func GrayscaleSupported() bool { return true }
+
 // SetGrayscale turns the screen's grayscale filter on or off.
 func SetGrayscale(on bool) error {
 	value := 0
