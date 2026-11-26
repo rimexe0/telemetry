@@ -217,7 +217,14 @@ class TelemetryAccessibilityService : AccessibilityService() {
         text("This app is closed right now.", 16f, bottom = pad / 2)
         val door = budget?.door
         when {
-            budget == null -> button("Go back", ::goHome)
+            budget == null -> {
+                button("Go back", ::goHome)
+                // With the budget off nothing changes: the emergency unlock stays.
+                button("Emergency: open everything for ${Emergency.LENGTH.toMinutes()} min") {
+                    removeOverlay()
+                    Thread { runCatching { Emergency.start(this@TelemetryAccessibilityService) } }.start()
+                }
+            }
             door != null && door.waiting -> {
                 waitText = text(BudgetText.wait(door, now), 30f, bright, bold = true)
                 text("Cancelling now costs nothing.", 15f, bottom = pad / 2)
