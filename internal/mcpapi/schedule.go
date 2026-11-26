@@ -13,7 +13,8 @@ import (
 const scheduleNotes = "When closed_by_default is on, everything labelled \"distraction\" is closed at all times, on every device, whether or not a plan exists; " +
 	"it opens only during the daily distraction times (local HH:MM, may run past midnight) and during an opening. " +
 	"open_addresses are single pages that stay open while their site is closed, such as one music stream on YouTube; they apply in the browser only. " +
-	"The owner chose fixed daily times and ruled out a daily budget of minutes: a budget spent early leaves nothing for the rest of the day. " +
+	"With the distraction budget on (budget, see the budget tool), the distraction times are its 1x hours: they stay open only while the day's budget lasts, " +
+	"and outside them the owner opens through the door on a device, at a cost; this superseded the owner's earlier choice of fixed times without a budget (2026-11-26). " +
 	"An opening lifts the block on named sites or apps for a stated purpose for a limited time; use open_now when the owner needs something that is closed, " +
 	"and say back what you opened and until when. Times are the owner's local time. " +
 	"lock_until_planned closes everything except what is labelled \"essential\" on every device from the moment the owner wakes (taken from the records, never asked) " +
@@ -90,6 +91,31 @@ type BedtimeIO struct {
 	WindDownMinutes int `json:"wind_down_minutes,omitempty" jsonschema:"minutes before bedtime the screens turn grayscale, 0 through 180"`
 }
 
+// BudgetIO is the distraction budget's settings; every number is the
+// owner's.
+type BudgetIO struct {
+	Enabled          bool    `json:"enabled" jsonschema:"off means none of the budget applies; on needs closed_by_default"`
+	BaseMinutes      int     `json:"base_minutes" jsonschema:"the day's budget before habits"`
+	MaxMinutes       int     `json:"max_minutes" jsonschema:"the most a day can have"`
+	FloorMinutes     int     `json:"floor_minutes" jsonschema:"a day never has less; penalties and debt stop here"`
+	HabitsForMax     int     `json:"habits_for_max" jsonschema:"habits needed for the full bonus"`
+	RateDistraction  float64 `json:"rate_distraction" jsonschema:"rate inside distraction times"`
+	RateDay          float64 `json:"rate_day" jsonschema:"rate outside distraction times and bedtime"`
+	RateBedtime      float64 `json:"rate_bedtime" jsonschema:"rate during bedtime"`
+	RateGrayscaleOff float64 `json:"rate_grayscale_off" jsonschema:"added to the rate while grayscale is declined"`
+	BorrowMultiplier float64 `json:"borrow_multiplier" jsonschema:"what a budget minute taken from tomorrow costs tomorrow"`
+	WindowMinutes    int     `json:"window_minutes" jsonschema:"length of a door's window outside distraction times"`
+	WindowUseMinutes int     `json:"window_use_minutes" jsonschema:"use allowed in one window"`
+	GraceMinutes     int     `json:"grace_minutes" jsonschema:"extra use after the allowance, to close or save something"`
+	WaitMinutes      int     `json:"wait_minutes" jsonschema:"the pause between Still want it and opening"`
+}
+
+type BudgetScheduleOutput struct {
+	Rule     BudgetIO  `json:"rule" jsonschema:"in force today"`
+	Next     *BudgetIO `json:"next,omitempty"`
+	NextFrom string    `json:"next_from,omitempty" jsonschema:"when the waiting budget starts: an RFC 3339 moment"`
+}
+
 type ExtensionIO struct {
 	Enabled      bool `json:"enabled"`
 	QuietSeconds int  `json:"quiet_seconds,omitempty" jsonschema:"seconds without the extension before the browser is hidden, 30 through 3600"`
@@ -134,20 +160,21 @@ type MorningOutput struct {
 type BlockingScheduleInput struct{}
 
 type BlockingScheduleOutput struct {
-	ClosedByDefault  bool              `json:"closed_by_default"`
-	DistractionTimes []WindowIO        `json:"distraction_times"`
-	OpenAddresses    []string          `json:"open_addresses"`
-	LockUntilPlanned bool              `json:"lock_until_planned"`
-	Essentials       []string          `json:"essentials" jsonschema:"what stays open while the day is locked"`
-	Openings         []OpeningOutput   `json:"openings" jsonschema:"openings in force now"`
-	Timezone         string            `json:"timezone"`
-	Outside          OutsideOutput     `json:"outside"`
-	OpeningRule      OpeningRuleOutput `json:"opening_rule"`
-	Morning          MorningOutput     `json:"morning"`
-	SettingsLock     LockOutput        `json:"settings_lock"`
-	Bedtime          BedtimeIO         `json:"bedtime" jsonschema:"in force today"`
-	Extension        ExtensionIO       `json:"extension" jsonschema:"in force today"`
-	Notes            string            `json:"notes"`
+	ClosedByDefault  bool                 `json:"closed_by_default"`
+	DistractionTimes []WindowIO           `json:"distraction_times"`
+	OpenAddresses    []string             `json:"open_addresses"`
+	LockUntilPlanned bool                 `json:"lock_until_planned"`
+	Essentials       []string             `json:"essentials" jsonschema:"what stays open while the day is locked"`
+	Openings         []OpeningOutput      `json:"openings" jsonschema:"openings in force now"`
+	Timezone         string               `json:"timezone"`
+	Outside          OutsideOutput        `json:"outside"`
+	OpeningRule      OpeningRuleOutput    `json:"opening_rule"`
+	Morning          MorningOutput        `json:"morning"`
+	SettingsLock     LockOutput           `json:"settings_lock"`
+	Bedtime          BedtimeIO            `json:"bedtime" jsonschema:"in force today"`
+	Extension        ExtensionIO          `json:"extension" jsonschema:"in force today"`
+	Budget           BudgetScheduleOutput `json:"budget"`
+	Notes            string               `json:"notes"`
 }
 
 type OutsideRuleIO struct {
@@ -189,6 +216,7 @@ type SetBlockingScheduleInput struct {
 	SettingsLock        *SettingsLockIO `json:"settings_lock,omitempty" jsonschema:"the whole settings lock; replaces the current one"`
 	Bedtime             *BedtimeIO      `json:"bedtime,omitempty" jsonschema:"bed hours; replaces the current ones"`
 	Extension           *ExtensionIO    `json:"extension,omitempty" jsonschema:"the browser extension rule; replaces the current one"`
+	Budget              *BudgetIO       `json:"budget,omitempty" jsonschema:"the whole distraction budget; replaces the current one. Asking less in any way waits for the next day and opens a loophole case"`
 	Reason              string          `json:"reason" jsonschema:"the owner's words where possible"`
 }
 
@@ -281,6 +309,11 @@ func scheduleOutput(ctx context.Context, repository store.Repository, config pol
 	bedtime := config.BedtimeAt(now)
 	output.Bedtime = BedtimeIO{Enabled: bedtime.Enabled, Start: bedtime.Start, End: bedtime.End, WindDownMinutes: bedtime.WindDownMinutes}
 	output.Extension = ExtensionIO(config.ExtensionRuleAt(now))
+	output.Budget.Rule = BudgetIO(config.BudgetAt(now))
+	if config.BudgetNext != nil && !policy.Started(config.Timezone, config.BudgetNextFrom, now) {
+		next := BudgetIO(*config.BudgetNext)
+		output.Budget.Next, output.Budget.NextFrom = &next, config.BudgetNextFrom
+	}
 	rule := config.OutsideAt(now)
 	output.Outside = OutsideOutput{Rule: outsideIO(rule), Notes: outsideNotes}
 	if config.OutsideNext != nil && !policy.Started(config.Timezone, config.OutsideNextFrom, now) {
@@ -315,7 +348,7 @@ func addScheduleTools(server *mcp.Server, repository store.Repository, now func(
 	})
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "set_blocking_schedule",
-		Description: "Turn closed-by-default on or off, set the daily distraction times, change which pages stay open, or set the outside, opening or morning rule. " + scheduleNotes + " " + outsideNotes + " " + openingNotes + " " + lockNotes + " " + approvalRule,
+		Description: "Turn closed-by-default on or off, set the daily distraction times, change which pages stay open, or set the outside, opening or morning rule or the distraction budget. " + scheduleNotes + " " + outsideNotes + " " + openingNotes + " " + lockNotes + " " + approvalRule,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input SetBlockingScheduleInput) (*mcp.CallToolResult, SetBlockingScheduleOutput, error) {
 		change := store.ScheduleChange{ClosedByDefault: input.ClosedByDefault, AddOpenAddresses: input.AddOpenAddresses, RemoveOpenAddresses: input.RemoveOpenAddresses}
 		if input.DistractionTimes != nil {
@@ -345,7 +378,10 @@ func addScheduleTools(server *mcp.Server, repository store.Repository, now func(
 			change.Outside = &policy.OutsideRule{Enabled: rule.Enabled, Minutes: rule.Minutes, Meters: rule.Meters, Holds: rule.Holds, FromWake: rule.FromWake,
 				From: rule.From, Until: rule.Until, WatchOnly: rule.WatchOnly, OnFoot: rule.OnFoot, AllowOpenings: rule.AllowOpenings}
 		}
-		if change.ClosedByDefault == nil && change.DistractionTimes == nil && change.LockUntilPlanned == nil && change.Outside == nil && change.OpeningRule == nil && change.Morning == nil && change.SettingsLock == nil && change.Bedtime == nil && change.Extension == nil && len(change.AddOpenAddresses)+len(change.RemoveOpenAddresses) == 0 {
+		if rule := input.Budget; rule != nil {
+			change.Budget = (*policy.Budget)(rule)
+		}
+		if change.ClosedByDefault == nil && change.DistractionTimes == nil && change.LockUntilPlanned == nil && change.Outside == nil && change.OpeningRule == nil && change.Morning == nil && change.SettingsLock == nil && change.Bedtime == nil && change.Extension == nil && change.Budget == nil && len(change.AddOpenAddresses)+len(change.RemoveOpenAddresses) == 0 {
 			return nil, SetBlockingScheduleOutput{}, errors.New("nothing to change")
 		}
 		if change.LockUntilPlanned != nil && *change.LockUntilPlanned {
@@ -382,6 +418,9 @@ func addScheduleTools(server *mcp.Server, repository store.Repository, now func(
 		}
 		location, err := ownerLocation(ctx, repository)
 		if err != nil {
+			return nil, OpenNowOutput{}, err
+		}
+		if err := budgetRefusesOpening(ctx, repository, now().UTC()); err != nil {
 			return nil, OpenNowOutput{}, err
 		}
 		until := now().UTC().Add(time.Duration(input.Minutes) * time.Minute)

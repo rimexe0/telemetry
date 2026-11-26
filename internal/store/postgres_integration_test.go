@@ -152,7 +152,8 @@ func clearIntegrationData(ctx context.Context, database *Postgres) error {
 		TRUNCATE ingestion_batch_observations, observation_revisions, observations,
 				source_instances, ingestion_batches,
 			execution_events, execution_sessions,
-				intents, intent_readings, outreach_log, task_evidence, task_claims, follow_ups, openings, morning_scans, morning_codes, settings_pin, settings_pin_tries, settings_unlocks, agent_changes, policy_proposals, activity_labels, activity_label_proposals, collection_incidents, policy_versions, activity_context_rules, plan_change_proposals, plan_block_events, plan_blocks, plan_versions, activities, planning_settings, loophole_cases, loophole_settings RESTART IDENTITY`)
+				intents, intent_readings, outreach_log, task_evidence, task_claims, follow_ups, openings, morning_scans, morning_codes, settings_pin, settings_pin_tries, settings_unlocks, agent_changes, policy_proposals, activity_labels, activity_label_proposals, collection_incidents, policy_versions, activity_context_rules, plan_change_proposals, plan_block_events, plan_blocks, plan_versions, activities, planning_settings, loophole_cases, loophole_settings,
+			habit_events, habits, budget_doors, door_backs, grayscale_events, owner_reasons, budget_days RESTART IDENTITY`)
 	return err
 }
 

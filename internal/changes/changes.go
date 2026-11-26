@@ -38,7 +38,7 @@ func (f *Feed) Next() <-chan struct{} {
 
 // Agent tools that change what devices do.
 var changingTools = map[string]bool{
-	"block_now": true, "change_activity_labels": true, "change_follow_ups": true, "change_task_rules": true, "change_tasks": true,
+	"block_now": true, "change_activity_labels": true, "change_habits": true, "tick_habit": true, "change_follow_ups": true, "change_task_rules": true, "change_tasks": true,
 	"focus_session": true, "open_now": true, "remember_for_task": true, "revert_change": true, "set_blocking_schedule": true, "set_day_plan": true,
 }
 
