@@ -37,6 +37,23 @@ func minutesOf(segments []Segment, device, app, domain string) float64 {
 	return total
 }
 
+// LibreWolf's time is split by site from the web watcher's tab records, as
+// Helium's is, so its distractions are counted.
+func TestLibreWolfTimeIsSplitBySite(t *testing.T) {
+	records := []Record{
+		aw("aw-watcher-window_h", 0, 30, `{"app":"LibreWolf","title":"Home / X"}`),
+		aw("aw-watcher-afk_h", 0, 30, `{"status":"not-afk"}`),
+		aw("aw-watcher-web-firefox_h", 0, 20, `{"url":"https://x.com/home","title":"Home / X"}`),
+	}
+	result := Build(records, at(0), at(30))
+	if got := minutesOf(result.Segments, DeviceMac, "LibreWolf", "x.com"); got != 20 {
+		t.Fatalf("x.com = %v, want 20", got)
+	}
+	if !isBrowser("", "net.librewolf.librewolf") || !isBrowser("librewolf", "") {
+		t.Fatal("LibreWolf is not a browser")
+	}
+}
+
 func TestMacCountsOnlyNonAFKTimeAndNamesBrowserSites(t *testing.T) {
 	records := []Record{
 		aw("aw-watcher-window_h", 0, 30, `{"app":"Helium","title":"X"}`),

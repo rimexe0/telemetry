@@ -294,7 +294,7 @@ func browserSegments(app, windowTitle string, part span, web []span) []Segment {
 	return segments
 }
 
-var browserMarkers = []string{"helium", "chrome", "chromium", "vivaldi", "firefox", "safari", "brave", "arc", "edge", "zen", "orion"}
+var browserMarkers = []string{"helium", "chrome", "chromium", "vivaldi", "firefox", "librewolf", "safari", "brave", "arc", "edge", "zen", "orion"}
 
 func isBrowser(app, bundleID string) bool {
 	name := strings.ToLower(app + " " + bundleID)
