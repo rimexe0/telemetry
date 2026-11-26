@@ -71,6 +71,19 @@ export function setClerkTokenProvider(provider?: () => Promise<string | null>): 
   clerkTokenProvider = provider;
 }
 
+// Errors come as {error: {code, detail}}, or, for the door and habit calls of
+// the budget contract, as {error, message}.
+function errorDetail(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== 'object') return undefined;
+  const { error, message } = payload as { error?: unknown; message?: unknown };
+  if (typeof message === 'string' && message) return message;
+  if (error && typeof error === 'object') {
+    const detail = (error as { detail?: unknown }).detail;
+    if (typeof detail === 'string') return detail;
+  }
+  return typeof error === 'string' && error ? error : undefined;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   headers.set('Accept', 'application/json');
@@ -83,13 +96,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     credentials: 'same-origin',
     headers
   });
-  const payload = (await response.json().catch(() => undefined)) as
-    | { error?: { detail?: string } }
-    | T
-    | undefined;
+  const payload = (await response.json().catch(() => undefined)) as unknown;
   if (!response.ok) {
-    const detail = payload && typeof payload === 'object' && 'error' in payload ? payload.error?.detail : undefined;
-    throw new APIError(response.status, detail ?? `Request failed (${response.status})`);
+    throw new APIError(response.status, errorDetail(payload) ?? `Request failed (${response.status})`);
   }
   return payload as T;
 }
@@ -690,6 +699,12 @@ export type PolicyConfig = {
   essentials: TargetGroup[];
   plan_gate?: { enabled: boolean; ends_at?: string };
   emergency_minutes?: number;
+  closed_by_default?: boolean;
+  distraction_times?: Window[];
+  /** The distraction budget. A looser one waits in budget_next until budget_next_from. */
+  budget?: BudgetSettings;
+  budget_next?: BudgetSettings;
+  budget_next_from?: string;
 };
 export type PolicyVersion = { id: number; config: PolicyConfig; note?: string; created_at: string };
 export type AppUsageSuggestion = { package: string; events: number; last_seen: string };
@@ -921,4 +936,184 @@ export async function savePairingSettings(relayURL: string): Promise<PairingSett
 export async function getWakeTime(at: Date, signal?: AbortSignal): Promise<{ woke: string | null; planned: string | null }> {
   const result = await request<{ wake_at: string | null; planned_wake?: string | null }>(`/v1/activity/wake?at=${encodeURIComponent(at.toISOString())}`, { signal });
   return { woke: result.wake_at ?? null, planned: result.planned_wake ?? null };
+}
+
+// Distraction budget, the door and habits: docs/budget-and-habits.md in the
+// notes. Minutes are budget minutes and may be fractional; times are RFC 3339.
+
+export type BudgetSettings = {
+  enabled: boolean;
+  base_minutes: number;
+  max_minutes: number;
+  floor_minutes: number;
+  habits_for_max: number;
+  rate_distraction: number;
+  rate_day: number;
+  rate_bedtime: number;
+  rate_grayscale_off: number;
+  borrow_multiplier: number;
+  window_minutes: number;
+  window_use_minutes: number;
+  grace_minutes: number;
+  wait_minutes: number;
+};
+
+export type BudgetRate = { total: number; base: number; grayscale_off: number; kind: string };
+
+export type DoorState = 'waiting' | 'open' | 'grace' | 'ended' | 'cancelled';
+
+export type Door = {
+  id: number;
+  state: DoorState;
+  requested_at: string;
+  opens_at: string;
+  window_end?: string | null;
+  /** The sliding end. */
+  ends_at?: string | null;
+  used_minutes: number;
+  /** Null inside a distraction time, where a door has no window limit. */
+  use_minutes: number | null;
+  borrowing: boolean;
+};
+
+export type BudgetHabit = { id: number; name: string; done: boolean; value: number };
+
+export type BudgetState = {
+  enabled: boolean;
+  day: string;
+  budget: number;
+  spent: number;
+  left: number;
+  earned: number;
+  penalty: number;
+  debt: number;
+  debt_tomorrow: number;
+  borrowable: number;
+  rate: BudgetRate;
+  in_distraction_time: boolean;
+  next_distraction_time?: string | null;
+  bedtime_at?: string | null;
+  wind_down: boolean;
+  grayscale_declined: boolean;
+  door: Door | null;
+  door_available: boolean;
+  door_unavailable_reason: string;
+  next_door_at?: string | null;
+  habits: BudgetHabit[] | null;
+  reasons: string[] | null;
+  settings: Pick<BudgetSettings, 'wait_minutes' | 'window_minutes' | 'window_use_minutes' | 'grace_minutes' | 'borrow_multiplier'>;
+};
+
+/** One closed budget day, as the server wrote it at day close. */
+export type BudgetDay = {
+  day: string;
+  budget: number;
+  spent: number;
+  /** Budget minutes borrowed from the next day, already multiplied. */
+  debt_passed_on: number;
+  habits_done: number;
+  habits_missed: number;
+  settings?: Partial<BudgetSettings>;
+};
+
+const finite = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
+
+/** Reads one day snapshot, accepting the names the contract leaves open. */
+export function readBudgetDay(raw: Record<string, unknown>): BudgetDay {
+  return {
+    day: String(raw.day ?? raw.budget_day ?? ''),
+    budget: finite(raw.budget),
+    spent: finite(raw.spent),
+    debt_passed_on: finite(raw.debt_passed_on ?? raw.debt_tomorrow ?? raw.debt_passed ?? raw.debt),
+    habits_done: finite(raw.habits_done ?? raw.done),
+    habits_missed: finite(raw.habits_missed ?? raw.missed),
+    settings: raw.settings && typeof raw.settings === 'object' ? (raw.settings as Partial<BudgetSettings>) : undefined
+  };
+}
+
+/** Today's state and the day snapshots. */
+export async function getBudget(days = 30): Promise<{ today: BudgetState | null; days: BudgetDay[] }> {
+  const result = await request<Record<string, unknown>>(`/v1/budget?days=${encodeURIComponent(days)}`);
+  const today = (result.budget ?? result.today ?? null) as BudgetState | null;
+  const rows = (result.days ?? result.snapshots ?? null) as Record<string, unknown>[] | null;
+  return { today, days: (rows ?? []).map(readBudgetDay).filter(row => row.day) };
+}
+
+const unwrap = <T>(result: unknown, key: string): T =>
+  (result && typeof result === 'object' && key in result ? (result as Record<string, unknown>)[key] : result) as T;
+
+/** Makes a door; 409 with the reason when none is available. */
+export async function createDoor(): Promise<Door> {
+  return unwrap<Door>(await request('/v1/door', jsonPost()), 'door');
+}
+
+/** Cancels a door while it is waiting, at no cost. */
+export async function cancelDoor(id: number): Promise<Door> {
+  return unwrap<Door>(await request(`/v1/door/${encodeURIComponent(id)}/cancel`, jsonPost()), 'door');
+}
+
+/** Records that the door screen was left with Back, which counts as returning. */
+export async function doorBack(): Promise<void> {
+  await request('/v1/door/back', jsonPost());
+}
+
+/** Weekdays as Go numbers them, 0 for Sunday; empty or missing means every day. */
+export type Habit = {
+  id: number;
+  name: string;
+  position: number;
+  weekdays?: number[] | null;
+  archived?: boolean;
+  archived_at?: string | null;
+  created_at?: string;
+};
+
+export type HabitChange = Partial<Pick<Habit, 'name' | 'position' | 'weekdays' | 'archived'>>;
+
+export async function listHabits(): Promise<Habit[]> {
+  const result = await request<{ habits: Habit[] | null }>('/v1/habits');
+  return result.habits ?? [];
+}
+
+export async function createHabit(input: { name: string; weekdays?: number[] }): Promise<Habit> {
+  return unwrap<Habit>(await request('/v1/habits', jsonPost(input)), 'habit');
+}
+
+export async function updateHabit(id: number, change: HabitChange): Promise<Habit> {
+  return unwrap<Habit>(await request(`/v1/habits/${encodeURIComponent(id)}`, { method: 'PATCH', ...jsonBody(change) }), 'habit');
+}
+
+/** Ticks or unticks a habit for today's budget day; 409 once bedtime has started. */
+export async function setHabitDone(id: number, done: boolean, day?: string): Promise<void> {
+  await request(`/v1/habits/${encodeURIComponent(id)}/${done ? 'tick' : 'untick'}`, jsonPost(day ? { day } : {}));
+}
+
+export type HabitDayStatus = 'done' | 'missed' | 'unscheduled' | 'none';
+
+export type HeatmapHabit = {
+  id: number;
+  name: string;
+  created_day: string;
+  archived_day?: string | null;
+  days: Record<string, HabitDayStatus> | null;
+  current_run: number;
+  longest_run: number;
+};
+
+/** combined holds the share of scheduled habits done each day, 0 to 1. */
+export type Heatmap = { habits: HeatmapHabit[]; combined: Record<string, number | null> };
+
+export async function getHabitHeatmap(days = 365): Promise<Heatmap> {
+  const result = await request<{ habits?: HeatmapHabit[] | null; combined?: Record<string, number | null> | null }>(`/v1/habits/heatmap?days=${encodeURIComponent(days)}`);
+  return { habits: result.habits ?? [], combined: result.combined ?? {} };
+}
+
+export async function getReasons(): Promise<string[]> {
+  const result = await request<{ reasons: string[] | null }>('/v1/reasons');
+  return result.reasons ?? [];
+}
+
+export async function saveReasons(reasons: string[]): Promise<string[]> {
+  const result = await request<{ reasons?: string[] | null }>('/v1/reasons', { method: 'PUT', ...jsonBody({ reasons }) });
+  return result.reasons ?? reasons;
 }
