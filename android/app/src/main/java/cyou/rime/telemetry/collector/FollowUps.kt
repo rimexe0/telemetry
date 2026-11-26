@@ -30,7 +30,7 @@ data class FollowUp(val id: Long, val title: String, val dueAt: Instant, val nag
 }
 
 /**
- * Keeps due follow-ups on the Now screen until they are marked done, so
+ * Keeps due follow-ups in front of the owner until they are marked done, so
  * nothing depends on remembering, and says so in a notification when one
  * comes due (and again at its nag interval). A swiped-away notification
  * stays away, and with follow-up notifications switched off there are none
@@ -67,13 +67,6 @@ object FollowUpWatch {
         lastAlert == null -> true
         followUp.nagMinutes == null -> false
         else -> Duration.between(lastAlert, now) >= Duration.ofMinutes(followUp.nagMinutes.toLong())
-    }
-
-    /** Open follow-ups the owner has not marked done on this phone, soonest first; ones waiting for a place last. */
-    fun open(context: Context, json: String?): List<FollowUp> {
-        val done = doneLocally(context)
-        return json?.let { runCatching { parse(it) }.getOrNull() }.orEmpty().filter { it.id !in done }
-            .map { withLocalTrigger(context, it) }.sortedBy { it.dueSince ?: Instant.MAX }
     }
 
     /** A place this phone saw reached counts before the server hears of it. */

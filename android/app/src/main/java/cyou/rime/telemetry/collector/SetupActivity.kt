@@ -84,7 +84,7 @@ class SetupActivity : ComponentActivity() {
             return done
         }
 
-        /** True when a required step is still missing; the Now screen then opens setup. */
+        /** True when a required step is still missing; the app then opens setup first. */
         fun needsSetup(context: Context): Boolean = SetupStep.remainingRequired(syncDone(context) + SetupStep.HEALTH) > 0
 
         private fun preferences(context: Context) = context.getSharedPreferences(PREFS, MODE_PRIVATE)
@@ -226,7 +226,7 @@ class SetupActivity : ComponentActivity() {
             if (SetupStep.BLOCKING in done && (!AppSuspender.enabled(this@SetupActivity) || !GuardRoot.enabled(this@SetupActivity))) {
                 withContext(Dispatchers.IO) { BlockingSetup.ensure(this@SetupActivity) }
             }
-            // Asked for from the Now screen: that step first while it is missing.
+            // Asked for from the app or the panel: that step first while it is missing.
             val asked = intent.getStringExtra(EXTRA_STEP)?.let { name -> SetupStep.entries.firstOrNull { it.name == name } }?.takeIf { it !in done }
             if (asked == null) intent.removeExtra(EXTRA_STEP)
             val step = asked ?: SetupStep.next(done, skipped())
@@ -241,7 +241,7 @@ class SetupActivity : ComponentActivity() {
             progress.text = "ALL SET"
             title.text = "This phone is ready"
             why.text = "Collection is running. You can change anything later in Settings."
-            primary.text = "Go to Now"
+            primary.text = "Open Telemetry"
             skip.visibility = View.GONE
             approveHere.visibility = View.GONE
             server.visibility = View.GONE

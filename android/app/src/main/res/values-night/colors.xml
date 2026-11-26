@@ -1,0 +1,6 @@
+<resources>
+    <color name="background">#111213</color>
+    <color name="foreground">#EEEEEB</color>
+    <color name="muted">#AAA9A4</color>
+    <color name="soft">#242628</color>
+</resources>

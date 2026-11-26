@@ -1,498 +1,363 @@
 package cyou.rime.telemetry.collector
 
+import android.annotation.SuppressLint
 import android.content.Intent
-import android.graphics.Color as AndroidColor
+import android.graphics.Color
+import android.graphics.Typeface
+import android.net.Uri
 import android.os.Bundle
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.StyleSpan
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.webkit.CookieManager
+import android.webkit.RenderProcessGoneDetail
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.SystemBarStyle
-import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import cyou.rime.telemetry.collector.ui.DayTimeline
-import cyou.rime.telemetry.collector.ui.DistractionColor
-import cyou.rime.telemetry.collector.ui.TelemetryTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Instant
-import java.time.LocalDate
-import java.time.ZoneId
-
-/** What the home screen shows. */
-data class HomeState(
-    /** Set only when there is something to say: a task, a block reason, or a problem. */
-    val title: String? = null,
-    val taskState: String? = null,
-    val next: String? = null,
-    val resume: String? = null,
-    val reason: String? = null,
-    val footer: String? = null,
-    /** Permissions and setup steps the phone is missing, named on the screen. */
-    val missing: List<SetupStep> = emptyList(),
-    /** Set while an emergency unlock started by an older version is still open. */
-    val emergencyUntil: Instant? = null,
-    /** Today's budget, habits and door, while the budget is on. */
-    val budget: BudgetView? = null,
-    /** The server's words after a habit tick or a door cancel, such as a 409's message. */
-    val budgetMessage: String? = null,
-    /** A habit tick on its way to the server. */
-    val habitBusy: Long? = null,
-    val followUps: List<FollowUp> = emptyList(),
-    val focus: FocusView? = null,
-)
 
 /**
- * The owner's everyday screen: the current task when there is one, today's
- * plan with the time spent inside it, time on distractions, and the day as a
- * timeline. The plan opens the planner; the totals and each stretch of the
- * timeline open their details; collection and pairing controls live in [SettingsActivity].
+ * The app: the Telemetry panel, full screen, signed in with this phone's
+ * paired credential. What has to stay on the phone stays native: setup on
+ * first run, a one-line strip when setup needs attention, Settings and setup
+ * opened from the panel's telemetry-app:// links ([PanelLinks]), and a small
+ * screen when the server can't be reached.
  */
 class MainActivity : ComponentActivity() {
     private companion object {
         const val REFRESH_MS = 60_000L
     }
 
-    private var state by mutableStateOf(HomeState())
+    private enum class Showing { NOTHING, NOT_PAIRED, OPENING, PANEL, UNREACHABLE }
 
-    /** Loaded days by date (YYYY-MM-DD); swiping asks for more. */
-    private val days = mutableStateMapOf<String, DayView>()
+    private lateinit var web: WebView
+    private lateinit var strip: TextView
+    private lateinit var status: LinearLayout
+    private lateinit var statusTitle: TextView
+    private lateinit var statusBody: TextView
+    private lateinit var statusPrimary: Button
+    private lateinit var statusSecondary: Button
+    private lateinit var back: OnBackPressedCallback
+
+    private var showing = Showing.NOTHING
+    private var server = ""
+    private var loadFailed = false
+    private var sessionOpenedAt = Instant.EPOCH
+    private var sessionExpiresAt: Instant? = null
+    private var opening: Job? = null
+    private var attention: SetupStep? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        enableEdgeToEdge(SystemBarStyle.dark(AndroidColor.TRANSPARENT), SystemBarStyle.dark(AndroidColor.TRANSPARENT))
+        enableEdgeToEdge(SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT), SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT))
         super.onCreate(savedInstanceState)
-        setContent {
-            TelemetryTheme {
-                HomeScreen(
-                    state = state,
-                    onSettings = { startActivity(Intent(this, SettingsActivity::class.java)) },
-                    onPlanner = { startActivity(Intent(this, PanelActivity::class.java)) },
-                    days = days,
-                    onShowDay = ::loadDay,
-                    onDay = { date, chunk -> startActivity(DayActivity.intent(this, date, chunk)) },
-                    onSetup = ::openSetup,
-                    onHabit = ::habit,
-                    onCancelDoor = ::cancelDoor,
-                    onDone = ::done,
-                    onFocus = ::focus,
-                )
-            }
-        }
-        showCached()
-        showFollowUps()
-        DayModel.today(Instant.now()).let { today -> DayCache.read(this, today)?.let { days[today] = it } }
         if (savedInstanceState == null) SetupLink.apply(this, intent)
-        if (savedInstanceState == null && SetupActivity.needsSetup(this)) openSetup()
+        buildViews()
         CollectionStarter.ensureRunning(this)
+        if (savedInstanceState == null && SetupActivity.needsSetup(this)) openSetup(null)
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.RESUMED) {
                 while (true) {
-                    refresh()
+                    check()
                     delay(REFRESH_MS)
                 }
             }
         }
     }
 
-    private fun openSetup(step: SetupStep? = null) = startActivity(SetupActivity.intent(this, step))
-
-    /** Today's budget from the cache, and any emergency unlock still in force. */
-    private fun showBudget() {
-        val until = Emergency.until(this)?.takeIf { it.isAfter(Instant.now()) }
-        state = state.copy(emergencyUntil = until, budget = NowCache.budget(this)?.takeIf { it.enabled })
+    override fun onResume() {
+        super.onResume()
+        // Back after switching the network or the VPN on: try again without a tap.
+        if (showing == Showing.UNREACHABLE) open()
     }
 
-    /** Ticks or unticks a habit; after bedtime starts the server says no, in its own words. */
-    private fun habit(habit: BudgetHabit) {
-        if (state.habitBusy != null) return
-        state = state.copy(habitBusy = habit.id, budgetMessage = null)
-        lifecycleScope.launch {
-            val outcome = withContext(Dispatchers.IO) {
-                runCatching { Door.habit(this@MainActivity, habit.id, !habit.done) }.getOrDefault(Door.Outcome.Unreachable)
-            }
-            state = state.copy(habitBusy = null, budgetMessage = message(outcome, "The server can't be reached, so the habit can't be ticked now."))
-            showBudget()
-        }
+    // A setup link or a notification while the app is open.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        SetupLink.apply(this, intent)
+        if (SetupActivity.needsSetup(this)) openSetup(null)
     }
 
-    private fun cancelDoor(id: Long) {
-        lifecycleScope.launch {
-            val outcome = withContext(Dispatchers.IO) { runCatching { Door.cancel(this@MainActivity, id) }.getOrDefault(Door.Outcome.Unreachable) }
-            state = state.copy(budgetMessage = message(outcome, "The server can't be reached, so the door can't be cancelled now."))
-            showBudget()
-        }
+    override fun onDestroy() {
+        if (::web.isInitialized) runCatching { web.destroy() }
+        super.onDestroy()
     }
 
-    private fun message(outcome: Door.Outcome, unreachable: String): String? = when (outcome) {
-        is Door.Outcome.Done -> null
-        is Door.Outcome.Refused -> outcome.message
-        Door.Outcome.Unreachable -> unreachable
-    }
-
-    private fun showFollowUps() {
-        val json = NowCache.read(this)?.json
-        state = state.copy(followUps = FollowUpWatch.open(this, json), focus = json?.let { runCatching { TrackingModel.parse(it).focus }.getOrNull() })
-    }
-
-    /** Starts, pauses or ends a focus session, then shows the server's new state. */
-    private fun focus(action: String, taskId: Long) {
-        lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
-                DeviceApi.post(this@MainActivity, "/v1/device/focus", org.json.JSONObject().put("action", action).put("task_id", taskId).toString())
-                NowCache.refresh(this@MainActivity)
-            }
-            showCached()
-            showFollowUps()
-        }
-    }
-
-    private fun done(followUp: FollowUp) {
-        state = state.copy(followUps = state.followUps - followUp)
-        lifecycleScope.launch { withContext(Dispatchers.IO) { runCatching { FollowUpWatch.markDone(this@MainActivity, followUp.id) } } }
-    }
-
-    private fun problem(title: String, reason: String) {
-        state = state.copy(title = title, taskState = null, next = null, resume = null, reason = reason, footer = null)
-    }
-
-    private suspend fun refresh() {
-        val token = DeliveryConfig(this).token()
-        state = state.copy(missing = SetupStep.missing(SetupActivity.syncDone(this)))
-        showBudget()
-        if (token == null) {
-            if (DeliveryConfig(this).removed) {
-                problem("This phone was removed from Telemetry", "It was removed in the panel. Tap Set up and connect it again with a new setup code; what it recorded meanwhile is kept.")
-            } else if (!showCached()) problem("This phone is not paired yet", "Finish setting it up to see your plan.")
+    /** Pairing, the strip, the panel session, and the cached policy blocking reads. */
+    private suspend fun check() {
+        val config = DeliveryConfig(this)
+        if (config.token() == null) {
+            showNotPaired(config.removed)
             return
         }
-        val body = withContext(Dispatchers.IO) { NowCache.refresh(this@MainActivity) }
-        if (body != null) {
-            render(NowModel.parse(body, Instant.now(), Instant.now(), offline = false))
-        } else if (!showCached()) {
-            problem("No plan information yet", "The server could not be reached and nothing is cached. Nothing is assumed.")
+        attention = SetupStep.missing(SetupActivity.syncDone(this)).firstOrNull()
+        strip.visibility = if (attention != null) View.VISIBLE else View.GONE
+        when (showing) {
+            Showing.NOTHING, Showing.NOT_PAIRED -> open()
+            Showing.PANEL -> if (PanelSession.renewDue(sessionExpiresAt, sessionOpenedAt, Instant.now())) renew()
+            Showing.OPENING, Showing.UNREACHABLE -> Unit
         }
-        showFollowUps()
-        showBudget()
-        val today = DayModel.today(Instant.now())
-        withContext(Dispatchers.IO) { DayCache.refresh(this@MainActivity, today) }?.let { days[today] = it }
+        // Keeps the policy the block screen reads fresh while the app is open.
+        withContext(Dispatchers.IO) { runCatching { NowCache.refresh(this@MainActivity) } }
     }
 
-    /** Shows the cached state, following its timeline while offline. */
-    private fun showCached(): Boolean {
-        val (json, fetchedAt) = NowCache.read(this) ?: return false
-        val now = Instant.now()
-        if (!NowModel.timelineCovers(json, now)) {
-            problem("Plan information is out of date", "Last update ${NowModel.ageText(fetchedAt, now)}. Nothing is assumed until the server is reachable.")
-            return true
+    private fun openSetup(step: SetupStep?) = startActivity(SetupActivity.intent(this, step))
+
+    /** Trades the paired credential for a panel session, then loads the panel. */
+    private fun open() {
+        if (opening?.isActive == true) return
+        val config = DeliveryConfig(this)
+        val token = config.token() ?: return showNotPaired(config.removed)
+        server = config.serverUrl.trimEnd('/')
+        show(Showing.OPENING)
+        opening = lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) { PanelSession.request(server, DeviceIdentity.get(this@MainActivity), token) }
+            when (result) {
+                is PanelSession.Result.Opened -> {
+                    keep(result)
+                    loadFailed = false
+                    web.loadUrl("$server/panel/")
+                }
+                is PanelSession.Result.Refused -> showUnreachable(result.status)
+                PanelSession.Result.Unreachable -> showUnreachable(null)
+            }
         }
-        render(NowModel.parse(json, fetchedAt, now, offline = true))
+    }
+
+    /** A new session before the old one ends; the open page keeps going with it. */
+    private fun renew() {
+        if (opening?.isActive == true) return
+        val token = DeliveryConfig(this).token() ?: return
+        opening = lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) { PanelSession.request(server, DeviceIdentity.get(this@MainActivity), token) }
+            val expired = sessionExpiresAt?.isAfter(Instant.now()) != true
+            when {
+                result is PanelSession.Result.Opened -> {
+                    keep(result)
+                    if (expired) web.reload()
+                }
+                expired -> showUnreachable((result as? PanelSession.Result.Refused)?.status)
+            }
+        }
+    }
+
+    private fun keep(session: PanelSession.Result.Opened) {
+        CookieManager.getInstance().apply {
+            setAcceptCookie(true)
+            setCookie(server, "${session.cookie}; Path=/; Secure; HttpOnly")
+            flush()
+        }
+        sessionOpenedAt = Instant.now()
+        sessionExpiresAt = session.expiresAt
+    }
+
+    /** Follows a link the panel opens: native screens for telemetry-app://, the browser for other sites. */
+    private fun follow(url: String, mainFrame: Boolean): Boolean {
+        when (val route = PanelLinks.route(url, server, mainFrame)) {
+            PanelRoute.InPanel -> return false
+            is PanelRoute.Browser -> runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(route.url))) }
+            is PanelRoute.Settings -> startActivity(SettingsActivity.intent(this, route.section))
+            is PanelRoute.Setup -> openSetup(route.step)
+            PanelRoute.Refused -> Unit
+        }
         return true
     }
 
-    /** Shows a day from the cache at once, then from the server. */
-    private fun loadDay(date: String) {
-        lifecycleScope.launch {
-            if (date !in days) DayCache.read(this@MainActivity, date)?.let { days[date] = it }
-            withContext(Dispatchers.IO) { DayCache.refresh(this@MainActivity, date) }?.let { days[date] = it }
+    private fun showNotPaired(removed: Boolean) {
+        strip.visibility = View.GONE
+        if (removed) {
+            status("This phone was removed from Telemetry",
+                "It was removed in the panel. Connect it again with a new setup code; what it recorded meanwhile is kept.")
+        } else {
+            status("This phone isn't connected yet", "Finish setting it up to open Telemetry here.")
         }
+        statusPrimary.text = "Set up"
+        statusPrimary.setOnClickListener { openSetup(SetupStep.PAIR) }
+        statusPrimary.visibility = View.VISIBLE
+        statusSecondary.visibility = View.VISIBLE
+        show(Showing.NOT_PAIRED)
     }
 
-    private fun render(view: NowView) {
-        state = state.copy(
-            title = view.taskTitle,
-            taskState = view.taskState,
-            next = view.nextAction,
-            resume = view.resumeMarker,
-            // Free time needs no words; the plan below shows it.
-            reason = view.reason.takeIf { view.mode != "leisure" && it.isNotBlank() },
-            footer = if (view.offline) "Offline: following the plan cached ${NowModel.ageText(view.asOf, Instant.now())}." else null,
-        )
+    /** Never a blank page: what happened, what still works, and Retry. */
+    private fun showUnreachable(refusedWith: Int?) {
+        val essentials = "Blocking keeps working on this phone, and calls, maps and the other essentials stay open."
+        if (refusedWith == null) {
+            status("Can't reach your Telemetry server", essentials)
+        } else {
+            status("Your Telemetry server didn't open the panel", "It answered $refusedWith. $essentials")
+        }
+        statusPrimary.text = "Retry"
+        statusPrimary.setOnClickListener { open() }
+        statusPrimary.visibility = View.VISIBLE
+        statusSecondary.visibility = View.VISIBLE
+        show(Showing.UNREACHABLE)
     }
-}
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun HomeScreen(state: HomeState, days: Map<String, DayView>, onShowDay: (String) -> Unit, onSettings: () -> Unit, onPlanner: () -> Unit,
-    onDay: (String, DayChunk?) -> Unit, onSetup: (SetupStep) -> Unit, onHabit: (BudgetHabit) -> Unit, onCancelDoor: (Long) -> Unit,
-    onDone: (FollowUp) -> Unit, onFocus: (String, Long) -> Unit) {
-    val context = LocalContext.current
-    val names = remember { AppNames(context) }
-    // Today is the last page; swiping right goes back a day at a time.
-    val pager = rememberPagerState(initialPage = DAYS_BACK - 1) { DAYS_BACK }
-    val today = LocalDate.now()
-    fun dateOf(page: Int) = today.minusDays((DAYS_BACK - 1 - page).toLong()).toString()
-    LaunchedEffect(pager.settledPage) { if (pager.settledPage != DAYS_BACK - 1) onShowDay(dateOf(pager.settledPage)) }
-    Scaffold(
-        topBar = {
-            TopAppBar(title = {
-                // Today needs no name; an earlier day says which one it is.
-                if (pager.currentPage != DAYS_BACK - 1) Text(DayModel.dayLabel(dateOf(pager.currentPage), Instant.now()), style = MaterialTheme.typography.titleMedium)
-            }, actions = {
-                IconButton(onClick = onSettings) { Icon(painterResource(R.drawable.ic_settings), contentDescription = "Settings") }
-            })
-        },
-    ) { padding ->
-        HorizontalPager(pager, Modifier.fillMaxSize().padding(padding), beyondViewportPageCount = 0) { page ->
-            val date = dateOf(page)
-            val isToday = page == DAYS_BACK - 1
-            Column(
-                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                if (isToday) {
-                    FollowUps(state.followUps, onDone)
-                    state.focus?.let { Focus(it, onFocus) }
-                    state.title?.let { Text(it, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold) }
-                    state.taskState?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                    state.next?.let { Text("Next: $it", style = MaterialTheme.typography.titleMedium) }
-                    state.resume?.let {
-                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh), modifier = Modifier.fillMaxWidth()) {
-                            Column(Modifier.padding(14.dp)) {
-                                Text("RETURN HERE", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text(it, style = MaterialTheme.typography.bodyLarge)
-                            }
-                        }
-                    }
-                    state.reason?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                    Missing(state.missing, onSetup)
-                    OpenRow(state.emergencyUntil, state.budget?.door, onCancelDoor)
-                    state.budget?.let { Habits(it, state.budgetMessage, state.habitBusy, onHabit) }
-                }
-                days[date]?.let { day ->
-                    Plan(day, onPlanner, if (isToday && state.focus == null) onFocus else null, isToday)
-                    Totals(day, Modifier.fillMaxWidth().clickable { onDay(date, null) })
-                    DayTimeline(day, Instant.now(), names, Modifier.fillMaxWidth(), onChunk = { chunk -> onDay(date, chunk) })
-                }
-                if (isToday) state.footer?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    private fun status(title: String, body: String) {
+        statusTitle.text = title
+        statusTitle.visibility = View.VISIBLE
+        statusBody.text = body
+    }
+
+    private fun show(next: Showing) {
+        showing = next
+        if (next == Showing.OPENING) {
+            statusTitle.visibility = View.GONE
+            statusBody.text = "Opening Telemetry…"
+            statusPrimary.visibility = View.GONE
+            statusSecondary.visibility = View.GONE
+        }
+        web.visibility = if (next == Showing.PANEL) View.VISIBLE else View.INVISIBLE
+        status.visibility = if (next == Showing.PANEL) View.GONE else View.VISIBLE
+        back.isEnabled = next == Showing.PANEL && web.canGoBack()
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun buildViews() {
+        val background = getColor(R.color.background)
+        val foreground = getColor(R.color.foreground)
+        val muted = getColor(R.color.muted)
+        val density = resources.displayMetrics.density
+        fun dp(value: Int) = (value * density).toInt()
+
+        web = WebView(this).apply {
+            setBackgroundColor(background)
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.allowFileAccess = false
+            settings.allowContentAccess = false
+            settings.userAgentString = PanelLinks.userAgent(settings.userAgentString, BuildConfig.VERSION_NAME)
+            webViewClient = PanelClient()
+            visibility = View.INVISIBLE
+        }
+
+        // One line, only while setup needs something; it opens that step.
+        strip = TextView(this).apply {
+            val text = "Setup needs attention · Fix"
+            this.text = SpannableString(text).apply { setSpan(StyleSpan(Typeface.BOLD), text.length - 3, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE) }
+            contentDescription = "Setup needs attention. Fix"
+            textSize = 14f
+            setTextColor(foreground)
+            setBackgroundColor(getColor(R.color.soft))
+            gravity = Gravity.CENTER_VERTICAL
+            minHeight = dp(44)
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+            visibility = View.GONE
+            setOnClickListener { openSetup(attention) }
+        }
+
+        statusTitle = TextView(this).apply {
+            textSize = 22f
+            setTextColor(foreground)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, 0, 0, dp(8))
+        }
+        statusBody = TextView(this).apply {
+            textSize = 16f
+            setTextColor(muted)
+            setPadding(0, 0, 0, dp(16))
+        }
+        statusPrimary = Button(this)
+        statusSecondary = Button(this).apply {
+            text = "Phone settings"
+            setOnClickListener { startActivity(SettingsActivity.intent(this@MainActivity, null)) }
+        }
+        status = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(24), dp(24), dp(24), dp(24))
+            addView(statusTitle)
+            addView(statusBody)
+            addView(statusPrimary, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            addView(statusSecondary, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+
+        val body = FrameLayout(this).apply {
+            addView(web, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            addView(status, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        }
+        val column = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(strip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            addView(body, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        }
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(background)
+            addView(column)
+        }
+        // Edge to edge: the page sits clear of the bars, the cutout and the keyboard.
+        ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            val keyboard = insets.getInsets(WindowInsetsCompat.Type.ime())
+            view.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, keyboard.bottom))
+            WindowInsetsCompat.CONSUMED
+        }
+        setContentView(root)
+
+        // Back walks the panel's history first, then leaves as Android does.
+        back = object : OnBackPressedCallback(false) {
+            override fun handleOnBackPressed() {
+                if (web.canGoBack()) web.goBack()
             }
         }
+        onBackPressedDispatcher.addCallback(this, back)
     }
-}
 
-/** How many days the home screen can swipe back through. */
-private const val DAYS_BACK = 60
+    private inner class PanelClient : WebViewClient() {
+        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
+            follow(request.url.toString(), request.isForMainFrame)
 
-/**
- * What is open beyond the policy: an emergency unlock started before the door
- * replaced it, or a door, waiting (with Cancel) or open. The door itself is
- * asked for on the block screen.
- */
-@Composable
-private fun OpenRow(until: Instant?, door: BudgetDoor?, onCancelDoor: (Long) -> Unit) {
-    val zone = ZoneId.systemDefault()
-    when {
-        until != null -> Text("Everything is open until ${BudgetText.clock(until, zone)}.", color = DistractionColor)
-        door != null && door.waiting -> Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(door.opensAt?.let { "A door opens at ${BudgetText.clock(it, zone)}." } ?: "A door is waiting to open.",
-                color = DistractionColor, modifier = Modifier.weight(1f))
-            TextButton(onClick = { onCancelDoor(door.id) }) { Text("Cancel") }
+        override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+            if (!request.isForMainFrame) return
+            loadFailed = true
+            showUnreachable(null)
         }
-        door != null && door.open -> Text(
-            door.endsAt?.let { "Open through the door until ${BudgetText.clock(it, zone)} at the latest." } ?: "Open through the door.",
-            color = DistractionColor,
-        )
-    }
-}
 
-/** Today's habits with tick and untick, and what is left of the budget. */
-@Composable
-private fun Habits(budget: BudgetView, message: String?, busy: Long?, onHabit: (BudgetHabit) -> Unit) {
-    if (budget.habits.isEmpty() && message == null) return
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(start = 14.dp, end = 8.dp, top = 12.dp, bottom = 6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text("HABITS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                Text(if (budget.borrowingNow) "Today's budget is used" else "Left today ${BudgetText.minutes(budget.left)}",
-                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(end = 6.dp))
-            }
-            budget.habits.forEach { habit ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(habit.name, fontWeight = if (habit.done) FontWeight.Normal else FontWeight.Bold, modifier = Modifier.weight(1f),
-                        color = if (habit.done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
-                    Text(if (habit.done) "done" else "+${BudgetText.minutes(habit.value)}", style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 8.dp))
-                    if (habit.done) {
-                        TextButton(onClick = { onHabit(habit) }, enabled = busy == null) { Text("Undo") }
-                    } else {
-                        FilledTonalButton(onClick = { onHabit(habit) }, enabled = busy == null) { Text("Done") }
-                    }
-                }
-            }
-            message?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = DistractionColor, modifier = Modifier.padding(bottom = 6.dp)) }
+        // A proxy or relay that answers for a server it can't reach.
+        override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
+            if (!request.isForMainFrame || response.statusCode < 500) return
+            loadFailed = true
+            showUnreachable(null)
         }
-    }
-}
 
-/** Each thing the phone is missing, with the way to fix it; nothing when all is in place. */
-@Composable
-private fun Missing(missing: List<SetupStep>, onFix: (SetupStep) -> Unit) {
-    if (missing.isEmpty()) return
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(start = 14.dp, end = 8.dp, top = 4.dp, bottom = 4.dp)) {
-            missing.forEach { step ->
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
-                    Text(step.missing.orEmpty(), color = DistractionColor, modifier = Modifier.weight(1f))
-                    FilledTonalButton(onClick = { onFix(step) }) { Text("Fix") }
-                }
-            }
+        override fun onPageFinished(view: WebView, url: String) {
+            if (!loadFailed && showing == Showing.OPENING) show(Showing.PANEL)
         }
-    }
-}
 
-/** Things waiting on the owner: due ones first with Done, then what is coming. */
-@Composable
-private fun FollowUps(followUps: List<FollowUp>, onDone: (FollowUp) -> Unit) {
-    if (followUps.isEmpty()) return
-    val zone = ZoneId.systemDefault()
-    val now = Instant.now()
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(start = 14.dp, end = 8.dp, top = 4.dp, bottom = 4.dp)) {
-            followUps.forEach { followUp ->
-                val due = followUp.dueBy(now)
-                val at = (followUp.dueSince ?: followUp.dueAt).atZone(zone)
-                // A reminder waiting for its place shows the place, not a time.
-                val waiting = followUp.place?.takeIf { followUp.dueSince == null }
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
-                    Text(waiting?.label ?: String.format("%02d:%02d", at.hour, at.minute), color = if (due) DistractionColor else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(end = 12.dp))
-                    Text(followUp.title, fontWeight = if (due) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.weight(1f))
-                    FilledTonalButton(onClick = { onDone(followUp) }) { Text("Done") }
-                }
-            }
+        override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
+            back.isEnabled = showing == Showing.PANEL && view.canGoBack()
         }
-    }
-}
 
-/** The running focus session: the one task, how it stands, and the way to pause or end it. */
-@Composable
-private fun Focus(focus: FocusView, onFocus: (String, Long) -> Unit) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(start = 14.dp, end = 8.dp, top = 12.dp, bottom = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("FOCUS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(focus.task, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text(TrackingModel.focusLine(focus, Instant.now()), color = if (focus.on == "off" || focus.on == "unknown") DistractionColor else MaterialTheme.colorScheme.onSurfaceVariant)
-            focus.nextAction?.let { Text("Next: $it") }
-            Row {
-                TextButton(onClick = { onFocus("pause", focus.taskId) }) { Text("Pause") }
-                TextButton(onClick = { onFocus("done", focus.taskId) }) { Text("End") }
-            }
+        // The page's renderer died: start over instead of crashing the app.
+        override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+            (view.parent as? ViewGroup)?.removeView(view)
+            view.destroy()
+            recreate()
+            return true
         }
-    }
-}
-
-/** Today's blocks and tasks with the time spent on each; opens the planner. */
-@Composable
-private fun Plan(day: DayView, onPlanner: () -> Unit, onFocus: ((String, Long) -> Unit)?, isToday: Boolean) {
-    val zone = ZoneId.systemDefault()
-    fun time(at: Instant) = String.format("%02d:%02d", at.atZone(zone).hour, at.atZone(zone).minute)
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onPlanner),
-    ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (day.blocks.isEmpty() && day.tasks.none { isToday || it.minutes >= 1 || it.agentMinutes >= 1 }) {
-                Text(if (isToday) "No plan today" else "No plan that day", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            day.blocks.forEach { block ->
-                val current = block.status == "in_progress"
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    // A block that ends on another day shows only when it began.
-                    val sameDay = block.end.atZone(zone).toLocalDate() == block.start.atZone(zone).toLocalDate()
-                    Text(if (sameDay) "${time(block.start)}–${time(block.end)}" else "from ${time(block.start)}", style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(end = 12.dp))
-                    Text(block.title, fontWeight = if (current) FontWeight.Bold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                    // Dim when the task has no rules: the number is then only time off distractions.
-                    if (block.status != "upcoming" && !block.focusOnly) Text(DayModel.clock(block.inPlanMinutes), modifier = Modifier.padding(start = 12.dp),
-                        color = if (block.tracked) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            // Tasks need no time: each shows the owner's own time on it today. A second
-            // line appears only when its agent has something to say.
-            // An earlier day lists only the tasks that got time that day.
-            day.tasks.filter { isToday || it.minutes >= 1 || it.agentMinutes >= 1 }.forEach { task ->
-                Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(task.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                        if (onFocus != null) Text("Focus", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.clickable { onFocus("start", task.id) }.padding(horizontal = 10.dp, vertical = 4.dp))
-                        Text(if (task.tracked) DayModel.clock(task.minutes) else "—", modifier = Modifier.padding(start = 8.dp),
-                            color = if (task.tracked) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    val turn = task.yourTurnSince
-                    when {
-                        turn != null -> Text("Your turn since ${time(turn)}", style = MaterialTheme.typography.bodySmall, color = DistractionColor)
-                        task.agentMinutes >= 1 -> Text("agent ${DayModel.clock(task.agentMinutes)} · waited ${DayModel.clock(task.waitingMinutes)}",
-                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun Totals(day: DayView, modifier: Modifier) {
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        if (day.blocks.isNotEmpty() || day.tasks.isNotEmpty()) {
-            Total("On plan", DayModel.clock(day.inPlanMinutes) + if (day.plannedMinutes >= 1) " of ${DayModel.clock(day.plannedMinutes)}" else "", null)
-        }
-        // Breaks after task work: rest is away from screens; scrolling is not rest.
-        if (day.restMinutes >= 1 || day.scrollingMinutes >= 1) {
-            Total("Breaks", DayModel.clock(day.restMinutes) + " rest",
-                if (day.scrollingMinutes >= 1) DayModel.clock(day.scrollingMinutes) + " scrolling" else null)
-        }
-        if (day.outsideMinutes >= 1) Total("Outside", DayModel.clock(day.outsideMinutes), null)
-        Total("Distractions", DayModel.clock(day.distractionMinutes),
-            day.distractionByDevice.filter { it.second >= 1 }.sortedByDescending { it.second }
-                .joinToString(" · ") { "${DayModel.deviceName(it.first)} ${DayModel.clock(it.second)}" }.ifBlank { null })
-    }
-}
-
-@Composable
-private fun Total(name: String, value: String, detail: String?) {
-    Row(verticalAlignment = Alignment.Bottom) {
-        Text(name, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(110.dp))
-        Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        detail?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 12.dp, bottom = 3.dp)) }
     }
 }

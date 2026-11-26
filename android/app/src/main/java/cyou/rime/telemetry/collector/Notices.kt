@@ -11,7 +11,7 @@ import android.content.Context
  */
 enum class NoticeKind(val title: String, val detail: String, val defaultOn: Boolean) {
     SYNC("This phone has not synced", "Once, after records have waited half an hour, with Sync now. Also when the phone was removed in the panel.", true),
-    FOLLOW_UPS("Follow-ups when they are due", "A swiped-away one stays away; it is still on the Now screen.", true),
+    FOLLOW_UPS("Follow-ups when they are due", "A swiped-away one stays away; it is still on Today in Telemetry.", true),
     BLOCKING_OFF("Blocking switched off", "Once each time blocking is switched off while something is blocked.", false),
     COMPUTER_STOPPED("Telemetry stopped on a computer", "Once each time, not repeated.", false),
     COMPUTER_PROBLEMS("Other collection problems on a computer", "Such as a computer that went quiet or can't read window titles.", false),

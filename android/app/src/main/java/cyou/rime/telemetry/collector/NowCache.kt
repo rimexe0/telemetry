@@ -3,7 +3,7 @@ package cyou.rime.telemetry.collector
 import android.content.Context
 import java.time.Instant
 
-/** The last /v1/device/now response, shared by the Now screen, blocking and the watcher. */
+/** The last /v1/device/now response, shared by blocking, the watcher and the app while it is open. */
 object NowCache {
     private const val PREFS = "telemetry-now"
     private const val KEY_JSON = "json"

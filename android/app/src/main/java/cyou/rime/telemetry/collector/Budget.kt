@@ -155,7 +155,7 @@ object Budget {
         if (array == null) emptyList() else (0 until array.length()).map { array.optString(it) }.filter { it.isNotBlank() }
 }
 
-/** The words the door screen, the counter and the home screen use. They state facts and never scold. */
+/** The words the door screen and the counter use. They state facts and never scold. */
 object BudgetText {
     /** "45 min", "1 h", "1 h 40 min". */
     fun minutes(value: Double): String {

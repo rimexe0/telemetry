@@ -1,3 +1,7 @@
 <resources>
-    <color name="background">#111213</color>
+    <!-- The panel's light palette; values-night has its dark one. -->
+    <color name="background">#F5F5F2</color>
+    <color name="foreground">#181918</color>
+    <color name="muted">#63645F</color>
+    <color name="soft">#E9EAE5</color>
 </resources>
