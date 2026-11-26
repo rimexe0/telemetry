@@ -274,6 +274,10 @@ fun HabitsScreen(state: HabitsState, stale: String?, notice: String?, editing: H
         Small(stale)
         Gap(10.dp)
     }
+    // The list to tick and edit first, the reasons next, and the year last
+    // (owner 2026-11-26: five empty years above the list hid it).
+    HabitEditor(state.habits, notice, editing)
+    ReasonsEditor(state.reasons, editing.reasons)
     PanelCard("The last year") {
         val heatmap = state.heatmap
         when {
@@ -282,8 +286,6 @@ fun HabitsScreen(state: HabitsState, stale: String?, notice: String?, editing: H
             else -> YearGrid(state)
         }
     }
-    HabitEditor(state.habits, notice, editing)
-    ReasonsEditor(state.reasons, editing.reasons)
 }
 
 /** Monday first, as the panel lists them; 0 is Sunday. */
@@ -495,7 +497,8 @@ private fun YearGrid(state: HabitsState) {
                     else -> CellState.DONE to lerp(colors.panel, colors.done, listOf(0f, .35f, .6f, .8f)[level])
                 }
             }
-            for (row in rows) {
+            // A habit gets its own year only once something is recorded for it.
+            for (row in rows.filter { habit -> habit.days.values.any { it == "done" || it == "missed" } }) {
                 Gap(14.dp)
                 Band(row.name, HabitCells.runs(row.currentRun, row.longestRun), row, scroll, viewport)
                 val queued = TickQueue.doneByDay(state.queued, row.id)
