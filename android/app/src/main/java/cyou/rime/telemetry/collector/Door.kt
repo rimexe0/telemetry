@@ -42,12 +42,6 @@ object Door {
         PolicyEvents.record(context, "android.policy_door_back", "door-back:${now.toEpochMilli()}", decision, mapOf("package" to pkg, "at" to now.toString()))
     }
 
-    /** Ticks or unticks a habit; the answer is the new budget. Blocking IO. */
-    fun habit(context: Context, id: Long, done: Boolean): Outcome =
-        call(context, "/v1/device/habits/$id/" + if (done) "tick" else "untick", "{}").also { outcome ->
-            if (outcome is Outcome.Done) NowCache.patchBudget(context, outcome.body)
-        }
-
     /** Reports grayscale kept off ("decline") or turned back on ("restore"). Blocking IO. */
     fun grayscale(context: Context, action: String): Outcome =
         call(context, "/v1/device/grayscale", JSONObject().put("action", action).put("platform", "android").toString())

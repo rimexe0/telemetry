@@ -126,7 +126,7 @@ class TelemetryAccessibilityService : AccessibilityService() {
     /** The cached answer, when it was fetched, and the distractions it names; parsed once per answer. */
     private fun entry(): Triple<Instant, String, Set<String>>? {
         val entry = NowCache.read(this) ?: return null
-        // A habit tick or an offline door changes the budget without a new fetch.
+        // An offline door changes the budget without a new fetch.
         cached?.takeIf { it.first == entry.fetchedAt && it.second == entry.json }?.let { return it }
         return Triple(entry.fetchedAt, entry.json, BlockPolicy.distractionPackages(entry.json)).also { cached = it }
     }

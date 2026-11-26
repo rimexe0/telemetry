@@ -35,7 +35,7 @@ object NowCache {
     }
 
     /**
-     * Puts a new `budget` (the answer to a habit tick, say) into the cached
+     * Puts a new `budget` (an offline door answer, say) into the cached
      * answer, leaving its timeline and when it was fetched as they were.
      */
     fun patchBudget(context: Context, budget: org.json.JSONObject) {
