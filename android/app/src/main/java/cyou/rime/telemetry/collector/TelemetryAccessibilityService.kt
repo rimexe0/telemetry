@@ -331,7 +331,8 @@ class TelemetryAccessibilityService : AccessibilityService() {
         if (distraction) sitting.enter(now) else sitting.leave(now)
         val lines = when {
             distraction -> CounterText.lines(budget!!, sitting.used(now), sitting.usedSince(entry!!.first, now), now, zone)
-            interactive && overlay == null && budget != null && budget.windDown && budget.rate.kind != "bedtime" ->
+            // Not over Telemetry itself: Today says when bedtime is (owner 2026-11-26).
+            interactive && overlay == null && budget != null && budget.windDown && budget.rate.kind != "bedtime" && pkg != packageName ->
                 listOfNotNull(BudgetText.bedtime(budget, now, null, zone))
             else -> emptyList()
         }
