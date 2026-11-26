@@ -45,8 +45,23 @@ class PanelTest {
 
     @Test
     fun theUserAgentNamesTheApp() {
-        assertEquals("Mozilla/5.0 (Linux; Android 16) Chrome/140 Mobile TelemetryApp/0.1.512",
+        assertEquals("Mozilla/5.0 (Linux; Android 16) Chrome/140 Mobile TelemetryApp/0.1.512 TelemetryAppNav/1",
             PanelLinks.userAgent("Mozilla/5.0 (Linux; Android 16) Chrome/140 Mobile", "0.1.512"))
+    }
+
+    @Test
+    fun panelAddressesBelongToTheAppsPlaces() {
+        assertEquals("activity", PanelLinks.place("#activity"))
+        assertEquals("activity", PanelLinks.place("#activity/timeline/2026-11-20"))
+        assertEquals("activity", PanelLinks.place("#plan/2026-11-27"))
+        assertEquals("settings", PanelLinks.place("#settings/budget"))
+        // Editing habits is in the panel, under Settings in the app.
+        assertEquals("settings", PanelLinks.place("#habits"))
+        assertEquals("today", PanelLinks.place("#today"))
+        assertEquals("today", PanelLinks.place(""))
+        assertEquals("#settings/sign-in", PanelLinks.safeHash("#settings/sign-in"))
+        assertNull(PanelLinks.safeHash("#x');alert(1)//"))
+        assertNull(PanelLinks.safeHash("activity"))
     }
 
     @Test

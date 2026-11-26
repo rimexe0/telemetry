@@ -34,8 +34,8 @@ sealed interface PanelRoute {
 }
 
 /**
- * The app is the panel in a web view. The panel reaches what must stay on the
- * phone through telemetry-app:// links:
+ * The app's Activity and Settings are the panel in a web view. The panel
+ * reaches what must stay on the phone through telemetry-app:// links:
  *
  * - telemetry-app://settings/permissions and telemetry-app://settings/notifications
  *   open those parts of [SettingsActivity] (telemetry-app://settings opens it at the top);
@@ -46,8 +46,25 @@ sealed interface PanelRoute {
 object PanelLinks {
     const val SCHEME = "telemetry-app"
 
-    /** Lets the panel tell it is inside the app, and which version. */
-    fun userAgent(default: String, versionName: String): String = "$default TelemetryApp/$versionName"
+    /**
+     * Lets the panel tell it is inside the app, and which version, and that
+     * the app draws the places bar itself, so the panel leaves its own out.
+     */
+    fun userAgent(default: String, versionName: String): String = "$default TelemetryApp/$versionName TelemetryAppNav/1"
+
+    /**
+     * Which of the app's places a panel address belongs to, as the panel's
+     * nav.ts reads its addresses: Activity's sections and the old day, plan
+     * and health links; Settings' pages and the habit editing; Today otherwise.
+     */
+    fun place(hash: String): String = when (hash.removePrefix("#").substringBefore('/')) {
+        "activity", "day", "plan", "health" -> "activity"
+        "settings", "rules", "collection", "devices", "sign-in", "habits" -> "settings"
+        else -> "today"
+    }
+
+    /** A panel address safe to put in a script: only the characters the panel's addresses use. */
+    fun safeHash(hash: String): String? = hash.takeIf { Regex("#[A-Za-z0-9/_-]{0,64}").matches(it) }
 
     fun route(url: String, server: String, mainFrame: Boolean = true): PanelRoute {
         val uri = runCatching { URI(url.trim()) }.getOrNull() ?: return PanelRoute.Refused
