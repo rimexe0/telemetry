@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getLock, getPolicy, getSignInSettings, listDevices, listSources, type Device, type LockResponse, type PolicyConfig, type SignInSettings, type SourceSummary } from './api';
+  import { getActivityLabels, getLock, getPolicy, getSignInSettings, listDevices, listSources, type ActivityLabel, type Device, type LockResponse, type PolicyConfig, type SignInSettings, type SourceSummary } from './api';
   import { whenFresh } from './fresh';
   import { phoneLinks, settingsPages, type SettingsPage } from './nav';
   import { budgetValue, devicesValue, distractionsValue, lockValue, signInValue, sourcesValue, timesValue } from './settings';
@@ -13,6 +13,7 @@
   export let onsignout: () => void = () => {};
 
   let config: PolicyConfig | undefined;
+  let labels: ActivityLabel[] | undefined;
   let lock: LockResponse | undefined;
   let devices: Device[] | undefined;
   let sources: SourceSummary[] | undefined;
@@ -21,6 +22,8 @@
   // Each value loads on its own; one that fails leaves its row without a value.
   function load() {
     void getPolicy().then(policy => { config = policy?.config ?? { distractions: [], essentials: [] }; }).catch(() => undefined);
+    // Without the labels the count is the blocked groups' alone.
+    void getActivityLabels().then(value => { labels = value.labels; }).catch(() => { labels = labels ?? []; });
     void getLock().then(value => { lock = value; }).catch(() => undefined);
     void listDevices().then(value => { devices = value; }).catch(() => undefined);
     void listSources().then(value => { sources = value; }).catch(() => undefined);
@@ -33,7 +36,7 @@
   $: blocking = [
     { page: 'budget', value: budgetValue(config) },
     { page: 'times', value: timesValue(config, lock) },
-    { page: 'distractions', value: distractionsValue(config) },
+    { page: 'distractions', value: distractionsValue(config, labels) },
     { page: 'lock', value: lockValue(lock) }
   ] as Row[];
   $: system = [

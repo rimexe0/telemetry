@@ -1,4 +1,4 @@
-import type { Device, LockResponse, PolicyConfig, SignInSettings, SourceSummary } from './api';
+import type { ActivityLabel, Device, LockResponse, PolicyConfig, SignInSettings, SourceSummary } from './api';
 import { budgetInForce, formatBudgetMinutes } from './budget';
 import { formatWindows } from './lock';
 import { clock } from './today';
@@ -21,10 +21,27 @@ export function timesValue(config: PolicyConfig | undefined, lock: LockResponse 
   return parts.join(' · ');
 }
 
-export function distractionsValue(config: PolicyConfig | undefined): string {
-  if (!config) return '';
-  const groups = config.distractions?.length ?? 0;
-  return `${groups} ${groups === 1 ? 'group' : 'groups'}`;
+// How many apps and sites count as distractions: those in the blocked
+// groups and those labelled "distraction", each counted once.
+export function distractionsValue(config: PolicyConfig | undefined, labels: ActivityLabel[] | undefined): string {
+  if (!config || !labels) return '';
+  const apps = new Set<string>();
+  const sites = new Set<string>();
+  const site = (value: string) => value.trim().toLowerCase().replace(/^www\./, '');
+  for (const group of config.distractions ?? []) {
+    for (const app of [...(group.android_packages ?? []), ...(group.mac_apps ?? [])]) if (app.trim()) apps.add(app.trim().toLowerCase());
+    for (const domain of group.domains ?? []) if (site(domain)) sites.add(site(domain));
+  }
+  for (const label of labels) {
+    if (label.label !== 'distraction' || !label.match.trim()) continue;
+    if (label.kind === 'site') sites.add(site(label.match));
+    else apps.add(label.match.trim().toLowerCase());
+  }
+  const total = apps.size + sites.size;
+  if (total === 0) return 'None';
+  if (sites.size === 0) return `${total} ${total === 1 ? 'app' : 'apps'}`;
+  if (apps.size === 0) return `${total} ${total === 1 ? 'site' : 'sites'}`;
+  return `${total} apps and sites`;
 }
 
 export function lockValue(lock: LockResponse | undefined): string {
