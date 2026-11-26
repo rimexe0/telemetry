@@ -32,6 +32,7 @@ object NowCache {
             .putString(KEY_JSON, body)
             .putString(KEY_FETCHED_AT, Instant.now().toString())
             .commit()
+        HabitWidgets.changed(context)
     }
 
     /**
@@ -42,6 +43,7 @@ object NowCache {
         val entry = read(context) ?: return
         val json = runCatching { org.json.JSONObject(entry.json).put("budget", budget).toString() }.getOrNull() ?: return
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_JSON, json).commit()
+        HabitWidgets.changed(context)
     }
 
     /** The budget in the cached answer, or null. */

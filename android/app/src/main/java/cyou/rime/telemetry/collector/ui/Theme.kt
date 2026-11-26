@@ -74,12 +74,12 @@ data class PanelColors(
     val done: Color,
 )
 
-private val PanelDark = PanelColors(
+internal val PanelDark = PanelColors(
     bg = Color(0xFF111213), panel = Color(0xFF191A1B), fg = Color(0xFFEEEEEB), muted = Color(0xFFAAA9A4),
     line = Color(0xFF454647), soft = Color(0xFF242628), done = Color(0xFF2F8F5B),
 )
 
-private val PanelLight = PanelColors(
+internal val PanelLight = PanelColors(
     bg = Color(0xFFF5F5F2), panel = Color(0xFFFFFFFF), fg = Color(0xFF181918), muted = Color(0xFF63645F),
     line = Color(0xFFC4C5BF), soft = Color(0xFFE9EAE5), done = Color(0xFF2F8F5B),
 )

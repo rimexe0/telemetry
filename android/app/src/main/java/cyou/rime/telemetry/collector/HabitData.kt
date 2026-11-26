@@ -118,6 +118,7 @@ object HabitCache {
             .putString(key, body)
             .putString("$key:at", Instant.now().toString())
             .commit()
+        HabitWidgets.changed(context)
         return true
     }
 
@@ -129,6 +130,7 @@ object HabitCache {
         val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val patched = patchList(preferences.getString(LIST, null), edit, answer) ?: return
         preferences.edit().putString(LIST, patched).putString("$LIST:at", Instant.now().toString()).commit()
+        HabitWidgets.changed(context)
     }
 
     /** [patch] on the body itself; null when there is nothing to change. */

@@ -1,3 +1,4 @@
 <resources>
     <string name="accessibility_service_description">Closes the apps you chose to block and shows why. Follows your Telemetry policy: your distraction time and anything you open for a purpose stay open.</string>
+    <string name="habit_widget_description">Today\'s habits, ticked from the home screen.</string>
 </resources>

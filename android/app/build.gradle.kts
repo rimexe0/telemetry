@@ -77,6 +77,8 @@ dependencies {
     implementation("androidx.health.connect:connect-client:1.1.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.work:work-runtime-ktx:2.10.1")
+    // The home-screen widget (Today's habits).
+    implementation("androidx.glance:glance-appwidget:1.1.1")
     implementation("com.google.android.gms:play-services-wearable:19.0.0")
     // Scans the panel's setup QR; Google Play services shows the camera, so
     // the app needs no camera permission.

@@ -144,6 +144,12 @@ class MainActivity : ComponentActivity() {
         // The panel loads behind Today, so the first tap on Activity or Settings shows it at once.
         if (paired && !removed) openPanel(activityHash)
 
+        // A tick from the home-screen widget shows here at once.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                HabitWidgets.version.collect { reload() }
+            }
+        }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.RESUMED) {
                 while (true) {
@@ -165,6 +171,8 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         SetupLink.apply(this, intent)
+        // The widget's head opens Today.
+        if (intent.action == HabitWidgets.OPEN_TODAY) place = Place.TODAY
         if (SetupActivity.needsSetup(this)) openSetup(null)
     }
 

@@ -140,6 +140,21 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service_config" />
         </service>
+        <!-- Today's habits on the home screen. -->
+        <receiver
+            android:name=".HabitWidgetReceiver"
+            android:label="Habits"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/habit_widget_info" />
+        </receiver>
+        <receiver
+            android:name=".HabitWidgetClock"
+            android:exported="false" />
         <receiver
             android:name=".FollowUpDoneReceiver"
             android:exported="false" />

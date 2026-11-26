@@ -38,6 +38,8 @@ object PolicyWatch {
         runCatching { GuardRoot.collectAttempts(context) }
         runCatching { Grayscale.reconcile(context, decision) }
         runCatching { TelemetryNotificationListenerService.connected?.quietBlocked() }
+        // The widget follows each cycle: a new day or an old copy shows even while offline.
+        HabitWidgets.changed(context)
         val bypassed = decision?.active == true && !PolicyEvents.blockingEnabled(context)
         val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val openSince = preferences.getString(KEY_BYPASS_SINCE, null)

@@ -258,6 +258,7 @@ object HabitEdits {
             override fun load(): String? = preferences.getString(KEY_QUEUE, null)
             override fun save(json: String) {
                 preferences.edit().putString(KEY_QUEUE, json).commit()
+                HabitWidgets.changed(context)
             }
         }).also { queue = it }
     }
