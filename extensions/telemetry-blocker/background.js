@@ -4,6 +4,12 @@
 const COLLECTOR = "http://127.0.0.1:5600/api/telemetry/site?host=";
 const STATUS = "http://127.0.0.1:5600/api/telemetry/status";
 const EVENTS = "ws://127.0.0.1:5600/api/telemetry/events";
+// The distraction budget, and the door's calls, which the collector makes to
+// the server with this computer's credentials; the extension holds none.
+const BUDGET = "http://127.0.0.1:5600/api/telemetry/budget";
+const DEVICE = "http://127.0.0.1:5600/api/telemetry/device/";
+// The scripts every page runs, in order.
+const PAGE_SCRIPTS = ["door.js", "cover.js"];
 
 // The status request is also this browser checking in: the collector hides
 // a browser whose extension stays quiet while sites are blocked. It says
@@ -28,11 +34,83 @@ async function decision(host, address) {
   }
 }
 
-// The cover script asks when a page starts loading.
+async function budget() {
+  try {
+    const response = await fetch(BUDGET, { cache: "no-store" });
+    return response.ok ? await response.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+// One door call: the door, Back, cancelling a waiting door, a habit tick.
+// The server's answer comes back as it is, refusals included.
+async function call(path) {
+  try {
+    const response = await fetch(DEVICE + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", cache: "no-store" });
+    let body = null;
+    try {
+      body = await response.json();
+    } catch {}
+    return { status: response.status, body };
+  } catch {
+    return { status: 0, body: { message: "The Telemetry collector is not running, so there is no door right now." } };
+  }
+}
+
+// Other tabs showing the door or the counter follow a change made in one.
+async function tellBudgetChanged() {
+  for (const tab of await chrome.tabs.query({ url: ["http://*/*", "https://*/*"], discarded: false })) {
+    chrome.tabs.sendMessage(tab.id, { type: "budget-changed" }).catch(() => {});
+  }
+}
+
+// A sitting is time on distractions with no break longer than SITTING_GAP.
+// Each visible counter beats every few seconds; the time between beats
+// counts, at most BEAT_MAX, so two windows showing distractions do not count
+// twice. It is kept in session storage, so it outlasts this service worker.
+const SITTING_GAP = 5 * 60 * 1000;
+const BEAT_MAX = 15 * 1000;
+let sitting = null;
+async function sittingSeconds() {
+  if (!sitting) {
+    try {
+      sitting = (await chrome.storage.session.get("sitting")).sitting || null;
+    } catch {}
+  }
+  const now = Date.now();
+  if (!sitting || now - sitting.last > SITTING_GAP || now < sitting.last) {
+    sitting = { used: 0, last: now };
+  } else {
+    sitting.used += Math.min(now - sitting.last, BEAT_MAX);
+    sitting.last = now;
+  }
+  chrome.storage.session.set({ sitting }).catch(() => {});
+  return Math.floor(sitting.used / 1000);
+}
+
+// The cover script asks when a page starts loading; the door screen and the
+// counter ask for the budget and make the door's calls.
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
-  if (message.type !== "check") return false;
-  decision(message.host, message.url).then(reply);
-  return true;
+  switch (message.type) {
+    case "check":
+      decision(message.host, message.url).then(reply);
+      return true;
+    case "budget":
+      budget().then(reply);
+      return true;
+    case "sitting":
+      Promise.all([budget(), sittingSeconds()]).then(([status, seconds]) => reply({ status, sitting: seconds }));
+      return true;
+    case "call":
+      if (typeof message.path !== "string") return false;
+      call(message.path).then((result) => {
+        if (result.status >= 200 && result.status < 300) tellBudgetChanged();
+        reply(result);
+      });
+      return true;
+  }
+  return false;
 });
 
 // Open tabs follow a block starting or ending. Tabs the browser has put to
@@ -47,7 +125,7 @@ async function refreshTabs() {
       await chrome.tabs.sendMessage(tab.id, { type: "decision", decision: result });
     } catch {
       // Tabs opened before the extension loaded have no cover script yet.
-      if (result && result.blocked) chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["cover.js"] }).catch(() => {});
+      if (result && result.blocked) chrome.scripting.executeScript({ target: { tabId: tab.id }, files: PAGE_SCRIPTS }).catch(() => {});
     }
   }
 }
@@ -137,7 +215,7 @@ chrome.runtime.onUpdateAvailable.addListener(() => chrome.runtime.reload());
 chrome.runtime.onInstalled.addListener(async (details) => {
   if (details.reason !== "update") return;
   for (const tab of await chrome.tabs.query({ url: ["http://*/*", "https://*/*"], discarded: false })) {
-    chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["cover.js"] }).catch(() => {});
+    chrome.scripting.executeScript({ target: { tabId: tab.id }, files: PAGE_SCRIPTS }).catch(() => {});
   }
 });
 
