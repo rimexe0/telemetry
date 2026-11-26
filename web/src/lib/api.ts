@@ -84,7 +84,75 @@ function errorDetail(payload: unknown): string | undefined {
   return typeof error === 'string' && error ? error : undefined;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+// An in-memory stale-while-revalidate cache for GET answers, so switching
+// between places and sections shows the last answer at once (owner
+// 2026-11-26: "why when i switch to a different page and switch back it
+// needs to get the data again"). Each read of a cached answer returns it and
+// asks the server again in the background; an answer that differs replaces
+// it and tells the listeners (onFresh), so views redraw with it. A change
+// (any other method) drops the cached answers of the same resource, so a view
+// that loads after saving never shows what was there before. Sign-in, the
+// settings lock and pairing are never cached.
+type CacheEntry = { body: string; at: number };
+
+const cache = new Map<string, CacheEntry>();
+const revalidating = new Map<string, Promise<void>>();
+const freshListeners = new Set<(path: string) => void>();
+/** An answer this new is returned without asking again. */
+const SETTLED_MS = 2_000;
+const MAX_ENTRIES = 200;
+const MAX_BODY = 2 << 20;
+const uncached = ['/v1/panel/session', '/v1/auth/config', '/v1/lock', '/v1/pairing', '/v1/settings/sign-in'];
+/** Resources whose changes move another's answers too. */
+const related: Record<string, string[]> = {
+  habits: ['budget', 'reasons', 'device'],
+  reasons: ['habits', 'budget', 'device'],
+  door: ['budget', 'openings', 'policy', 'device'],
+  openings: ['budget', 'policy', 'device'],
+  policy: ['budget', 'openings', 'device', 'plans'],
+  'context-rules': ['policy', 'plans'],
+  plans: ['execution', 'alignment', 'policy'],
+  execution: ['alignment', 'plans'],
+  activities: ['plans', 'activity-labels', 'activity'],
+  'activity-labels': ['activities', 'activity', 'policy'],
+  'activity-label-proposals': ['activity-labels', 'activities', 'activity', 'policy'],
+  morning: ['policy', 'budget']
+};
+
+/** The first part of a path after /v1/: the resource it is about. */
+function resource(path: string): string {
+  return path.replace(/^\/v1\//, '').split(/[/?]/)[0] ?? '';
+}
+
+const cacheable = (path: string) => path.startsWith('/v1/') && !uncached.some(prefix => path === prefix || path.startsWith(`${prefix}/`) || path.startsWith(`${prefix}?`));
+
+/** Called with the path whenever a cached answer changed in the background. Returns the way to stop. */
+export function onFresh(listener: (path: string) => void): () => void {
+  freshListeners.add(listener);
+  return () => { freshListeners.delete(listener); };
+}
+
+/** Forgets every cached answer (sign-out, tests). */
+export function clearCache(): void {
+  cache.clear();
+  revalidating.clear();
+}
+
+/** Forgets the cached answers about a resource and those it moves. */
+export function invalidate(path: string): void {
+  const changed = resource(path);
+  const touched = new Set([changed, ...(related[changed] ?? [])]);
+  for (const key of [...cache.keys()]) if (touched.has(resource(key))) cache.delete(key);
+}
+
+function remember(path: string, body: string): void {
+  if (body.length > MAX_BODY) return;
+  cache.delete(path);
+  cache.set(path, { body, at: Date.now() });
+  while (cache.size > MAX_ENTRIES) cache.delete(cache.keys().next().value as string);
+}
+
+async function send(path: string, init?: RequestInit): Promise<{ response: Response; text: string }> {
   const headers = new Headers(init?.headers);
   headers.set('Accept', 'application/json');
   if (clerkTokenProvider) {
@@ -96,10 +164,62 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     credentials: 'same-origin',
     headers
   });
-  const payload = (await response.json().catch(() => undefined)) as unknown;
+  const text = await response.text().catch(() => '');
+  return { response, text };
+}
+
+function parse(text: string): unknown {
+  try {
+    return text ? JSON.parse(text) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Asks again for a cached answer, once at a time, and tells the listeners when it changed. */
+function revalidate(path: string): Promise<void> {
+  const running = revalidating.get(path);
+  if (running) return running;
+  const work = (async () => {
+    try {
+      const { response, text } = await send(path);
+      if (!response.ok) {
+        // Signed out: nothing cached may be shown any more.
+        if (response.status === 401 || response.status === 403) clearCache();
+        return;
+      }
+      const before = cache.get(path);
+      remember(path, text);
+      if (before && before.body !== text) for (const listener of [...freshListeners]) listener(path);
+    } catch {
+      // Offline: the cached answer stays.
+    } finally {
+      revalidating.delete(path);
+    }
+  })();
+  revalidating.set(path, work);
+  return work;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = (init?.method ?? 'GET').toUpperCase();
+  const reading = method === 'GET' && cacheable(path);
+  if (reading) {
+    const entry = cache.get(path);
+    if (entry) {
+      if (Date.now() - entry.at >= SETTLED_MS) void revalidate(path);
+      // Parsed again each time, so a view that changes what it got never changes the cache.
+      return parse(entry.body) as T;
+    }
+  }
+  const { response, text } = await send(path, init);
+  const payload = parse(text);
   if (!response.ok) {
     throw new APIError(response.status, errorDetail(payload) ?? `Request failed (${response.status})`);
   }
+  if (reading) remember(path, text);
+  else if (method !== 'GET' && path.startsWith('/v1/panel/session')) clearCache();
+  else if (method !== 'GET') invalidate(path);
   return payload as T;
 }
 

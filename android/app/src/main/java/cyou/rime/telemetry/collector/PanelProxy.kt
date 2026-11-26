@@ -13,6 +13,7 @@ import java.net.URL
 import java.security.SecureRandom
 import java.time.Instant
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * Shows the panel through the sealed relay, so the app works without
@@ -24,6 +25,10 @@ import java.util.concurrent.Executors
  * panel session this phone traded its token for. The WebView never holds that
  * session. Other apps on the phone can reach the loopback too, so every
  * request must carry a random key the WebView alone has, as a cookie.
+ *
+ * The panel's own files are kept on the phone ([PanelFiles]) and served from
+ * there, so the panel opens without waiting on the relay for them; answers
+ * from /v1/ always go to the server.
  */
 class PanelProxy(private val context: Context) {
     companion object {
@@ -56,6 +61,11 @@ class PanelProxy(private val context: Context) {
     val origin: String = "http://127.0.0.1:${socket.localPort}"
     private val workers = Executors.newFixedThreadPool(6)
 
+    private val files = PanelFiles(java.io.File(context.cacheDir, "panel-files"))
+    private val preferences = context.getSharedPreferences("telemetry-panel-files", Context.MODE_PRIVATE)
+    /** The panel release the kept files are for; null while none is known. */
+    @Volatile private var version: String? = preferences.getString("version", null)
+
     @Volatile private var session: String? = null
     @Volatile private var openedAt: Instant = Instant.EPOCH
     @Volatile private var expiresAt: Instant? = null
@@ -76,6 +86,31 @@ class PanelProxy(private val context: Context) {
 
     /** Trades this phone's token for a panel session, relay first. Blocking IO. */
     fun open(): Opened {
+        // Which panel release is out, asked alongside the session, so the
+        // kept page is used only while it is still the server's.
+        val release = runCatching { workers.submit<Unit> { checkRelease() } }.getOrNull()
+        val opened = trade()
+        runCatching { release?.get(15, TimeUnit.SECONDS) }
+        return opened
+    }
+
+    /** Learns the panel's release; a new one drops the kept page and files. Blocking IO. */
+    private fun checkRelease() {
+        val answer = forward(Request("GET", PanelFiles.VERSION_PATH, mapOf("accept" to "application/json"), null)) ?: return
+        val next = if (answer.status == 200) PanelFiles.version(String(answer.body, Charsets.UTF_8)) else null
+        // A server without version.json: kept files last an hour instead.
+        if (answer.status == 404 || (answer.status == 200 && next == null)) {
+            version = null
+            preferences.edit().remove("version").apply()
+            return
+        }
+        if (next == null || next == version) return
+        files.newRelease()
+        version = next
+        preferences.edit().putString("version", next).apply()
+    }
+
+    private fun trade(): Opened {
         val answer = DeviceApi.send(context, "POST", "/v1/device/panel-session") ?: return Opened.Unreachable
         if (answer.status != 200) return if (answer.status >= 500) Opened.Unreachable else Opened.Refused(answer.status)
         val (cookie, expires) = parseSession(answer.body) ?: return Opened.Unreachable
@@ -101,14 +136,28 @@ class PanelProxy(private val context: Context) {
             respond(output, 403, "text/plain", "Forbidden".toByteArray())
             return
         }
+        val kind = PanelFiles.kind(request.method, request.path)
+        val release = version
+        files.get(request.path, kind, release)?.let { kept ->
+            respond(output, 200, kept.contentType, kept.body, kind)
+            // Without a known release, the kept copy is fetched again behind it.
+            if (kind == PanelFiles.Kind.RELEASE && release == null) workers.execute { runCatching { keep(request, kind, null) } }
+            return
+        }
         var answer = forward(request)
         // The session ran out while the page was open: trade again once.
-        if (answer != null && answer.status == 401 && open() == Opened.Yes) answer = forward(request)
+        if (answer != null && answer.status == 401 && trade() == Opened.Yes) answer = forward(request)
         if (answer == null) {
             respond(output, 502, "text/plain", "The Telemetry server can't be reached.".toByteArray())
             return
         }
-        respond(output, answer.status, answer.contentType, answer.body)
+        respond(output, answer.status, answer.contentType, answer.body, kind)
+        if (answer.status == 200) files.put(request.path, kind, release, answer.contentType, answer.body)
+    }
+
+    private fun keep(request: Request, kind: PanelFiles.Kind, release: String?) {
+        val answer = forward(request) ?: return
+        if (answer.status == 200) files.put(request.path, kind, release, answer.contentType, answer.body)
     }
 
     private class Answer(val status: Int, val contentType: String, val body: ByteArray)
@@ -188,12 +237,13 @@ class PanelProxy(private val context: Context) {
         }
     }
 
-    private fun respond(output: java.io.OutputStream, status: Int, contentType: String, body: ByteArray) {
+    private fun respond(output: java.io.OutputStream, status: Int, contentType: String, body: ByteArray, kind: PanelFiles.Kind = PanelFiles.Kind.NONE) {
         val head = buildString {
             append("HTTP/1.1 ").append(status).append(' ').append(if (status in 200..299) "OK" else "Status").append("\r\n")
             if (contentType.isNotEmpty()) append("Content-Type: ").append(contentType).append("\r\n")
             append("Content-Length: ").append(body.size).append("\r\n")
-            append("Cache-Control: no-store\r\n")
+            // Hashed files the web view may keep too; the rest it asks for each time.
+            append(if (kind == PanelFiles.Kind.IMMUTABLE && status == 200) "Cache-Control: public, max-age=31536000, immutable\r\n" else "Cache-Control: no-store\r\n")
             append("Connection: close\r\n\r\n")
         }
         output.write(head.toByteArray(Charsets.US_ASCII))

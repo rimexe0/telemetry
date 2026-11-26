@@ -444,13 +444,21 @@ func (s *Server) habits(writer http.ResponseWriter, request *http.Request) {
 		writeError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "use GET or POST")
 		return
 	}
+	s.addHabit(writer, request, budgets, "Habit added in the panel", true)
+}
+
+// addHabit adds one habit from the request body.
+func (s *Server) addHabit(writer http.ResponseWriter, request *http.Request, budgets store.BudgetStore, reason string, withPosition bool) {
 	request.Body = http.MaxBytesReader(writer, request.Body, s.config.MaxRequestSize)
 	var input habitInput
 	if err := decodeExecutionJSON(request, &input); err != nil {
 		writeError(writer, http.StatusBadRequest, "invalid_json", "request body must contain one habit")
 		return
 	}
-	s.applyHabit(writer, request, budgets, store.HabitChange{Action: "add", Name: input.Name, Position: input.Position, Weekdays: input.Weekdays}, "Habit added in the panel", http.StatusCreated)
+	if !withPosition {
+		input.Position = nil
+	}
+	s.applyHabit(writer, request, budgets, store.HabitChange{Action: "add", Name: input.Name, Position: input.Position, Weekdays: input.Weekdays}, reason, http.StatusCreated)
 }
 
 // habit changes a habit's name, position, weekdays or archiving.
@@ -458,10 +466,13 @@ func (s *Server) habit(writer http.ResponseWriter, request *http.Request) {
 	if !s.owner(writer, request) {
 		return
 	}
-	budgets, ok := s.needBudgetStore(writer)
-	if !ok {
-		return
+	if budgets, ok := s.needBudgetStore(writer); ok {
+		s.changeHabit(writer, request, budgets, "Habit changed in the panel", true)
 	}
+}
+
+// changeHabit applies the fields the request body gives to one habit.
+func (s *Server) changeHabit(writer http.ResponseWriter, request *http.Request, budgets store.BudgetStore, reason string, withPosition bool) {
 	id, err := strconv.ParseInt(request.PathValue("id"), 10, 64)
 	if err != nil || id < 1 {
 		writeError(writer, http.StatusBadRequest, "invalid_path", "habit id must be a positive integer")
@@ -473,8 +484,33 @@ func (s *Server) habit(writer http.ResponseWriter, request *http.Request) {
 		writeError(writer, http.StatusBadRequest, "invalid_json", "request body must contain the fields to change")
 		return
 	}
+	if !withPosition {
+		input.Position = nil
+	}
 	s.applyHabit(writer, request, budgets, store.HabitChange{Action: "update", ID: &id, Name: input.Name, Position: input.Position, Weekdays: input.Weekdays, Archived: input.Archived},
-		"Habit changed in the panel", http.StatusOK)
+		reason, http.StatusOK)
+}
+
+// deviceAddHabit adds a habit from the phone's Habits screen. It is logged
+// like a panel change, so it can be reverted.
+func (s *Server) deviceAddHabit(writer http.ResponseWriter, request *http.Request) {
+	if !s.deviceOrOwner(writer, request) {
+		return
+	}
+	if budgets, ok := s.needBudgetStore(writer); ok {
+		s.addHabit(writer, request, budgets, "Habit added on the phone", false)
+	}
+}
+
+// deviceChangeHabit renames, reschedules, archives or brings back a habit
+// from the phone's Habits screen; the order stays as it is.
+func (s *Server) deviceChangeHabit(writer http.ResponseWriter, request *http.Request) {
+	if !s.deviceOrOwner(writer, request) {
+		return
+	}
+	if budgets, ok := s.needBudgetStore(writer); ok {
+		s.changeHabit(writer, request, budgets, "Habit changed on the phone", false)
+	}
 }
 
 // applyHabit logs a panel change like an assistant's, so it can be reverted.
@@ -620,28 +656,43 @@ func (s *Server) reasons(writer http.ResponseWriter, request *http.Request) {
 		}
 		writeJSON(writer, http.StatusOK, map[string]any{"reasons": reasons})
 	case http.MethodPut:
-		request.Body = http.MaxBytesReader(writer, request.Body, s.config.MaxRequestSize)
-		var input struct {
-			Reasons []string `json:"reasons"`
-		}
-		if err := decodeExecutionJSON(request, &input); err != nil {
-			writeError(writer, http.StatusBadRequest, "invalid_json", `request body must be {"reasons": [...]}`)
-			return
-		}
-		saved, err := budgets.SaveReasons(request.Context(), input.Reasons)
-		if errors.Is(err, store.ErrInvalidHabit) {
-			writeError(writer, http.StatusBadRequest, "invalid_reasons", err.Error())
-			return
-		}
-		if err != nil {
-			writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
-			return
-		}
-		s.forgetBudget()
-		writeJSON(writer, http.StatusOK, map[string]any{"reasons": saved})
+		s.saveReasons(writer, request, budgets)
 	default:
 		writeError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "use GET or PUT")
 	}
+}
+
+// deviceReasons saves the reasons as edited on the phone's Habits screen.
+// Each save is a new version; earlier ones stay.
+func (s *Server) deviceReasons(writer http.ResponseWriter, request *http.Request) {
+	if !s.deviceOrOwner(writer, request) {
+		return
+	}
+	if budgets, ok := s.needBudgetStore(writer); ok {
+		s.saveReasons(writer, request, budgets)
+	}
+}
+
+func (s *Server) saveReasons(writer http.ResponseWriter, request *http.Request, budgets store.BudgetStore) {
+	request.Body = http.MaxBytesReader(writer, request.Body, s.config.MaxRequestSize)
+	var input struct {
+		Reasons []string `json:"reasons"`
+	}
+	if err := decodeExecutionJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_json", `request body must be {"reasons": [...]}`)
+		return
+	}
+	saved, err := budgets.SaveReasons(request.Context(), input.Reasons)
+	if errors.Is(err, store.ErrInvalidHabit) {
+		writeError(writer, http.StatusBadRequest, "invalid_reasons", err.Error())
+		return
+	}
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
+	s.forgetBudget()
+	writeJSON(writer, http.StatusOK, map[string]any{"reasons": saved})
 }
 
 // openingRefusedByBudget says why an opening cannot start: with the budget

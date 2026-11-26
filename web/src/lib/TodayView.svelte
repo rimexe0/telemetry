@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { whenFresh } from './fresh';
   import { onDestroy } from 'svelte';
   import { APIError, getDeviceNow, type DeviceNow } from './api';
   import { deriveNowView, type NowAction, type NowSnapshot, type NowView } from './execution';
@@ -34,6 +35,7 @@
     }
   }
   void load();
+  whenFresh(load);
   const reload = setInterval(() => { if (document.visibilityState === 'visible') void load(); }, 30_000);
   const minute = setInterval(() => { now = Date.now(); }, 30_000);
   onDestroy(() => { clearInterval(reload); clearInterval(minute); });

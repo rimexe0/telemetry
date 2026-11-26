@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { whenFresh } from './fresh';
   import { createHabit, listHabits, updateHabit, type Habit, type HabitChange } from './api';
   import { moveHabit, normalizeWeekdays, sortHabits, weekdays, weekdaysText } from './habits';
 
@@ -16,6 +17,7 @@
 
   $: ({ active, archived } = sortHabits(habits));
   void load();
+  whenFresh(load);
 
   async function load() {
     try {

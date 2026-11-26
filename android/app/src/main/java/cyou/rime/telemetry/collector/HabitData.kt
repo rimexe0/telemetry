@@ -121,6 +121,40 @@ object HabitCache {
         return true
     }
 
+    /**
+     * Puts an edit the server accepted into the saved list, from the server's
+     * answer, so the list agrees with the server before it is fetched again.
+     */
+    fun patch(context: Context, edit: HabitEdit, answer: JSONObject?) {
+        val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val patched = patchList(preferences.getString(LIST, null), edit, answer) ?: return
+        preferences.edit().putString(LIST, patched).putString("$LIST:at", Instant.now().toString()).commit()
+    }
+
+    /** [patch] on the body itself; null when there is nothing to change. */
+    fun patchList(json: String?, edit: HabitEdit, answer: JSONObject?): String? {
+        val root = json?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject().put("habits", JSONArray()).put("reasons", JSONArray())
+        if (edit.kind == HabitEdit.REASONS) {
+            root.put("reasons", answer?.optJSONArray("reasons") ?: JSONArray(edit.reasons.orEmpty()))
+            return root.toString()
+        }
+        val habit = answer?.optJSONObject("habit") ?: return null
+        val id = habit.optLong("id", 0L).takeIf { it > 0 } ?: return null
+        val habits = root.optJSONArray("habits") ?: JSONArray()
+        val kept = JSONArray()
+        var placed = false
+        val archived = habit.has("archived_at") && !habit.isNull("archived_at") && habit.optString("archived_at").isNotBlank()
+        for (index in 0 until habits.length()) {
+            val item = habits.optJSONObject(index) ?: continue
+            if (item.optLong("id") != id) kept.put(item)
+            else if (!archived) { kept.put(habit); placed = true }
+        }
+        // The saved list has active habits only.
+        if (!archived && !placed) kept.put(habit)
+        root.put("habits", kept)
+        return root.toString()
+    }
+
     fun list(context: Context): HabitList? = read(context, LIST)?.json?.let(HabitJson::list)
 
     fun heatmap(context: Context, key: String): HeatmapView? = read(context, key)?.json?.let(HabitJson::heatmap)

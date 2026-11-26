@@ -54,6 +54,33 @@ import cyou.rime.telemetry.collector.TodayState
 import cyou.rime.telemetry.collector.TodayText
 import cyou.rime.telemetry.collector.WeekCell
 import kotlinx.coroutines.flow.first
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.TextFieldValue
+import cyou.rime.telemetry.collector.EditQueue
+import cyou.rime.telemetry.collector.HabitDef
+import kotlinx.coroutines.delay
 
 /** The app's four places, as the panel's bottom bar names them. */
 enum class Place(val label: String) { TODAY("Today"), HABITS("Habits"), ACTIVITY("Activity"), SETTINGS("Settings") }
@@ -231,9 +258,17 @@ fun WeekStrip(cells: List<WeekCell>, letters: Boolean, modifier: Modifier = Modi
     }
 }
 
+/** What the Habits screen changes, each saved on the phone at once and sent when the server can be reached. */
+class HabitEditing(
+    val rename: (Long, String) -> Unit,
+    val weekdays: (Long, List<Int>) -> Unit,
+    val archive: (Long, Boolean) -> Unit,
+    val add: (String) -> Unit,
+    val reasons: (List<String>) -> Unit,
+)
+
 @Composable
-fun HabitsScreen(state: HabitsState, stale: String?, onEditHabits: () -> Unit) = Page {
-    val colors = panelColors()
+fun HabitsScreen(state: HabitsState, stale: String?, notice: String?, editing: HabitEditing) = Page {
     PageHead("Habits")
     if (stale != null) {
         Small(stale)
@@ -247,18 +282,183 @@ fun HabitsScreen(state: HabitsState, stale: String?, onEditHabits: () -> Unit) =
             else -> YearGrid(state)
         }
     }
+    HabitEditor(state.habits, notice, editing)
+    ReasonsEditor(state.reasons, editing.reasons)
+}
+
+/** Monday first, as the panel lists them; 0 is Sunday. */
+private val weekdayNames = listOf(1 to "Mon", 2 to "Tue", 3 to "Wed", 4 to "Thu", 5 to "Fri", 6 to "Sat", 0 to "Sun")
+
+/** "every day", or the days in order: "Mon Wed Fri". */
+fun weekdaysLabel(days: Set<Int>): String =
+    if (days.isEmpty() || days.containsAll(listOf(0, 1, 2, 3, 4, 5, 6))) "every day" else weekdayNames.filter { it.first in days }.joinToString(" ") { it.second }
+
+/** The habits in their order: a name edits in place, its days open under it, and a last row adds one. */
+@Composable
+private fun HabitEditor(habits: List<HabitDef>?, notice: String?, editing: HabitEditing) {
+    val colors = panelColors()
+    var naming by remember { mutableStateOf<Long?>(null) }
+    var days by remember { mutableStateOf<Long?>(null) }
+    var adding by remember { mutableStateOf(false) }
+    var removed by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(removed) {
+        if (removed != null) {
+            delay(5_000)
+            removed = null
+        }
+    }
+    PanelCard("Habits") {
+        when {
+            habits == null -> Small("Unknown: the habits were never saved on this phone.", Modifier.padding(top = 6.dp))
+            habits.isEmpty() && !adding && removed == null -> Small("No habits yet.", Modifier.padding(top = 6.dp))
+        }
+        for (habit in habits.orEmpty()) {
+            key(habit.id) {
+                Column(Modifier.fillMaxWidth().drawBehind {
+                    drawRect(colors.line, Offset(0f, size.height - 1.dp.toPx()), Size(size.width, 1.dp.toPx()))
+                }.padding(top = 2.dp, bottom = 6.dp)) {
+                    if (naming == habit.id) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            EditField(habit.name, "Name of ${habit.name}", 100, Modifier.weight(1f), onCancel = { naming = null }) { text ->
+                                naming = null
+                                val name = text.trim()
+                                if (removed != habit.id && name.isNotEmpty() && name != habit.name) editing.rename(habit.id, name)
+                            }
+                            LinkWord("Remove") {
+                                removed = habit.id
+                                naming = null
+                                days = null
+                                editing.archive(habit.id, true)
+                            }
+                        }
+                    } else {
+                        PText(habit.name, Modifier.fillMaxWidth().heightIn(min = 40.dp).clickable(role = Role.Button) { naming = habit.id; adding = false }
+                            .padding(top = 10.dp, bottom = 2.dp), size = 15.sp)
+                    }
+                    Small(weekdaysLabel(habit.weekdays), Modifier.heightIn(min = 28.dp).clickable(role = Role.Button) { days = if (days == habit.id) null else habit.id }
+                        .padding(vertical = 4.dp))
+                    if (days == habit.id) DayToggles(habit.weekdays) { editing.weekdays(habit.id, it) }
+                }
+            }
+        }
+        val gone = removed
+        if (gone != null) {
+            Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Small("Removed · ")
+                Text("Undo", Modifier.heightIn(min = 36.dp).clickable(role = Role.Button) {
+                    removed = null
+                    editing.archive(gone, false)
+                }.padding(vertical = 10.dp), style = TextStyle(fontFamily = Mono, fontSize = 12.5.sp, color = colors.muted, textDecoration = TextDecoration.Underline))
+            }
+        }
+        if (adding) {
+            EditField("", "New habit", 100, Modifier.fillMaxWidth().padding(top = 6.dp), onCancel = { adding = false }) { text ->
+                adding = false
+                if (text.isNotBlank()) editing.add(text.trim())
+            }
+        } else {
+            PText("+ Add a habit", Modifier.tapRow("Add a habit") { adding = true; naming = null }.padding(top = 12.dp), size = 15.sp)
+        }
+        if (notice != null) Small(notice, Modifier.padding(top = 6.dp))
+    }
+}
+
+/** Seven square toggles; every day shows all seven on. The last day on stays on. */
+@Composable
+private fun DayToggles(current: Set<Int>, onChange: (List<Int>) -> Unit) {
+    val colors = panelColors()
+    val on = if (current.isEmpty()) setOf(0, 1, 2, 3, 4, 5, 6) else current
+    Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        for ((day, name) in weekdayNames) {
+            val active = day in on
+            Box(
+                Modifier.weight(1f).height(36.dp).background(if (active) colors.fg else colors.panel).border(1.dp, colors.fg)
+                    .semantics { selected = active }
+                    .clickable(role = Role.Checkbox) {
+                        val next = if (active) on - day else on + day
+                        if (next.isNotEmpty()) onChange(EditQueue.normalize(next))
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(name, style = TextStyle(fontFamily = Mono, fontSize = 11.sp, color = if (active) colors.bg else colors.fg, fontWeight = if (active) FontWeight.Bold else null))
+            }
+        }
+    }
+}
+
+/** The reasons: each edits in place, emptying one removes it, and a last row adds one. */
+@Composable
+private fun ReasonsEditor(reasons: List<String>, onSave: (List<String>) -> Unit) {
+    var editing by remember { mutableStateOf<Int?>(null) }
+    var adding by remember { mutableStateOf(false) }
     PanelCard("Reasons") {
-        if (state.reasons.isEmpty()) Small("No reasons yet.", Modifier.padding(top = 6.dp))
-        for (reason in state.reasons) PText(reason, Modifier.padding(top = 6.dp), size = 15.sp)
+        if (reasons.isEmpty() && !adding) Small("No reasons yet.", Modifier.padding(top = 6.dp))
+        reasons.forEachIndexed { index, reason ->
+            if (editing == index) {
+                EditField(reason, "Reason", 500, Modifier.fillMaxWidth().padding(top = 6.dp), onCancel = { editing = null }) { text ->
+                    editing = null
+                    val line = text.trim()
+                    if (line != reason) onSave(if (line.isEmpty()) reasons.filterIndexed { i, _ -> i != index } else reasons.mapIndexed { i, old -> if (i == index) line else old })
+                }
+            } else {
+                PText(reason, Modifier.fillMaxWidth().heightIn(min = 40.dp).clickable(role = Role.Button) { editing = index; adding = false }.padding(top = 8.dp, bottom = 4.dp), size = 15.sp)
+            }
+        }
+        if (adding) {
+            EditField("", "New reason", 500, Modifier.fillMaxWidth().padding(top = 6.dp), onCancel = { adding = false }) { text ->
+                adding = false
+                if (text.isNotBlank()) onSave(reasons + text.trim())
+            }
+        } else {
+            PText("+ Add a reason", Modifier.tapRow("Add a reason") { adding = true; editing = null }.padding(top = 12.dp), size = 15.sp)
+        }
     }
-    // Editing stays in the panel.
-    Row(
-        Modifier.tapRow("Edit habits", onClick = onEditHabits).border(1.dp, colors.line).padding(horizontal = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        PText("Edit habits", Modifier.weight(1f), size = 15.sp)
-        PText("›", color = colors.muted)
+}
+
+/**
+ * Text edited in place, focused at once. Enter or leaving the field (another
+ * place, another row) saves; Escape or back cancels.
+ */
+@Composable
+private fun EditField(initial: String, label: String, maxLength: Int, modifier: Modifier = Modifier, onCancel: () -> Unit, onDone: (String) -> Unit) {
+    val colors = panelColors()
+    var value by remember { mutableStateOf(TextFieldValue(initial, TextRange(initial.length))) }
+    val focus = remember { FocusRequester() }
+    val closed = remember { booleanArrayOf(false) }
+    var focused by remember { mutableStateOf(false) }
+    val done by rememberUpdatedState(onDone)
+    val cancel by rememberUpdatedState(onCancel)
+    val text by rememberUpdatedState(value.text)
+    fun finish(save: Boolean) {
+        if (closed[0]) return
+        closed[0] = true
+        if (save) done(text) else cancel()
     }
+    BackHandler { finish(false) }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    DisposableEffect(Unit) { onDispose { finish(true) } }
+    BasicTextField(
+        value = value,
+        onValueChange = { if (it.text.length <= maxLength) value = it },
+        modifier = modifier.focusRequester(focus)
+            .onFocusChanged { if (it.isFocused) focused = true else if (focused) finish(true) }
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when (event.key) {
+                    Key.Escape -> { finish(false); true }
+                    Key.Enter, Key.NumPadEnter -> { finish(true); true }
+                    else -> false
+                }
+            }
+            .semantics { contentDescription = label }
+            .drawBehind { drawRect(colors.fg, Offset(0f, size.height - 1.dp.toPx()), Size(size.width, 1.dp.toPx())) }
+            .padding(top = 10.dp, bottom = 6.dp),
+        singleLine = true,
+        textStyle = TextStyle(fontFamily = Mono, fontSize = 15.sp, color = colors.fg),
+        cursorBrush = SolidColor(colors.fg),
+        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(onDone = { finish(true) }),
+    )
 }
 
 private val CELL = 11.dp

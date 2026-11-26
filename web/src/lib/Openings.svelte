@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { whenFresh } from './fresh';
   import { onDestroy } from 'svelte';
   import { confirmOpening, createOpening, endOpening, getLock, getOpenings, previewOpeningRule, saveOpeningRule, type OpeningRule, type OpeningsState } from './api';
   import { confirmPrompt, confirmText, longestOpening, openingStatus, yesSpot } from './openings';
@@ -28,6 +29,7 @@
   const reload = setInterval(() => { void load(); }, 60_000);
   onDestroy(() => { clearInterval(tick); clearInterval(reload); });
   void load();
+  whenFresh(load);
 
   $: rule = state?.rule ?? {};
   $: longest = longestOpening(rule);

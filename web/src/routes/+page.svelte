@@ -22,6 +22,7 @@
   import { dayKey, dayStart } from '$lib/health';
   import { appDrawsNav, inPhoneApp, loadKey, parseHash, routeHash, samePlace, settingsPages, type ActivitySection, type LoadKey, type Place, type Route } from '$lib/nav';
   import { clearClerk, loadClerk, type ClerkClient } from '$lib/clerk';
+  import { whenFresh } from '$lib/fresh';
   import {
     APIError,
     approvePairing,
@@ -126,6 +127,9 @@
     readLocation();
     void refresh();
   }
+  // A cached answer that changed in the background: the view in use loads
+  // again from the cache (the day view keeps its own history cache).
+  whenFresh(() => { if (authenticated && view !== 'day') void refresh(); });
   function navigate(hash: string): void {
     if (window.location.hash === hash) onHashChange();
     else window.location.hash = hash;

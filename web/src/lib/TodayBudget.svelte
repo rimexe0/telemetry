@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { whenFresh } from './fresh';
   import { onDestroy } from 'svelte';
   import { APIError, cancelDoor, getBudget, getHabitHeatmap, getLock, getPolicy, setHabitDone, type BudgetState, type Heatmap } from './api';
   import { bedtimeLine, budgetInForce, doorLive, doorStatus, formatBudgetMinutes } from './budget';
@@ -33,6 +34,7 @@
   onDestroy(() => { clearInterval(tick); clearInterval(reload); });
 
   $: void load(refreshKey);
+  whenFresh(() => load());
   void getLock().then(lock => { bedtimeEnd = lock.bedtime?.enabled ? lock.bedtime.end ?? '' : ''; }).catch(() => undefined);
   // The rate in distraction times is a setting, not part of today's state.
   void getPolicy().then(policy => { distractionRate = policy ? budgetInForce(policy.config, new Date())?.rate_distraction : undefined; }).catch(() => undefined);
