@@ -215,7 +215,7 @@ class SettingsActivity : ComponentActivity() {
                     Item(if (blockingEnforced) "Blocking is enforced" else "Set up blocking",
                         blockingStatus.ifBlank { "Needs Accessibility and root. With root, the phone puts the block screen and the gray-outs back if they are switched off." },
                         enabled = !blockingBusy, onClick = ::setupBlocking)
-                    Note("The panel decides what is blocked. This phone only enforces it; the 10-minute emergency stays on this phone.")
+                    Note("The panel decides what is blocked. This phone only enforces it; the block screen is also the door, which asks the server.")
                 }
                 Section("Collection") {
                     // The last cycle's report is long; its first lines say whether it ran and uploaded.

@@ -21,6 +21,10 @@ data class NowView(
 object NowModel {
     private val modeLabels = mapOf(
         "emergency" to "Emergency unlock",
+        "door" to "Opened through the door",
+        "budget_used" to "Distraction time used up",
+        "bedtime" to "Bedtime",
+        "morning" to "Morning",
         "gate" to "Locked for now",
         "urgent" to "Urgent task",
         "recovery" to "Offline recovery",

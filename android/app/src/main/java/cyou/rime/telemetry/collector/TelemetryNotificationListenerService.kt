@@ -12,16 +12,29 @@ import org.json.JSONObject
  * showed on waking while X was suspended. Only explicitly blocked apps are
  * touched (the same set as root suspension), never calls, messages or system
  * apps. Separately, notifications are recorded only when the owner turned
- * that on.
+ * that on. The same access follows what is playing ([NowPlayingWatch]).
  */
 class TelemetryNotificationListenerService : NotificationListenerService() {
+    /** What is playing, through this listener's access to media sessions. */
+    private var nowPlaying: NowPlayingWatch? = null
+
     override fun onListenerConnected() {
         connected = this
         quietBlocked()
+        nowPlaying?.stop()
+        nowPlaying = NowPlayingWatch(this, android.content.ComponentName(this, TelemetryNotificationListenerService::class.java)).also { it.start() }
     }
 
     override fun onListenerDisconnected() {
         if (connected === this) connected = null
+        nowPlaying?.stop()
+        nowPlaying = null
+    }
+
+    override fun onDestroy() {
+        nowPlaying?.stop()
+        nowPlaying = null
+        super.onDestroy()
     }
 
     override fun onNotificationPosted(statusBarNotification: StatusBarNotification) {

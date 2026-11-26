@@ -1,39 +1,26 @@
 package cyou.rime.telemetry.collector
 
 import android.content.Context
-import java.time.Duration
 import java.time.Instant
 
 /**
- * Emergency unlock (#25): everything blocked opens for a few minutes, at once
- * and on this phone alone, so it works with no server, network or assistant.
- * It is recorded, so the server opens the Mac too and the assistant can see
- * afterwards what it was used for. Nobody asks about it.
+ * Emergency unlock (#25), superseded on 2026-11-26 by the door. The phone no
+ * longer offers starting one, but an emergency started before this version
+ * is still honoured until it runs out: everything stays open on this phone,
+ * as it was promised when it started.
  */
 object Emergency {
     private const val PREFS = "telemetry-emergency"
     private const val KEY_UNTIL = "until"
-    val LENGTH: Duration = Duration.ofMinutes(10)
 
     fun until(context: Context): Instant? =
         prefs(context).getLong(KEY_UNTIL, 0L).takeIf { it > 0 }?.let(Instant::ofEpochMilli)
 
     fun active(context: Context, now: Instant = Instant.now()): Boolean = until(context)?.isAfter(now) == true
 
-    /** Opens everything until now plus [LENGTH], lifts suspensions and records it. Blocking IO. */
-    fun start(context: Context, now: Instant = Instant.now()) {
-        val until = now.plus(LENGTH)
-        prefs(context).edit().putLong(KEY_UNTIL, until.toEpochMilli()).commit()
-        PolicyEvents.record(context, "android.policy_emergency", "emergency:${now.toEpochMilli()}", null,
-            mapOf("started_at" to now.toString(), "until" to until.toString()))
-        // The watcher must not put the blocks back before this runs out.
-        runCatching { GuardRoot.pause(context, until) }
-        runCatching { AppSuspender.reconcile(context, null) }
-    }
-
     private fun prefs(context: Context) = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 }
 
-/** The decision in force on this phone: none during an emergency unlock. */
+/** The decision in force on this phone: none during an emergency unlock that is already running. */
 fun BlockPolicy.current(context: Context, json: String, now: Instant = Instant.now()): BlockDecision? =
     if (Emergency.active(context, now)) null else runCatching { at(json, now) }.getOrNull()

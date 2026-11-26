@@ -29,7 +29,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -70,10 +69,14 @@ data class HomeState(
     val footer: String? = null,
     /** Permissions and setup steps the phone is missing, named on the screen. */
     val missing: List<SetupStep> = emptyList(),
-    /** Something is blocked now, so the emergency unlock is offered. */
-    val blocking: Boolean = false,
-    /** Set while an emergency unlock is open. */
+    /** Set while an emergency unlock started by an older version is still open. */
     val emergencyUntil: Instant? = null,
+    /** Today's budget, habits and door, while the budget is on. */
+    val budget: BudgetView? = null,
+    /** The server's words after a habit tick or a door cancel, such as a 409's message. */
+    val budgetMessage: String? = null,
+    /** A habit tick on its way to the server. */
+    val habitBusy: Long? = null,
     val followUps: List<FollowUp> = emptyList(),
     val focus: FocusView? = null,
 )
@@ -107,7 +110,8 @@ class MainActivity : ComponentActivity() {
                     onShowDay = ::loadDay,
                     onDay = { date, chunk -> startActivity(DayActivity.intent(this, date, chunk)) },
                     onSetup = ::openSetup,
-                    onEmergency = ::emergency,
+                    onHabit = ::habit,
+                    onCancelDoor = ::cancelDoor,
                     onDone = ::done,
                     onFocus = ::focus,
                 )
@@ -132,18 +136,37 @@ class MainActivity : ComponentActivity() {
 
     private fun openSetup(step: SetupStep? = null) = startActivity(SetupActivity.intent(this, step))
 
-    /** Whether something is blocked now, and any emergency unlock in force. */
-    private fun showBlocking() {
-        val json = NowCache.read(this)?.json
+    /** Today's budget from the cache, and any emergency unlock still in force. */
+    private fun showBudget() {
         val until = Emergency.until(this)?.takeIf { it.isAfter(Instant.now()) }
-        state = state.copy(emergencyUntil = until, blocking = until == null && json != null && BlockPolicy.current(this, json)?.active == true)
+        state = state.copy(emergencyUntil = until, budget = NowCache.budget(this)?.takeIf { it.enabled })
     }
 
-    private fun emergency() {
+    /** Ticks or unticks a habit; after bedtime starts the server says no, in its own words. */
+    private fun habit(habit: BudgetHabit) {
+        if (state.habitBusy != null) return
+        state = state.copy(habitBusy = habit.id, budgetMessage = null)
         lifecycleScope.launch {
-            withContext(Dispatchers.IO) { Emergency.start(this@MainActivity) }
-            showBlocking()
+            val outcome = withContext(Dispatchers.IO) {
+                runCatching { Door.habit(this@MainActivity, habit.id, !habit.done) }.getOrDefault(Door.Outcome.Unreachable)
+            }
+            state = state.copy(habitBusy = null, budgetMessage = message(outcome, "The server can't be reached, so the habit can't be ticked now."))
+            showBudget()
         }
+    }
+
+    private fun cancelDoor(id: Long) {
+        lifecycleScope.launch {
+            val outcome = withContext(Dispatchers.IO) { runCatching { Door.cancel(this@MainActivity, id) }.getOrDefault(Door.Outcome.Unreachable) }
+            state = state.copy(budgetMessage = message(outcome, "The server can't be reached, so the door can't be cancelled now."))
+            showBudget()
+        }
+    }
+
+    private fun message(outcome: Door.Outcome, unreachable: String): String? = when (outcome) {
+        is Door.Outcome.Done -> null
+        is Door.Outcome.Refused -> outcome.message
+        Door.Outcome.Unreachable -> unreachable
     }
 
     private fun showFollowUps() {
@@ -175,7 +198,7 @@ class MainActivity : ComponentActivity() {
     private suspend fun refresh() {
         val token = DeliveryConfig(this).token()
         state = state.copy(missing = SetupStep.missing(SetupActivity.syncDone(this)))
-        showBlocking()
+        showBudget()
         if (token == null) {
             if (DeliveryConfig(this).removed) {
                 problem("This phone was removed from Telemetry", "It was removed in the panel. Tap Set up and connect it again with a new setup code; what it recorded meanwhile is kept.")
@@ -189,6 +212,7 @@ class MainActivity : ComponentActivity() {
             problem("No plan information yet", "The server could not be reached and nothing is cached. Nothing is assumed.")
         }
         showFollowUps()
+        showBudget()
         val today = DayModel.today(Instant.now())
         withContext(Dispatchers.IO) { DayCache.refresh(this@MainActivity, today) }?.let { days[today] = it }
     }
@@ -229,7 +253,8 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun HomeScreen(state: HomeState, days: Map<String, DayView>, onShowDay: (String) -> Unit, onSettings: () -> Unit, onPlanner: () -> Unit,
-    onDay: (String, DayChunk?) -> Unit, onSetup: (SetupStep) -> Unit, onEmergency: () -> Unit, onDone: (FollowUp) -> Unit, onFocus: (String, Long) -> Unit) {
+    onDay: (String, DayChunk?) -> Unit, onSetup: (SetupStep) -> Unit, onHabit: (BudgetHabit) -> Unit, onCancelDoor: (Long) -> Unit,
+    onDone: (FollowUp) -> Unit, onFocus: (String, Long) -> Unit) {
     val context = LocalContext.current
     val names = remember { AppNames(context) }
     // Today is the last page; swiping right goes back a day at a time.
@@ -270,7 +295,8 @@ private fun HomeScreen(state: HomeState, days: Map<String, DayView>, onShowDay: 
                     }
                     state.reason?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     Missing(state.missing, onSetup)
-                    EmergencyRow(state.blocking, state.emergencyUntil, onEmergency)
+                    OpenRow(state.emergencyUntil, state.budget?.door, onCancelDoor)
+                    state.budget?.let { Habits(it, state.budgetMessage, state.habitBusy, onHabit) }
                 }
                 days[date]?.let { day ->
                     Plan(day, onPlanner, if (isToday && state.focus == null) onFocus else null, isToday)
@@ -286,15 +312,53 @@ private fun HomeScreen(state: HomeState, days: Map<String, DayView>, onShowDay: 
 /** How many days the home screen can swipe back through. */
 private const val DAYS_BACK = 60
 
-/** While something is blocked, the way to open everything for a few minutes; during that, until when. */
+/**
+ * What is open beyond the policy: an emergency unlock started before the door
+ * replaced it, or a door, waiting (with Cancel) or open. The door itself is
+ * asked for on the block screen.
+ */
 @Composable
-private fun EmergencyRow(blocking: Boolean, until: Instant?, onEmergency: () -> Unit) {
-    if (until != null) {
-        val at = until.atZone(ZoneId.systemDefault())
-        Text(String.format("Everything is open until %02d:%02d.", at.hour, at.minute), color = DistractionColor)
-    } else if (blocking) {
-        TextButton(onClick = onEmergency, contentPadding = PaddingValues(0.dp)) {
-            Text("Emergency: open everything for ${Emergency.LENGTH.toMinutes()} min", color = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun OpenRow(until: Instant?, door: BudgetDoor?, onCancelDoor: (Long) -> Unit) {
+    val zone = ZoneId.systemDefault()
+    when {
+        until != null -> Text("Everything is open until ${BudgetText.clock(until, zone)}.", color = DistractionColor)
+        door != null && door.waiting -> Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(door.opensAt?.let { "A door opens at ${BudgetText.clock(it, zone)}." } ?: "A door is waiting to open.",
+                color = DistractionColor, modifier = Modifier.weight(1f))
+            TextButton(onClick = { onCancelDoor(door.id) }) { Text("Cancel") }
+        }
+        door != null && door.open -> Text(
+            door.endsAt?.let { "Open through the door until ${BudgetText.clock(it, zone)} at the latest." } ?: "Open through the door.",
+            color = DistractionColor,
+        )
+    }
+}
+
+/** Today's habits with tick and untick, and what is left of the budget. */
+@Composable
+private fun Habits(budget: BudgetView, message: String?, busy: Long?, onHabit: (BudgetHabit) -> Unit) {
+    if (budget.habits.isEmpty() && message == null) return
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(start = 14.dp, end = 8.dp, top = 12.dp, bottom = 6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text("HABITS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                Text(if (budget.borrowingNow) "Today's budget is used" else "Left today ${BudgetText.minutes(budget.left)}",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(end = 6.dp))
+            }
+            budget.habits.forEach { habit ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(habit.name, fontWeight = if (habit.done) FontWeight.Normal else FontWeight.Bold, modifier = Modifier.weight(1f),
+                        color = if (habit.done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
+                    Text(if (habit.done) "done" else "+${BudgetText.minutes(habit.value)}", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 8.dp))
+                    if (habit.done) {
+                        TextButton(onClick = { onHabit(habit) }, enabled = busy == null) { Text("Undo") }
+                    } else {
+                        FilledTonalButton(onClick = { onHabit(habit) }, enabled = busy == null) { Text("Done") }
+                    }
+                }
+            }
+            message?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = DistractionColor, modifier = Modifier.padding(bottom = 6.dp)) }
         }
     }
 }

@@ -49,6 +49,62 @@ class BlockPolicyTest {
         assertFalse(BlockPolicy.shouldBlock(null, "com.example.feed", safe))
     }
 
+    // A day with the budget on: closed, a waiting door that opens at 10:10
+    // with its sliding end at 10:21, closed again, the distraction time until
+    // the budget runs out, then bedtime.
+    private val budgetJson = """
+        {"decision":{"mode":"closed","blocked":{"android_packages":["com.example.feed"]}},"timeline":[
+          {"from":"2026-11-26T10:00:00Z","to":"2026-11-26T10:10:00Z","decision":{"mode":"closed","reason":"Focus hours.","policy_version":9,"block_all":false,
+            "blocked":{"android_packages":["com.example.feed"]},"always_allowed":{"android_packages":["com.example.maps"]}}},
+          {"from":"2026-11-26T10:10:00Z","to":"2026-11-26T10:21:00Z","decision":{"mode":"door","reason":"Opened through the door until 10:21.","policy_version":9,"block_all":false,
+            "blocked":{"android_packages":[]},"always_allowed":{"android_packages":["com.example.maps"]}}},
+          {"from":"2026-11-26T10:21:00Z","to":"2026-11-26T16:00:00Z","decision":{"mode":"closed","reason":"Focus hours.","policy_version":9,"block_all":false,
+            "blocked":{"android_packages":["com.example.feed","com.example.video"]},"always_allowed":{"android_packages":["com.example.maps"]}}},
+          {"from":"2026-11-26T16:00:00Z","to":"2026-11-26T17:30:00Z","decision":{"mode":"leisure","reason":"Free time.","policy_version":9,"block_all":false,
+            "blocked":{"android_packages":[]},"always_allowed":{"android_packages":["com.example.maps"]}}},
+          {"from":"2026-11-26T17:30:00Z","to":"2026-11-26T21:00:00Z","decision":{"mode":"budget_used","reason":"Today's distraction time is used up.","policy_version":9,"block_all":false,
+            "blocked":{"android_packages":["com.example.feed","com.example.video"]},"always_allowed":{"android_packages":["com.example.maps"]}}},
+          {"from":"2026-11-26T21:00:00Z","to":"2026-11-27T02:00:00Z","decision":{"mode":"bedtime","reason":"Bedtime until 08:00.","policy_version":9,"block_all":true,
+            "blocked":{"android_packages":["com.example.feed"]},"always_allowed":{"android_packages":["com.example.maps"]}}},
+          {"from":"2026-11-27T02:00:00Z","to":"2026-11-27T08:00:00Z","decision":{"mode":"bedtime","reason":"Bedtime until 08:00.","policy_version":9,"block_all":true,
+            "blocked":{"android_packages":["com.example.feed"]},"always_allowed":{"android_packages":["com.example.maps"]}}},
+          {"from":"2026-11-27T08:00:00Z","to":"2026-11-27T10:00:00Z","decision":{"mode":"closed","reason":"Focus hours.","policy_version":9,"block_all":false,
+            "blocked":{"android_packages":["com.example.feed"]},"always_allowed":{"android_packages":["com.example.maps"]}}}]}
+    """.trimIndent()
+
+    @Test
+    fun anOpenDoorOpensAndItsSlidingEndClosesAgain() {
+        assertTrue(BlockPolicy.shouldBlock(BlockPolicy.at(budgetJson, Instant.parse("2026-11-26T10:05:00Z")), "com.example.feed", safe))
+        val door = BlockPolicy.at(budgetJson, Instant.parse("2026-11-26T10:15:00Z"))
+        assertEquals("door", door?.mode)
+        assertFalse(door!!.active)
+        assertFalse(BlockPolicy.shouldBlock(door, "com.example.feed", safe))
+        // Offline, the phone closes at the last end it received.
+        assertTrue(BlockPolicy.shouldBlock(BlockPolicy.at(budgetJson, Instant.parse("2026-11-26T10:21:00Z")), "com.example.feed", safe))
+    }
+
+    @Test
+    fun aUsedUpDistractionTimeClosesTheDistractionsOnly() {
+        val used = BlockPolicy.at(budgetJson, Instant.parse("2026-11-26T18:00:00Z"))
+        assertEquals("budget_used", used?.mode)
+        assertEquals("Today's distraction time is used up.", used?.reason)
+        assertTrue(BlockPolicy.shouldBlock(used, "com.example.video", safe))
+        assertFalse(BlockPolicy.shouldBlock(used, "com.example.maps", safe))
+        assertFalse(BlockPolicy.shouldBlock(used, "com.example.editor", safe))
+    }
+
+    @Test
+    fun distractionsAreKnownWhileTheyAreOpen() {
+        assertEquals(setOf("com.example.feed", "com.example.video"), BlockPolicy.distractionPackages(budgetJson))
+        assertEquals(emptySet<String>(), BlockPolicy.distractionPackages("not json"))
+    }
+
+    @Test
+    fun bedtimeEndsAtTheEndOfItsRunOfSegments() {
+        assertEquals(Instant.parse("2026-11-27T08:00:00Z"), BlockPolicy.bedtimeUntil(budgetJson, Instant.parse("2026-11-26T23:00:00Z")))
+        assertNull(BlockPolicy.bedtimeUntil(budgetJson, Instant.parse("2026-11-26T18:00:00Z")))
+    }
+
     @Test
     fun toleratesADeviceClockSlightlyBehindTheServer() {
         assertEquals("work", BlockPolicy.at(json, Instant.parse("2026-09-28T05:59:57Z"))?.mode)
