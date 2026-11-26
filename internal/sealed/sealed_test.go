@@ -200,3 +200,53 @@ func TestRelayTellsWhichHostADeviceReachedItOn(t *testing.T) {
 		t.Fatalf("hosts = %v", hosts)
 	}
 }
+
+func TestRelayCarriesThePanelOnlyWithADevicePanelSession(t *testing.T) {
+	now := time.Date(2026, 11, 26, 9, 0, 0, 0, time.UTC)
+	r, sealer, seen := relay(t, now)
+	r.PerMinute = 100
+	session := "telemetry_device_session=abc.123.sig"
+	ask := func(path string, headers map[string]string) int {
+		message, open, _ := sealer.Seal(Head{Method: "GET", Path: path, At: now.UnixMilli(), ID: newID(), Headers: headers}, nil)
+		answer, _, err := open(send(t, r, message, "1.2.3.4").Body.Bytes())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return answer.Status
+	}
+	// The phone app's panel, with the session it traded its token for.
+	for _, path := range []string{"/panel/", "/panel/_app/immutable/start.js", "/v1/budget?days=30"} {
+		if status := ask(path, map[string]string{"Cookie": "other=1; " + session, "Authorization": "Bearer owner-token"}); status != http.StatusAccepted {
+			t.Fatalf("%s: %d", path, status)
+		}
+	}
+	inner := (*seen)[len(*seen)-1]
+	if inner.Header.Get("Cookie") != session || inner.Header.Get("Authorization") != "" {
+		t.Fatalf("only the device panel session is passed on: %v", inner.Header)
+	}
+	// The panel's calls to device paths carry the session too.
+	if status := ask("/v1/device/now", map[string]string{"Cookie": session}); status != http.StatusAccepted || (*seen)[len(*seen)-1].Header.Get("Cookie") != session {
+		t.Fatalf("device path with the panel session: %d", status)
+	}
+	before := len(*seen)
+	// Without that session, with an owner token or another cookie, or for
+	// MCP and anything outside the panel, nothing is reached.
+	for _, test := range []struct {
+		path    string
+		headers map[string]string
+	}{
+		{"/panel/", nil},
+		{"/v1/budget", map[string]string{"Authorization": "Bearer owner-token"}},
+		{"/v1/budget", map[string]string{"Cookie": "telemetry_session=owner"}},
+		{"/mcp", map[string]string{"Cookie": session}},
+		{"/morning", map[string]string{"Cookie": session}},
+		{"/v1/../mcp", map[string]string{"Cookie": session}},
+	} {
+		if status := ask(test.path, test.headers); status != http.StatusNotFound {
+			t.Fatalf("%s %v: %d", test.path, test.headers, status)
+		}
+	}
+	if len(*seen) != before {
+		t.Fatal("refused requests reached the server")
+	}
+}

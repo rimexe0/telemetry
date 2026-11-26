@@ -13,8 +13,12 @@ import (
 
 // Relay is the server's door for sealed requests. It opens each one, checks
 // it is fresh and not seen before, and passes it to Next as an ordinary
-// request, but only for the paths a device uses: the panel, MCP and owner
-// API cannot be reached through it.
+// request, but only for the paths a device uses. The panel and the owner API
+// it calls are reached only with the panel session a paired device traded
+// its token for through this relay, so the phone app shows the panel
+// without Tailscale (owner 2026-11-26) and nothing opens that a paired
+// device could not already reach. MCP, owner tokens and sign-in sessions
+// cannot be used through it.
 type Relay struct {
 	Key  *ServerKey
 	Next http.Handler
@@ -40,6 +44,10 @@ type Relay struct {
 
 // Paths a device may reach through the relay.
 var allowed = []string{"/v1/ingest/batches", "/v1/device/"}
+
+// deviceSessionCookie is the panel session a paired device trades its token
+// for at /v1/device/panel-session.
+const deviceSessionCookie = "telemetry_device_session"
 
 // Headers passed on from inside the seal; any other is dropped.
 var passed = []string{"Authorization", "X-Telemetry-Device-ID", "Content-Type", "Accept"}
@@ -101,7 +109,15 @@ func (r *Relay) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		r.Reached(request.Host)
 	}
 	target, err := url.ParseRequestURI(head.Path)
-	if err != nil || target.Host != "" || !reachable(target.Path) {
+	if err != nil || target.Host != "" {
+		r.answer(writer, opened, AnswerHead{Status: http.StatusNotFound}, nil)
+		return
+	}
+	// The panel's own calls to device paths, such as /v1/device/now, carry
+	// the session too.
+	session, hasSession := panelSession(head.Headers["Cookie"])
+	device := reachable(target.Path)
+	if !device && (!hasSession || !panelPath(target.Path)) {
 		r.answer(writer, opened, AnswerHead{Status: http.StatusNotFound}, nil)
 		return
 	}
@@ -114,6 +130,13 @@ func (r *Relay) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		if value, ok := head.Headers[name]; ok {
 			inner.Header.Set(name, value)
 		}
+	}
+	if hasSession {
+		inner.Header.Set("Cookie", session)
+	}
+	if !device {
+		// The panel only with the device's panel session, never an owner token.
+		inner.Header.Del("Authorization")
 	}
 	inner.RemoteAddr = address
 	recorder := &recorder{header: http.Header{}, status: http.StatusOK}
@@ -130,6 +153,27 @@ func pairingPath(path string) bool {
 	}
 	id, ok := strings.CutPrefix(path, sessions+"/")
 	return ok && id != "" && !strings.Contains(id, "/")
+}
+
+// panelPath is the panel's pages and the API under /v1/ it calls. MCP and
+// the morning code's scan page are not among them.
+func panelPath(path string) bool {
+	if strings.Contains(path, "..") {
+		return false
+	}
+	return path == "/panel" || strings.HasPrefix(path, "/panel/") || strings.HasPrefix(path, "/v1/")
+}
+
+// panelSession picks the device panel session out of a Cookie header, as
+// the one cookie to pass on.
+func panelSession(header string) (string, bool) {
+	for _, part := range strings.Split(header, ";") {
+		name, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if ok && name == deviceSessionCookie && value != "" {
+			return name + "=" + value, true
+		}
+	}
+	return "", false
 }
 
 func reachable(path string) bool {

@@ -37,7 +37,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.time.Instant
 
 /**
  * The app: the Telemetry panel, full screen, signed in with this phone's
@@ -65,8 +64,7 @@ class MainActivity : ComponentActivity() {
     private var showing = Showing.NOTHING
     private var server = ""
     private var loadFailed = false
-    private var sessionOpenedAt = Instant.EPOCH
-    private var sessionExpiresAt: Instant? = null
+    private var proxy: PanelProxy? = null
     private var opening: Job? = null
     private var attention: SetupStep? = null
 
@@ -104,6 +102,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         if (::web.isInitialized) runCatching { web.destroy() }
+        proxy?.close()
         super.onDestroy()
     }
 
@@ -118,7 +117,7 @@ class MainActivity : ComponentActivity() {
         strip.visibility = if (attention != null) View.VISIBLE else View.GONE
         when (showing) {
             Showing.NOTHING, Showing.NOT_PAIRED -> open()
-            Showing.PANEL -> if (PanelSession.renewDue(sessionExpiresAt, sessionOpenedAt, Instant.now())) renew()
+            Showing.PANEL -> withContext(Dispatchers.IO) { runCatching { proxy?.renewIfDue() } }
             Showing.OPENING, Showing.UNREACHABLE -> Unit
         }
         // Keeps the policy the block screen reads fresh while the app is open.
@@ -127,52 +126,33 @@ class MainActivity : ComponentActivity() {
 
     private fun openSetup(step: SetupStep?) = startActivity(SetupActivity.intent(this, step))
 
-    /** Trades the paired credential for a panel session, then loads the panel. */
+    /**
+     * Trades the paired credential for a panel session, through the relay
+     * first, then loads the panel from [PanelProxy], so it opens with or
+     * without Tailscale.
+     */
     private fun open() {
         if (opening?.isActive == true) return
         val config = DeliveryConfig(this)
-        val token = config.token() ?: return showNotPaired(config.removed)
-        server = config.serverUrl.trimEnd('/')
+        config.token() ?: return showNotPaired(config.removed)
+        val panel = proxy ?: PanelProxy(applicationContext).also { proxy = it }
+        server = panel.origin
         show(Showing.OPENING)
         opening = lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) { PanelSession.request(server, DeviceIdentity.get(this@MainActivity), token) }
-            when (result) {
-                is PanelSession.Result.Opened -> {
-                    keep(result)
+            when (val result = withContext(Dispatchers.IO) { panel.open() }) {
+                PanelProxy.Opened.Yes -> {
+                    CookieManager.getInstance().apply {
+                        setAcceptCookie(true)
+                        setCookie(panel.origin, "${PanelProxy.KEY_COOKIE}=${panel.key}; Path=/; HttpOnly")
+                        flush()
+                    }
                     loadFailed = false
-                    web.loadUrl("$server/panel/")
+                    web.loadUrl("${panel.origin}/panel/")
                 }
-                is PanelSession.Result.Refused -> showUnreachable(result.status)
-                PanelSession.Result.Unreachable -> showUnreachable(null)
+                is PanelProxy.Opened.Refused -> showUnreachable(result.status)
+                PanelProxy.Opened.Unreachable -> showUnreachable(null)
             }
         }
-    }
-
-    /** A new session before the old one ends; the open page keeps going with it. */
-    private fun renew() {
-        if (opening?.isActive == true) return
-        val token = DeliveryConfig(this).token() ?: return
-        opening = lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) { PanelSession.request(server, DeviceIdentity.get(this@MainActivity), token) }
-            val expired = sessionExpiresAt?.isAfter(Instant.now()) != true
-            when {
-                result is PanelSession.Result.Opened -> {
-                    keep(result)
-                    if (expired) web.reload()
-                }
-                expired -> showUnreachable((result as? PanelSession.Result.Refused)?.status)
-            }
-        }
-    }
-
-    private fun keep(session: PanelSession.Result.Opened) {
-        CookieManager.getInstance().apply {
-            setAcceptCookie(true)
-            setCookie(server, "${session.cookie}; Path=/; Secure; HttpOnly")
-            flush()
-        }
-        sessionOpenedAt = Instant.now()
-        sessionExpiresAt = session.expiresAt
     }
 
     /** Follows a link the panel opens: native screens for telemetry-app://, the browser for other sites. */
