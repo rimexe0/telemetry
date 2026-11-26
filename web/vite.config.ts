@@ -144,6 +144,11 @@ function fixtureExecution() {
       }
       // Invented blocklist state for the Blocked apps editor.
       if (path === '/policy/config' && method === 'GET') return [200, { policy: { id: policyVersion, config: policyConfig } }];
+      if (path === '/policy/config' && method === 'PUT') {
+        policyVersion++;
+        Object.assign(policyConfig, body.config);
+        return [200, { policy: { id: policyVersion, config: policyConfig } }];
+      }
       if (path === '/policy/suggestions') return [200, { android_apps: [{ package: 'com.google.android.youtube', events: 120, last_seen: created }] }];
       if (path === '/policy/proposals') return [200, { proposals: policyProposals }];
       const policyDecision = path.match(/^\/policy\/proposals\/(\d+)\/(accept|reject)$/);
@@ -262,10 +267,130 @@ function fixtureExecution() {
         if (terminal.has(session.state)) session.ended_at = at;
         return [200, session];
       }
-      return undefined;
+      return fixtureBudget.handle(method, path, body);
     }
   };
 }
+
+// Invented habits, budget and door so the Habits view and the door screen
+// can be clicked through. Numbers are the contract's examples, not the
+// owner's; the arithmetic is simplified and is not evidence of the server.
+const fixtureBudget = (() => {
+  const dayOf = (at: number) => new Date(at + 3 * 3_600_000).toISOString().slice(0, 10);
+  const today = dayOf(Date.now());
+  const addDays = (day: string, delta: number) => { const at = new Date(`${day}T12:00:00Z`); at.setUTCDate(at.getUTCDate() + delta); return at.toISOString().slice(0, 10); };
+  const habits: Record<string, any>[] = [
+    { id: 1, name: 'Fixture walk', position: 0, weekdays: [], created_day: addDays(today, -300) },
+    { id: 2, name: 'Fixture reading', position: 1, weekdays: [1, 3, 5], created_day: addDays(today, -120) },
+    { id: 3, name: 'Fixture stretch', position: 2, weekdays: [], created_day: addDays(today, -40) },
+    { id: 4, name: 'Fixture old habit', position: 3, weekdays: [], archived: true, created_day: addDays(today, -365), archived_day: addDays(today, -200) }
+  ];
+  const ticks = new Set<number>([1]);
+  let reasons = ['Fixture reason: a line the owner writes about what they want.'];
+  let door: Record<string, any> | null = null;
+  const settings = { enabled: true, base_minutes: 120, max_minutes: 300, floor_minutes: 30, habits_for_max: 6, rate_distraction: 1, rate_day: 3, rate_bedtime: 10,
+    rate_grayscale_off: 3, borrow_multiplier: 2, window_minutes: 60, window_use_minutes: 10, grace_minutes: 1, wait_minutes: 10 };
+  const scheduled = (habit: Record<string, any>, day: string) => !habit.weekdays?.length || habit.weekdays.includes(new Date(`${day}T12:00:00Z`).getUTCDay());
+  const active = () => habits.filter(habit => !habit.archived).sort((a, b) => a.position - b.position);
+  // A steady invented pattern: most days done, some not, a few without a record.
+  const pattern = (id: number, back: number) => ((back * 7 + id * 3) % 10) < 7;
+  function heatmap(days: number) {
+    const combined: Record<string, number | null> = {};
+    const rows = habits.map(habit => {
+      const cells: Record<string, string> = {};
+      let current = 0, longest = 0, run = 0, counting = true;
+      for (let back = 0; back < days; back++) {
+        const day = addDays(today, -back);
+        let status = day < habit.created_day || (habit.archived_day && day > habit.archived_day) ? 'none' : !scheduled(habit, day) ? 'unscheduled'
+          : back === 0 ? (ticks.has(habit.id) ? 'done' : 'missed') : pattern(habit.id, back) ? 'done' : 'missed';
+        if (back > 0 && back % 53 === 0) continue; // no record that day
+        cells[day] = status;
+        if (status === 'done') { run++; longest = Math.max(longest, run); if (counting) current = run; }
+        else if (status === 'missed' && back > 0) { run = 0; counting = false; }
+      }
+      return { id: habit.id, name: habit.name, created_day: habit.created_day, archived_day: habit.archived_day ?? null, days: cells, current_run: current, longest_run: longest };
+    });
+    for (let back = 0; back < days; back++) {
+      const day = addDays(today, -back);
+      const states = rows.map(row => row.days[day]).filter(state => state === 'done' || state === 'missed');
+      if (states.length) combined[day] = states.filter(state => state === 'done').length / states.length;
+    }
+    return { habits: rows, combined };
+  }
+  function doorNow() {
+    if (!door || door.state === 'cancelled') return door;
+    const now = Date.now();
+    if (now >= Date.parse(door.opens_at)) door.state = now >= Date.parse(door.ends_at) ? 'ended' : now >= Date.parse(door.ends_at) - 60_000 ? 'grace' : 'open';
+    if (door.state === 'open' || door.state === 'grace') door.used_minutes = Math.min(10, (now - Date.parse(door.opens_at)) / 60_000);
+    return door;
+  }
+  function state() {
+    const todays = active().filter(habit => scheduled(habit, today));
+    const perHabit = (settings.max_minutes - settings.base_minutes) / Math.max(todays.length, settings.habits_for_max);
+    const earned = todays.filter(habit => ticks.has(habit.id)).length * perHabit;
+    const budget = Math.max(settings.floor_minutes, Math.min(settings.base_minutes + earned, settings.max_minutes) - 30);
+    const spent = 47.5;
+    const live = doorNow();
+    const open = live && ['waiting', 'open', 'grace'].includes(live.state);
+    return {
+      enabled: true, day: today, budget, spent, left: budget - spent, earned, penalty: 30, debt: 0, debt_tomorrow: 0, borrowable: 90,
+      rate: { total: 3, base: 3, grayscale_off: 0, kind: 'day' }, in_distraction_time: false,
+      next_distraction_time: new Date(`${today}T16:00:00Z`).toISOString(), bedtime_at: new Date(`${today}T21:00:00Z`).toISOString(),
+      wind_down: false, grayscale_declined: false, door: live, door_available: !open, door_unavailable_reason: open ? 'a door is already open' : '', next_door_at: null,
+      habits: todays.map(habit => ({ id: habit.id, name: habit.name, done: ticks.has(habit.id), value: perHabit })), reasons,
+      settings: { wait_minutes: settings.wait_minutes, window_minutes: settings.window_minutes, window_use_minutes: settings.window_use_minutes, grace_minutes: settings.grace_minutes, borrow_multiplier: settings.borrow_multiplier }
+    };
+  }
+  return {
+    handle(method: string, path: string, body: any): [number, unknown] | undefined {
+      if (path === '/budget' && method === 'GET') {
+        const days = Array.from({ length: 30 }, (_, index) => addDays(today, -(index + 1))).filter((_, index) => index % 11 !== 4)
+          .map((day, index) => ({ day, budget: 150 + (index % 4) * 30, spent: 40 + (index * 17) % 120, debt_passed_on: index % 9 === 0 ? 20 : 0, habits_done: 2 + (index % 2), habits_missed: index % 3 === 0 ? 1 : 0 }));
+        return [200, { budget: state(), days }];
+      }
+      if (path === '/door' && method === 'POST') {
+        const live = doorNow();
+        if (live && ['waiting', 'open', 'grace'].includes(live.state)) return [409, { error: 'door_unavailable', message: 'A door is already open.' }];
+        // Fixture: the wait is 20 seconds so the countdown can be followed.
+        const opens = Date.now() + 20_000;
+        door = { id: (door?.id ?? 0) + 1, state: 'waiting', requested_at: new Date().toISOString(), opens_at: new Date(opens).toISOString(),
+          window_end: new Date(opens + 3_600_000).toISOString(), ends_at: new Date(opens + 11 * 60_000).toISOString(), used_minutes: 0, use_minutes: 10, borrowing: false };
+        return [201, { door }];
+      }
+      const cancel = path.match(/^\/door\/(\d+)\/cancel$/);
+      if (cancel && method === 'POST') {
+        if (!door || door.id !== Number(cancel[1]) || doorNow()?.state !== 'waiting') return [409, { error: 'door_not_waiting', message: 'Only a waiting door can be cancelled.' }];
+        door.state = 'cancelled';
+        return [200, { door }];
+      }
+      if (path === '/door/back' && method === 'POST') return [200, { recorded: true }];
+      if (path === '/habits' && method === 'GET') return [200, { habits }];
+      if (path === '/habits' && method === 'POST') {
+        const habit = { id: habits.length + 1, name: body.name, position: active().length, weekdays: body.weekdays ?? [], created_day: today };
+        habits.push(habit);
+        return [201, { habit }];
+      }
+      if (path === '/habits/heatmap' && method === 'GET') return [200, heatmap(365)];
+      const patch = path.match(/^\/habits\/(\d+)$/);
+      if (patch && method === 'PATCH') {
+        const habit = habits.find(row => row.id === Number(patch[1]));
+        if (!habit) return [404, { error: { detail: 'no such habit' } }];
+        Object.assign(habit, body);
+        if (body.archived === true) habit.archived_day = today;
+        if (body.archived === false) delete habit.archived_day;
+        return [200, { habit }];
+      }
+      const tick = path.match(/^\/habits\/(\d+)\/(tick|untick)$/);
+      if (tick && method === 'POST') {
+        if (tick[2] === 'tick') ticks.add(Number(tick[1])); else ticks.delete(Number(tick[1]));
+        return [200, { budget: state() }];
+      }
+      if (path === '/reasons' && method === 'GET') return [200, { reasons }];
+      if (path === '/reasons' && method === 'PUT') { reasons = body.reasons; return [200, { reasons }]; }
+      return undefined;
+    }
+  };
+})();
 
 function fixtureAPI(): Plugin {
   const execution = fixtureExecution();
@@ -302,7 +427,8 @@ function fixtureAPI(): Plugin {
           send(200, { waits_until: {} });
           return;
         }
-        if (path.startsWith('/execution') || path.startsWith('/plans') || path.startsWith('/activities') || path.startsWith('/activity') || path.startsWith('/policy') || path.startsWith('/context-rules') || path.startsWith('/openings') || path.startsWith('/morning') || path.startsWith('/lock') || path === '/planning/settings') {
+        if (path.startsWith('/execution') || path.startsWith('/plans') || path.startsWith('/activities') || path.startsWith('/activity') || path.startsWith('/policy') || path.startsWith('/context-rules') || path.startsWith('/openings') || path.startsWith('/morning') || path.startsWith('/lock') || path === '/planning/settings' ||
+          path.startsWith('/budget') || path.startsWith('/door') || path.startsWith('/habits') || path === '/reasons') {
           let raw = '';
           request.on('data', chunk => raw += chunk);
           request.on('end', () => {

@@ -13,6 +13,8 @@
   import Openings from '$lib/Openings.svelte';
   import RulesView from '$lib/RulesView.svelte';
   import ActivityView from '$lib/ActivityView.svelte';
+  import HabitsView from '$lib/HabitsView.svelte';
+  import TodayBudget from '$lib/TodayBudget.svelte';
   import SignInSettings from '$lib/SignInSettings.svelte';
   import { performNowAction, type NowAction, type NowSnapshot, type NowView } from '$lib/execution';
   import { dayKey, dayStart } from '$lib/health';
@@ -73,14 +75,14 @@
 
   const fixtureMode = import.meta.env.VITE_TELEMETRY_FIXTURE === '1';
   const snapshotMode = import.meta.env.VITE_TELEMETRY_SNAPSHOT === '1';
-  let view: 'now' | 'activity' | 'day' | 'plan' | 'rules' | 'health' | 'collection' | 'devices' | 'sign-in' = 'now';
+  let view: 'now' | 'habits' | 'activity' | 'day' | 'plan' | 'rules' | 'health' | 'collection' | 'devices' | 'sign-in' = 'now';
   let selectedDay = dayKey(Date.now());
   // Where the Day timeline starts: when you woke that day, else midnight.
   let dayWindowStart: number | undefined;
 
   // The open tab, and the day for Day and Plan, live in the address
   // (#day/2026-11-19), so a refresh comes back to the same place.
-  const viewNames = ['now', 'activity', 'day', 'plan', 'rules', 'health', 'collection', 'devices', 'sign-in'];
+  const viewNames = ['now', 'habits', 'activity', 'day', 'plan', 'rules', 'health', 'collection', 'devices', 'sign-in'];
   let locationReady = false;
   function readLocation(): void {
     const [name, day] = window.location.hash.slice(1).split('/');
@@ -132,7 +134,7 @@
   let authenticated = false;
   let checkingSession = true;
   let loading = false;
-  let loadingView: 'now' | 'activity' | 'day' | 'plan' | 'rules' | 'health' | 'collection' | 'devices' | 'sign-in' | undefined;
+  let loadingView: 'now' | 'habits' | 'activity' | 'day' | 'plan' | 'rules' | 'health' | 'collection' | 'devices' | 'sign-in' | undefined;
   let refreshQueued = false;
   let refreshQueuedForceDay = false;
   let error = '';
@@ -573,6 +575,8 @@
       const now = new Date();
       if (requestedView === 'now') {
         await refreshNow();
+      } else if (requestedView === 'habits') {
+        // The habits view loads its own parts.
       } else if (requestedView === 'collection') {
         const [rows] = await Promise.all([listObservations({
           sourceInstanceKey: selectedSource || undefined,
@@ -902,6 +906,7 @@
   {:else}
     <nav class="view-tabs" aria-label="Panel views">
       <button class:active={view === 'now'} aria-pressed={view === 'now'} on:click={() => { view = 'now'; void refresh(); }}>Now</button>
+      <button class:active={view === 'habits'} aria-pressed={view === 'habits'} on:click={() => { view = 'habits'; }}>Habits</button>
       <button class:active={view === 'activity'} aria-pressed={view === 'activity'} on:click={() => { view = 'activity'; }}>Activity</button>
       <button class:active={view === 'day'} aria-pressed={view === 'day'} on:click={() => { view = 'day'; void refresh(); }}>Day</button>
       <button class:active={view === 'plan'} aria-pressed={view === 'plan'} on:click={() => { view = 'plan'; void refresh(); }}>Plan</button>
@@ -931,8 +936,11 @@
       </section>
     {/if}
     {#if view === 'now'}
+      <TodayBudget />
       <ExecutionNow snapshot={nowSnapshot} loading={nowLoading} error={nowError || error} onaction={handleNowAction} onopenplan={openTodayPlan} onrefresh={() => refresh()} />
       <Openings />
+    {:else if view === 'habits'}
+      <HabitsView />
     {:else if view === 'activity'}
       <ActivityView date={selectedDay} />
     {:else if view === 'day'}

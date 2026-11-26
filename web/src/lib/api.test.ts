@@ -201,3 +201,46 @@ test('pairing approval and device revocation send the empty JSON object the serv
     expect(new Headers(init.headers).get('Content-Type')).toBe('application/json');
   }
 });
+
+test('door refusals show the server message from {error, message}', async () => {
+  const { createDoor } = await import('./api');
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'door_unavailable', message: 'A door is already open.' }), { status: 409 })));
+  await expect(createDoor()).rejects.toEqual(new APIError(409, 'A door is already open.'));
+});
+
+test('a door is made with an empty object and read with or without a wrapper', async () => {
+  const { createDoor } = await import('./api');
+  const door = { id: 7, state: 'waiting' };
+  const fetch = vi.fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify({ door }), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(door), { status: 200 }));
+  vi.stubGlobal('fetch', fetch);
+  expect(await createDoor()).toEqual(door);
+  expect(await createDoor()).toEqual(door);
+  expect(fetch).toHaveBeenCalledWith('/v1/door', expect.objectContaining({ method: 'POST', body: '{}' }));
+});
+
+test('the budget reads today and the day snapshots, leaving out rows without a day', async () => {
+  const { getBudget } = await import('./api');
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+    budget: { enabled: true, day: '2026-11-26' },
+    days: [{ day: '2026-11-25', budget: 150, spent: 40, debt_passed_on: 12, habits_done: 3, habits_missed: 1 }, { budget: 10 }]
+  }), { status: 200 }));
+  vi.stubGlobal('fetch', fetch);
+  const result = await getBudget(30);
+  expect(fetch).toHaveBeenCalledWith('/v1/budget?days=30', expect.anything());
+  expect(result.today?.day).toBe('2026-11-26');
+  expect(result.days).toEqual([{ day: '2026-11-25', budget: 150, spent: 40, debt_passed_on: 12, habits_done: 3, habits_missed: 1, settings: undefined }]);
+});
+
+test('a tick is sent for the budget day', async () => {
+  const { setHabitDone } = await import('./api');
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
+  vi.stubGlobal('fetch', fetch);
+  await setHabitDone(3, true, '2026-11-26');
+  await setHabitDone(3, false);
+  expect(fetch.mock.calls[0][0]).toBe('/v1/habits/3/tick');
+  expect((fetch.mock.calls[0][1] as RequestInit).body).toBe('{"day":"2026-11-26"}');
+  expect(fetch.mock.calls[1][0]).toBe('/v1/habits/3/untick');
+  expect((fetch.mock.calls[1][1] as RequestInit).body).toBe('{}');
+});

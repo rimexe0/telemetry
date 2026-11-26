@@ -3,6 +3,7 @@
   import { getLock, unlockWithPin, type Activity, type LockResponse, type PlanningSettings } from './api';
   import { formatWindows } from './lock';
   import BlockedApps from './BlockedApps.svelte';
+  import BudgetRules from './BudgetRules.svelte';
   import ContextRules from './ContextRules.svelte';
   import MorningCode from './MorningCode.svelte';
   import SettingsLock from './SettingsLock.svelte';
@@ -46,6 +47,7 @@
   let gateError = '';
 
   const sections = [
+    { id: 'rule-budget', label: 'Budget' },
     { id: 'rule-no-plan', label: 'No plan' }, { id: 'rule-lock', label: 'Settings lock' }, { id: 'rule-bedtime', label: 'Bedtime' },
     { id: 'rule-extension', label: 'Browser extension' }, { id: 'rule-morning', label: 'Morning code' }, { id: 'rule-apps', label: 'Blocked apps' },
     { id: 'rule-projects', label: 'Project rules' }
@@ -91,6 +93,7 @@
   <p class="muted small intro">What is blocked and when. Distraction times and openings are set on the Now page and through the assistant.</p>
 
   <div class="grid">
+    <div class="card wide" id="rule-budget"><BudgetRules /></div>
     <div class="card" id="rule-no-plan">
       <section aria-labelledby="no-plan-heading">
         <h3 id="no-plan-heading">When the day has no plan</h3>
