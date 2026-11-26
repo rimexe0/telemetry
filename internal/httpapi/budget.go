@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -264,8 +266,10 @@ func (s *Server) deviceGrayscale(writer http.ResponseWriter, request *http.Reque
 	writeJSON(writer, http.StatusOK, map[string]any{"event": saved, "budget": fresh.State})
 }
 
-// tickHabit ticks or unticks a habit for today's budget day; the response
-// is the new budget.
+// tickHabit ticks or unticks a habit; the response is the new budget.
+// Without "at" it is for today's budget day, now. With "at" it is a tick
+// made then, maybe on a device that could not reach the server: it counts
+// for the day it was made in, if that day's habits were open then.
 func (s *Server) tickHabit(writer http.ResponseWriter, request *http.Request, action string) {
 	budgets, ok := s.needBudgetStore(writer)
 	if !ok {
@@ -278,6 +282,7 @@ func (s *Server) tickHabit(writer http.ResponseWriter, request *http.Request, ac
 	}
 	var input struct {
 		Day string `json:"day"`
+		At  string `json:"at"`
 	}
 	// The body is optional: {} or nothing ticks today.
 	body, err := io.ReadAll(io.LimitReader(request.Body, 4096))
@@ -285,22 +290,34 @@ func (s *Server) tickHabit(writer http.ResponseWriter, request *http.Request, ac
 		err = json.Unmarshal(body, &input)
 	}
 	if err != nil {
-		writeError(writer, http.StatusBadRequest, "invalid_json", `request body is empty or {"day": "YYYY-MM-DD"}`)
+		writeError(writer, http.StatusBadRequest, "invalid_json", `request body is empty or {"day": "YYYY-MM-DD", "at": "<RFC 3339>"}`)
 		return
 	}
 	ctx, now := request.Context(), time.Now().UTC()
-	err = store.TickHabit(ctx, s.repository, budgets, id, action, input.Day, requestSource(request), now)
+	if strings.TrimSpace(input.At) == "" {
+		err = store.TickHabit(ctx, s.repository, budgets, id, action, input.Day, requestSource(request), now)
+	} else {
+		at, parseErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(input.At))
+		if parseErr != nil {
+			writeError(writer, http.StatusBadRequest, "invalid_at", "at must be an RFC 3339 time")
+			return
+		}
+		err = store.LateTick(ctx, s.repository, budgets, id, action, input.Day, at, requestSource(request), now)
+	}
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		writeError(writer, http.StatusNotFound, "not_found", "no such habit")
 		return
-	case errors.Is(err, store.ErrHabitWrongDay):
+	case errors.Is(err, store.ErrHabitWrongDay), errors.Is(err, store.ErrHabitLateWrongDay):
 		writeError(writer, http.StatusBadRequest, "invalid_day", err.Error())
 		return
-	case errors.Is(err, store.ErrHabitDayClosed):
+	case errors.Is(err, store.ErrHabitLateFuture):
+		writeError(writer, http.StatusBadRequest, "invalid_at", "at is more than two minutes ahead of the server's clock")
+		return
+	case errors.Is(err, store.ErrHabitDayClosed), errors.Is(err, store.ErrHabitLateClosed), errors.Is(err, store.ErrHabitTooOld):
 		writeRefusal(writer, "day_closed", err.Error())
 		return
-	case errors.Is(err, store.ErrHabitNotToday):
+	case errors.Is(err, store.ErrHabitNotToday), errors.Is(err, store.ErrHabitNotThen):
 		writeRefusal(writer, "not_scheduled", err.Error())
 		return
 	case errors.Is(err, store.ErrInvalidHabit):
@@ -477,9 +494,20 @@ func (s *Server) applyHabit(writer http.ResponseWriter, request *http.Request, b
 
 // habitHeatmap is the GitHub-style grid of days per habit, with runs.
 func (s *Server) habitHeatmap(writer http.ResponseWriter, request *http.Request) {
-	if !s.owner(writer, request) {
-		return
+	if s.owner(writer, request) {
+		s.heatmap(writer, request, 1, 800)
 	}
+}
+
+// deviceHabitHeatmap is the same grid for a device to keep, so its Habits
+// screen shows the year while the server cannot be reached.
+func (s *Server) deviceHabitHeatmap(writer http.ResponseWriter, request *http.Request) {
+	if s.deviceOrOwner(writer, request) {
+		s.heatmap(writer, request, 7, 400)
+	}
+}
+
+func (s *Server) heatmap(writer http.ResponseWriter, request *http.Request, least, most int) {
 	budgets, ok := s.needBudgetStore(writer)
 	if !ok {
 		return
@@ -487,8 +515,8 @@ func (s *Server) habitHeatmap(writer http.ResponseWriter, request *http.Request)
 	days := 365
 	if value := request.URL.Query().Get("days"); value != "" {
 		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed < 1 || parsed > 800 {
-			writeError(writer, http.StatusBadRequest, "invalid_query", "days must be an integer from 1 through 800")
+		if err != nil || parsed < least || parsed > most {
+			writeError(writer, http.StatusBadRequest, "invalid_query", fmt.Sprintf("days must be an integer from %d through %d", least, most))
 			return
 		}
 		days = parsed
@@ -499,6 +527,61 @@ func (s *Server) habitHeatmap(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 	writeJSON(writer, http.StatusOK, heatmap)
+}
+
+// deviceHabit is an active habit as a device keeps it, to work out which
+// habits apply on a day while the server cannot be reached. weekdays always
+// lists the days, all seven for every day.
+type deviceHabit struct {
+	ID         int64      `json:"id"`
+	Name       string     `json:"name"`
+	Position   int        `json:"position"`
+	Weekdays   []int      `json:"weekdays"`
+	CreatedAt  time.Time  `json:"created_at"`
+	ArchivedAt *time.Time `json:"archived_at"`
+}
+
+// deviceHabits are the owner's active habits, in their order, and their
+// reasons.
+func (s *Server) deviceHabits(writer http.ResponseWriter, request *http.Request) {
+	if !s.deviceOrOwner(writer, request) {
+		return
+	}
+	budgets, ok := s.needBudgetStore(writer)
+	if !ok {
+		return
+	}
+	habits, err := budgets.ListHabits(request.Context())
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
+	reasons, err := budgets.Reasons(request.Context())
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
+		return
+	}
+	active := []deviceHabit{}
+	for _, habit := range habits {
+		if habit.ArchivedAt != nil {
+			continue
+		}
+		weekdays := []int(habit.Weekdays)
+		if len(weekdays) == 0 {
+			weekdays = []int{0, 1, 2, 3, 4, 5, 6}
+		}
+		active = append(active, deviceHabit{ID: habit.ID, Name: habit.Name, Position: habit.Position, Weekdays: append([]int{}, weekdays...), CreatedAt: habit.CreatedAt.UTC()})
+	}
+	sort.SliceStable(active, func(i, j int) bool {
+		if active[i].Position != active[j].Position {
+			return active[i].Position < active[j].Position
+		}
+		return active[i].ID < active[j].ID
+	})
+	if reasons == nil {
+		reasons = []string{}
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"habits": active, "reasons": reasons})
 }
 
 // LoadHeatmap reads the habits and their ticks for the last days.

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -31,6 +32,8 @@ type memoryBudget struct {
 	reasons   []string
 	days      []budget.Snapshot
 	changes   [][]store.HabitChange
+	// phone is when a phone last delivered; nil for no phone.
+	phone *time.Time
 }
 
 func (m *memoryBudget) ListHabits(context.Context) ([]budget.Habit, error) {
@@ -105,12 +108,22 @@ func (m *memoryBudget) HabitEvents(_ context.Context, fromDay string) ([]budget.
 func (m *memoryBudget) RecordHabitEvent(_ context.Context, event budget.HabitEvent) (budget.HabitEvent, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	received := time.Now().UTC()
+	if event.At.IsZero() {
+		event.At = received
+	}
 	for _, habit := range m.habits {
 		if habit.ID == event.HabitID {
-			if habit.ArchivedAt != nil {
+			if habit.ArchivedAt != nil && !habit.ArchivedAt.After(event.At) {
 				return budget.HabitEvent{}, fmt.Errorf("%w: archived", store.ErrInvalidHabit)
 			}
+			for _, existing := range m.events {
+				if existing.HabitID == event.HabitID && existing.Day == event.Day && existing.Action == event.Action && existing.At.Equal(event.At) {
+					return existing, nil
+				}
+			}
 			event.ID = int64(len(m.events) + 1)
+			event.ReceivedAt = received
 			m.events = append(m.events, event)
 			return event, nil
 		}
@@ -210,25 +223,68 @@ func (m *memoryBudget) SaveReasons(_ context.Context, reasons []string) ([]strin
 	return cleaned, nil
 }
 
+// BudgetDays are each day's newest revision, newest day first.
 func (m *memoryBudget) BudgetDays(context.Context, int) ([]budget.Snapshot, error) {
-	return append([]budget.Snapshot{}, m.days...), nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	newest := map[string]budget.Snapshot{}
+	for _, snapshot := range m.days {
+		if current, ok := newest[snapshot.Day]; !ok || snapshot.Revision > current.Revision {
+			newest[snapshot.Day] = snapshot
+		}
+	}
+	result := []budget.Snapshot{}
+	for _, snapshot := range newest {
+		result = append(result, snapshot)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Day > result[j].Day })
+	return result, nil
 }
 
 func (m *memoryBudget) BudgetDay(_ context.Context, day string) (*budget.Snapshot, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.newestDay(day), nil
+}
+
+func (m *memoryBudget) newestDay(day string) *budget.Snapshot {
+	var newest *budget.Snapshot
 	for _, snapshot := range m.days {
-		if snapshot.Day == day {
-			return &snapshot, nil
+		if snapshot.Day == day && (newest == nil || snapshot.Revision > newest.Revision) {
+			copied := snapshot
+			newest = &copied
 		}
 	}
-	return nil, nil
+	return newest
 }
 
 func (m *memoryBudget) SaveBudgetDay(_ context.Context, snapshot budget.Snapshot) (bool, error) {
-	if existing, _ := m.BudgetDay(context.Background(), snapshot.Day); existing != nil {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.newestDay(snapshot.Day) != nil {
 		return false, nil
 	}
+	snapshot.Revision, snapshot.Cause = 1, ""
 	m.days = append(m.days, snapshot)
 	return true, nil
+}
+
+func (m *memoryBudget) ReviseBudgetDay(_ context.Context, snapshot budget.Snapshot, cause string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	newest := m.newestDay(snapshot.Day)
+	if newest == nil || newest.SameDay(snapshot) {
+		return false, nil
+	}
+	snapshot.Revision, snapshot.Cause = newest.Revision+1, cause
+	m.days = append(m.days, snapshot)
+	return true, nil
+}
+
+func (m *memoryBudget) PhoneLastDelivered(context.Context) (*time.Time, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.phone, nil
 }
 
 // budgetRepository is the fake repository with the budget's records, and

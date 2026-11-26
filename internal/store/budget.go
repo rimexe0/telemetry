@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -39,6 +40,12 @@ type BudgetStore interface {
 	BudgetDays(ctx context.Context, limit int) ([]budget.Snapshot, error)
 	BudgetDay(ctx context.Context, day string) (*budget.Snapshot, error)
 	SaveBudgetDay(ctx context.Context, snapshot budget.Snapshot) (bool, error)
+	// ReviseBudgetDay keeps a corrected snapshot of a day that already has
+	// one, as a new revision, when it says something else than the newest.
+	ReviseBudgetDay(ctx context.Context, snapshot budget.Snapshot, cause string) (bool, error)
+	// PhoneLastDelivered is when the server last received anything from a
+	// phone, or nil when no phone ever delivered.
+	PhoneLastDelivered(ctx context.Context) (*time.Time, error)
 	// OpenSpans are the stretches openings and emergency unlocks had
 	// distractions open in [from, to), ended ones included.
 	OpenSpans(ctx context.Context, from, to time.Time) ([]budget.OpenSpan, error)
@@ -222,11 +229,11 @@ func revertHabits(ctx context.Context, tx pgx.Tx, raw json.RawMessage) (any, any
 	return restore, inverse, err
 }
 
-const habitEventColumns = `id, habit_id, to_char(day, 'YYYY-MM-DD'), action, at, source`
+const habitEventColumns = `id, habit_id, to_char(day, 'YYYY-MM-DD'), action, at, received_at, source`
 
 func scanHabitEvent(row pgx.Row) (budget.HabitEvent, error) {
 	var event budget.HabitEvent
-	err := row.Scan(&event.ID, &event.HabitID, &event.Day, &event.Action, &event.At, &event.Source)
+	err := row.Scan(&event.ID, &event.HabitID, &event.Day, &event.Action, &event.At, &event.ReceivedAt, &event.Source)
 	return event, err
 }
 
@@ -248,11 +255,17 @@ func (p *Postgres) HabitEvents(ctx context.Context, fromDay string) ([]budget.Ha
 	return events, rows.Err()
 }
 
-// RecordHabitEvent keeps one tick or untick. Callers check that the day is
-// still open; an archived habit is not ticked.
+// RecordHabitEvent keeps one tick or untick, received now. Callers check
+// that the day is open, or was when the tick was made. A habit archived
+// before the tick was made is not ticked. The same event delivered again (a
+// device retrying) is kept once.
 func (p *Postgres) RecordHabitEvent(ctx context.Context, event budget.HabitEvent) (budget.HabitEvent, error) {
 	if event.Action != budget.ActionTick && event.Action != budget.ActionUntick {
 		return budget.HabitEvent{}, fmt.Errorf("%w: action must be tick or untick", ErrInvalidHabit)
+	}
+	received := time.Now().UTC()
+	if event.At.IsZero() {
+		event.At = received
 	}
 	var archived *time.Time
 	err := p.pool.QueryRow(ctx, `SELECT archived_at FROM habits WHERE id = $1`, event.HabitID).Scan(&archived)
@@ -262,14 +275,19 @@ func (p *Postgres) RecordHabitEvent(ctx context.Context, event budget.HabitEvent
 	if err != nil {
 		return budget.HabitEvent{}, err
 	}
-	if archived != nil {
+	if archived != nil && !archived.After(event.At) {
 		return budget.HabitEvent{}, fmt.Errorf("%w: the habit is archived", ErrInvalidHabit)
 	}
-	if event.At.IsZero() {
-		event.At = time.Now().UTC()
+	existing, err := scanHabitEvent(p.pool.QueryRow(ctx, `SELECT `+habitEventColumns+` FROM habit_events
+		WHERE habit_id = $1 AND day = $2::date AND action = $3 AND at = $4 ORDER BY id LIMIT 1`, event.HabitID, event.Day, event.Action, event.At))
+	if err == nil {
+		return existing, nil
 	}
-	return scanHabitEvent(p.pool.QueryRow(ctx, `INSERT INTO habit_events (habit_id, day, action, at, source) VALUES ($1, $2::date, $3, $4, $5) RETURNING `+habitEventColumns,
-		event.HabitID, event.Day, event.Action, event.At, event.Source))
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return budget.HabitEvent{}, err
+	}
+	return scanHabitEvent(p.pool.QueryRow(ctx, `INSERT INTO habit_events (habit_id, day, action, at, received_at, source) VALUES ($1, $2::date, $3, $4, $5, $6) RETURNING `+habitEventColumns,
+		event.HabitID, event.Day, event.Action, event.At, received, event.Source))
 }
 
 const doorColumns = `id, requested_at, opens_at, window_end, in_distraction_time, borrowing, use_minutes, grace_minutes, cancelled_at, source`
@@ -457,13 +475,13 @@ func (p *Postgres) SaveReasons(ctx context.Context, reasons []string) ([]string,
 	return reasons, err
 }
 
-const budgetDayColumns = `to_char(day, 'YYYY-MM-DD'), budget, spent, earned, penalty, debt, debt_passed, use_minutes, habits_done, habits_missed, settings, closed_at`
+const budgetDayColumns = `to_char(day, 'YYYY-MM-DD'), budget, spent, earned, penalty, debt, debt_passed, use_minutes, habits_done, habits_missed, settings, closed_at, revision, cause`
 
 func scanBudgetDay(row pgx.Row) (budget.Snapshot, error) {
 	var snapshot budget.Snapshot
 	var settings []byte
 	err := row.Scan(&snapshot.Day, &snapshot.Budget, &snapshot.Spent, &snapshot.Earned, &snapshot.Penalty, &snapshot.Debt, &snapshot.DebtPassed, &snapshot.UseMinutes,
-		&snapshot.HabitsDone, &snapshot.HabitsMissed, &settings, &snapshot.ClosedAt)
+		&snapshot.HabitsDone, &snapshot.HabitsMissed, &settings, &snapshot.ClosedAt, &snapshot.Revision, &snapshot.Cause)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return snapshot, ErrNotFound
 	}
@@ -473,12 +491,13 @@ func scanBudgetDay(row pgx.Row) (budget.Snapshot, error) {
 	return snapshot, json.Unmarshal(settings, &snapshot.Settings)
 }
 
-// BudgetDays are the newest day snapshots, newest first.
+// BudgetDays are the newest day snapshots, newest first, each day at its
+// newest revision.
 func (p *Postgres) BudgetDays(ctx context.Context, limit int) ([]budget.Snapshot, error) {
 	if limit < 1 || limit > 400 {
 		limit = 30
 	}
-	rows, err := p.pool.Query(ctx, `SELECT `+budgetDayColumns+` FROM budget_days ORDER BY day DESC LIMIT $1`, limit)
+	rows, err := p.pool.Query(ctx, `SELECT DISTINCT ON (day) `+budgetDayColumns+` FROM budget_days ORDER BY day DESC, revision DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -494,9 +513,10 @@ func (p *Postgres) BudgetDays(ctx context.Context, limit int) ([]budget.Snapshot
 	return days, rows.Err()
 }
 
-// BudgetDay is one day's snapshot, or nil before it closed.
+// BudgetDay is one day's snapshot at its newest revision, or nil before it
+// was settled.
 func (p *Postgres) BudgetDay(ctx context.Context, day string) (*budget.Snapshot, error) {
-	snapshot, err := scanBudgetDay(p.pool.QueryRow(ctx, `SELECT `+budgetDayColumns+` FROM budget_days WHERE day = $1::date`, day))
+	snapshot, err := scanBudgetDay(p.pool.QueryRow(ctx, `SELECT `+budgetDayColumns+` FROM budget_days WHERE day = $1::date ORDER BY revision DESC LIMIT 1`, day))
 	if errors.Is(err, ErrNotFound) {
 		return nil, nil
 	}
@@ -506,19 +526,70 @@ func (p *Postgres) BudgetDay(ctx context.Context, day string) (*budget.Snapshot,
 	return &snapshot, nil
 }
 
-// SaveBudgetDay writes a day's snapshot once; a day already written keeps
-// its first snapshot.
+// SaveBudgetDay writes a day's first snapshot once; a day already written
+// keeps it, and is corrected only by ReviseBudgetDay.
 func (p *Postgres) SaveBudgetDay(ctx context.Context, snapshot budget.Snapshot) (bool, error) {
 	settings, err := json.Marshal(snapshot.Settings)
 	if err != nil {
 		return false, err
 	}
 	done, missed := append([]int64{}, snapshot.HabitsDone...), append([]int64{}, snapshot.HabitsMissed...)
-	tag, err := p.pool.Exec(ctx, `INSERT INTO budget_days (day, budget, spent, earned, penalty, debt, debt_passed, use_minutes, habits_done, habits_missed, settings, closed_at)
-		VALUES ($1::date, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12) ON CONFLICT (day) DO NOTHING`,
+	tag, err := p.pool.Exec(ctx, `INSERT INTO budget_days (day, budget, spent, earned, penalty, debt, debt_passed, use_minutes, habits_done, habits_missed, settings, closed_at, revision)
+		VALUES ($1::date, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, 1) ON CONFLICT (day, revision) DO NOTHING`,
 		snapshot.Day, snapshot.Budget, snapshot.Spent, snapshot.Earned, snapshot.Penalty, snapshot.Debt, snapshot.DebtPassed, snapshot.UseMinutes,
 		done, missed, string(settings), snapshot.ClosedAt)
 	return err == nil && tag.RowsAffected() == 1, err
+}
+
+// ReviseBudgetDay adds a corrected snapshot of a day as its next revision,
+// keeping the earlier ones. A day without a snapshot is left to the day
+// close, and a correction that says what the newest revision says is not
+// kept.
+func (p *Postgres) ReviseBudgetDay(ctx context.Context, snapshot budget.Snapshot, cause string) (bool, error) {
+	settings, err := json.Marshal(snapshot.Settings)
+	if err != nil {
+		return false, err
+	}
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	// One correction of a day at a time, so two never take one revision.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('budget_days'), hashtext($1))`, snapshot.Day); err != nil {
+		return false, err
+	}
+	newest, err := scanBudgetDay(tx.QueryRow(ctx, `SELECT `+budgetDayColumns+` FROM budget_days WHERE day = $1::date ORDER BY revision DESC LIMIT 1`, snapshot.Day))
+	if errors.Is(err, ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if newest.SameDay(snapshot) {
+		return false, nil
+	}
+	done, missed := append([]int64{}, snapshot.HabitsDone...), append([]int64{}, snapshot.HabitsMissed...)
+	if _, err := tx.Exec(ctx, `INSERT INTO budget_days (day, budget, spent, earned, penalty, debt, debt_passed, use_minutes, habits_done, habits_missed, settings, closed_at, revision, cause)
+		VALUES ($1::date, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14)`,
+		snapshot.Day, snapshot.Budget, snapshot.Spent, snapshot.Earned, snapshot.Penalty, snapshot.Debt, snapshot.DebtPassed, snapshot.UseMinutes,
+		done, missed, string(settings), snapshot.ClosedAt, newest.Revision+1, cause); err != nil {
+		return false, err
+	}
+	return true, tx.Commit(ctx)
+}
+
+// PhoneLastDelivered is when a batch last arrived from a device that has an
+// android: source, or nil when none ever did.
+func (p *Postgres) PhoneLastDelivered(ctx context.Context) (*time.Time, error) {
+	var last *time.Time
+	err := p.pool.QueryRow(ctx, `SELECT MAX(b.received_at) FROM ingestion_batches b
+		WHERE b.device_id IN (SELECT device_id FROM source_instances WHERE source_instance_key LIKE 'android:%')`).Scan(&last)
+	if last != nil {
+		utc := last.UTC()
+		last = &utc
+	}
+	return last, err
 }
 
 // Refused ticks; each message is said to the owner as it is.
@@ -526,6 +597,24 @@ var (
 	ErrHabitDayClosed = errors.New("Bedtime has started, so today's habits are settled.")
 	ErrHabitNotToday  = errors.New("This habit is not on today.")
 	ErrHabitWrongDay  = errors.New("only today's budget day can be ticked")
+
+	// A tick made earlier, on a device that could not reach the server.
+	ErrHabitLateClosed   = errors.New("Bedtime had already started then, so that day's habits were settled.")
+	ErrHabitTooOld       = errors.New("That day is more than a week back, so its habits are settled.")
+	ErrHabitLateWrongDay = errors.New("day is not the budget day that at falls in")
+	ErrHabitLateFuture   = errors.New("at is in the future")
+	ErrHabitNotThen      = errors.New("This habit was not on that day.")
+)
+
+const (
+	// lateTickDays is how far back a tick made on a device while the
+	// server could not be reached is still taken.
+	lateTickDays = 7
+	// lateTickAhead is how far a device's clock may run ahead.
+	lateTickAhead = 2 * time.Minute
+	// settleWait is the longest a closed day waits for a silent phone
+	// before it is settled.
+	settleWait = 48 * time.Hour
 )
 
 // TickHabit keeps a tick or untick for today's budget day: only before
@@ -568,6 +657,110 @@ func TickHabit(ctx context.Context, repository Repository, budgets BudgetStore, 
 	return err
 }
 
+// LateTick keeps a tick or untick made at at, which may have been on a
+// device that could not reach the server then. It counts for the day it was
+// made in, when that day's habits were still open then: from the day's
+// start until bedtime started (or the day ended, with bedtime off), at most
+// a week back. day, when given, must be the budget day at falls in. An
+// untick undoes only ticks of its own day made before it. A day that had
+// already closed gets a corrected snapshot, and so does every later day the
+// correction reaches.
+func LateTick(ctx context.Context, repository Repository, budgets BudgetStore, id int64, action, day string, at time.Time, source string, now time.Time) error {
+	config, _, err := PolicyInForce(ctx, repository)
+	if err != nil {
+		return err
+	}
+	at = at.UTC().Truncate(time.Microsecond)
+	madeFor, open := budget.TickDay(config, at)
+	switch {
+	case day != "" && day != madeFor:
+		return fmt.Errorf("%w (%s)", ErrHabitLateWrongDay, madeFor)
+	case at.After(now.Add(lateTickAhead)):
+		return ErrHabitLateFuture
+	case madeFor < budget.AddDays(budget.DayOf(config, now), -lateTickDays):
+		return ErrHabitTooOld
+	case !open:
+		return ErrHabitLateClosed
+	}
+	habits, err := budgets.ListHabits(ctx)
+	if err != nil {
+		return err
+	}
+	var habit *budget.Habit
+	for i := range habits {
+		if habits[i].ID == id {
+			habit = &habits[i]
+		}
+	}
+	if habit == nil {
+		return ErrNotFound
+	}
+	if !habit.AppliesAt(madeFor, at) {
+		return ErrHabitNotThen
+	}
+	event, err := budgets.RecordHabitEvent(ctx, budget.HabitEvent{HabitID: id, Day: madeFor, Action: action, At: at, Source: source})
+	if err != nil {
+		return err
+	}
+	// A delivery again after a failed correction corrects again.
+	cause := fmt.Sprintf("late %s of habit %d made at %s (event %d)", action, id, at.Format(time.RFC3339), event.ID)
+	_, err = ReviseBudgetDays(ctx, repository, budgets, madeFor, cause, now)
+	return err
+}
+
+// budgetDaysMu keeps the day close and the corrections of closed days from
+// working out the same days at once.
+var budgetDaysMu sync.Mutex
+
+// ReviseBudgetDays works out again each closed day from first on that has a
+// snapshot, oldest first, and keeps a new revision of each that came out
+// differently. Each starts from the newest revision of the day before, so
+// penalties and debt flow forward. It stops at the first day after first
+// that comes out the same, since nothing changed reaches the days after it.
+func ReviseBudgetDays(ctx context.Context, repository Repository, budgets BudgetStore, first, cause string, now time.Time) (int, error) {
+	budgetDaysMu.Lock()
+	defer budgetDaysMu.Unlock()
+	config, _, err := PolicyInForce(ctx, repository)
+	if err != nil {
+		return 0, err
+	}
+	today := budget.DayOf(config, now)
+	revised := 0
+	for day := first; day < today; day = budget.AddDays(day, 1) {
+		end := budget.DayEnd(config, day)
+		if end.After(now) {
+			break
+		}
+		existing, err := budgets.BudgetDay(ctx, day)
+		if err != nil {
+			return revised, err
+		}
+		if existing == nil {
+			// Not settled yet, or the budget was off: the day close
+			// works it out with what is there by then.
+			continue
+		}
+		result, err := LoadBudgetDays(ctx, repository, budgets, config, day, end)
+		if err != nil {
+			return revised, err
+		}
+		ledger := result.Days[0]
+		if !ledger.Enabled {
+			continue
+		}
+		saved, err := budgets.ReviseBudgetDay(ctx, budget.SnapshotOf(ledger), cause)
+		if err != nil {
+			return revised, err
+		}
+		if saved {
+			revised++
+		} else if day != first {
+			break
+		}
+	}
+	return revised, nil
+}
+
 // PolicyInForce is the owner's policy with their labels merged in, as every
 // device enforces it.
 func PolicyInForce(ctx context.Context, repository Repository) (policy.Config, int64, error) {
@@ -605,6 +798,15 @@ func LoadBudgetDays(ctx context.Context, repository Repository, budgets BudgetSt
 // LoadBudgetInputs reads the records the budget days from first through
 // the day of at are worked out from.
 func LoadBudgetInputs(ctx context.Context, repository Repository, budgets BudgetStore, config policy.Config, first string, at time.Time) (budget.Inputs, error) {
+	return loadBudgetInputs(ctx, repository, budgets, config, first, at, unsettledDays)
+}
+
+// unsettledDays is how many days without a snapshot before first are worked
+// out from the records for the debt they pass on. A day waits at most
+// settleWait to be settled, so no more are ever missing.
+const unsettledDays = 3
+
+func loadBudgetInputs(ctx context.Context, repository Repository, budgets BudgetStore, config policy.Config, first string, at time.Time, unsettled int) (budget.Inputs, error) {
 	in := budget.Inputs{Config: config}
 	var err error
 	if in.Habits, err = budgets.ListHabits(ctx); err != nil {
@@ -621,12 +823,22 @@ func LoadBudgetInputs(ctx context.Context, repository Repository, budgets Budget
 	if !config.BudgetAt(at).Enabled && !config.BudgetAt(at.Add(-time.Second)).Enabled && !config.BudgetAt(start).Enabled {
 		return in, nil
 	}
-	before, err := budgets.BudgetDay(ctx, budget.AddDays(first, -1))
+	previous := budget.AddDays(first, -1)
+	before, err := budgets.BudgetDay(ctx, previous)
 	if err != nil {
 		return in, err
 	}
 	if before != nil {
 		in.DebtIn = before.DebtPassed
+	} else if end := budget.DayEnd(config, previous); unsettled > 0 && !end.After(at) && config.BudgetAt(end.Add(-time.Second)).Enabled &&
+		config.BudgetSince != nil && end.After(*config.BudgetSince) {
+		// The day before is over but waits to be settled: what it passes on
+		// is worked out from the records until its snapshot is written.
+		earlier, err := loadBudgetInputs(ctx, repository, budgets, config, previous, end, unsettled-1)
+		if err != nil {
+			return in, err
+		}
+		in.DebtIn = budget.SnapshotOf(budget.Compute(earlier, previous, end).Days[0]).DebtPassed
 	}
 	if in.Doors, err = budgets.BudgetDoors(ctx, start.Add(-2*time.Hour)); err != nil {
 		return in, err
@@ -650,7 +862,16 @@ func LoadBudgetInputs(ctx context.Context, repository Repository, budgets Budget
 
 // CloseBudgetDays writes the snapshot of each ended budget day of the last
 // week that has none, oldest first, so each starts from the one before.
+//
+// A day waits to be settled while the phone has delivered nothing since the
+// day ended, for at most settleWait: ticks made on the phone while it could
+// not reach the server arrive with its next delivery, and a silent phone is
+// missing data, not a day without habits. A tick that arrives after the day
+// was settled still corrects it with a new revision (LateTick). Without any
+// phone, a day is settled when it ends.
 func CloseBudgetDays(ctx context.Context, repository Repository, budgets BudgetStore, now time.Time) (int, error) {
+	budgetDaysMu.Lock()
+	defer budgetDaysMu.Unlock()
 	config, _, err := PolicyInForce(ctx, repository)
 	if err != nil || config.BudgetSince == nil {
 		return 0, err
@@ -661,6 +882,8 @@ func CloseBudgetDays(ctx context.Context, repository Repository, budgets BudgetS
 		first = since
 	}
 	written := 0
+	var phone *time.Time
+	phoneRead := false
 	for day := first; day < today; day = budget.AddDays(day, 1) {
 		end := budget.DayEnd(config, day)
 		if end.After(now) {
@@ -672,6 +895,16 @@ func CloseBudgetDays(ctx context.Context, repository Repository, budgets BudgetS
 		}
 		if existing != nil {
 			continue
+		}
+		if !phoneRead {
+			if phone, err = budgets.PhoneLastDelivered(ctx); err != nil {
+				return written, err
+			}
+			phoneRead = true
+		}
+		if phone != nil && phone.Before(end) && now.Before(end.Add(settleWait)) {
+			// The days after start from this one, so they wait too.
+			break
 		}
 		result, err := LoadBudgetDays(ctx, repository, budgets, config, day, end)
 		if err != nil {

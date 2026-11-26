@@ -90,6 +90,12 @@ func (r *budgetRepository) BudgetDay(context.Context, string) (*budget.Snapshot,
 func (r *budgetRepository) SaveBudgetDay(context.Context, budget.Snapshot) (bool, error) {
 	return true, nil
 }
+func (r *budgetRepository) ReviseBudgetDay(context.Context, budget.Snapshot, string) (bool, error) {
+	return false, nil
+}
+func (r *budgetRepository) PhoneLastDelivered(context.Context) (*time.Time, error) {
+	return nil, nil
+}
 
 func mcpBudgetConfig() *policy.Config {
 	since := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)

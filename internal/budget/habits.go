@@ -118,11 +118,15 @@ func ValidateName(name string) (string, error) {
 
 // HabitEvent is one tick or untick, kept for good.
 type HabitEvent struct {
-	ID      int64     `json:"id"`
-	HabitID int64     `json:"habit_id"`
-	Day     string    `json:"day"`
-	Action  string    `json:"action"`
-	At      time.Time `json:"at"`
+	ID      int64  `json:"id"`
+	HabitID int64  `json:"habit_id"`
+	Day     string `json:"day"`
+	Action  string `json:"action"`
+	// At is when the tick was made; ReceivedAt when the server got it. A
+	// tick made on a device while the server could not be reached arrives
+	// later and still counts for its own day.
+	At         time.Time `json:"at"`
+	ReceivedAt time.Time `json:"received_at"`
 	// Source is "owner" (the panel or the assistant) or "device:<id>".
 	Source string `json:"source,omitempty"`
 }
@@ -198,4 +202,11 @@ type Heatmap struct {
 	Habits []HabitHeatmap `json:"habits"`
 	// Combined is the share of the day's habits done, 0 to 1.
 	Combined map[string]float64 `json:"combined"`
+}
+
+// AppliesAt reports whether a habit applied on a budget day and existed at
+// at, a moment in that day: made by then, not archived by then, and on the
+// day's weekday. A tick that reaches the server late is checked with it.
+func (h Habit) AppliesAt(day string, at time.Time) bool {
+	return !h.CreatedAt.After(at) && (h.ArchivedAt == nil || h.ArchivedAt.After(at)) && h.Weekdays.Has(dayDate(day).Weekday())
 }
