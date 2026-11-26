@@ -1,6 +1,7 @@
 package cyou.rime.telemetry.collector
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color as AndroidColor
@@ -41,12 +42,15 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -73,10 +77,16 @@ import kotlinx.coroutines.withContext
  * provisioned the device.
  */
 class SettingsActivity : ComponentActivity() {
-    private companion object {
-        const val HEALTH_CONNECT_PACKAGE = "com.google.android.apps.healthdata"
-        const val SAMSUNG_HEALTH_PACKAGE = "com.sec.android.app.shealth"
-        const val LOCATION_STOP_ACTION = "cyou.rime.telemetry.collector.STOP_LOCATION"
+    companion object {
+        private const val HEALTH_CONNECT_PACKAGE = "com.google.android.apps.healthdata"
+        private const val SAMSUNG_HEALTH_PACKAGE = "com.sec.android.app.shealth"
+        private const val LOCATION_STOP_ACTION = "cyou.rime.telemetry.collector.STOP_LOCATION"
+        /** Opens Settings scrolled to this part (a [SettingsSection] key). */
+        private const val EXTRA_SECTION = "section"
+
+        fun intent(context: Context, section: SettingsSection?) = Intent(context, SettingsActivity::class.java).apply {
+            section?.let { putExtra(EXTRA_SECTION, it.key) }
+        }
     }
 
     private val requestedPermissions = setOf(
@@ -121,6 +131,9 @@ class SettingsActivity : ComponentActivity() {
     private var limits by mutableStateOf(listOf<String>())
     private var advancedOpen by mutableStateOf(false)
     private var statusOpen by mutableStateOf(false)
+    /** Where each section starts, so a link from the panel can open at one. */
+    private val sectionTops = mutableStateMapOf<SettingsSection, Int>()
+    private var openAt: SettingsSection? = null
 
     private fun notice(text: String) {
         lifecycleScope.launch {
@@ -130,8 +143,9 @@ class SettingsActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        enableEdgeToEdge(SystemBarStyle.dark(AndroidColor.TRANSPARENT), SystemBarStyle.dark(AndroidColor.TRANSPARENT))
+        enableEdgeToEdge(SystemBarStyle.auto(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT), SystemBarStyle.auto(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT))
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) openAt = SettingsSection.of(intent.getStringExtra(EXTRA_SECTION))
         permissionLauncher = registerForActivityResult(
             PermissionController.createRequestPermissionResultContract(),
         ) { refreshPermissionStatus() }
@@ -201,15 +215,23 @@ class SettingsActivity : ComponentActivity() {
             },
             snackbarHost = { SnackbarHost(notices) },
         ) { padding ->
+            val scroll = rememberScrollState()
+            val target = openAt?.let { sectionTops[it] }
+            LaunchedEffect(target) {
+                if (target != null) {
+                    scroll.scrollTo(target)
+                    openAt = null
+                }
+            }
             Column(
-                modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 24.dp),
+                modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(scroll).padding(horizontal = 16.dp).padding(bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Section("Connection") {
                     Item(if (paired) "This phone is paired" else "This phone is not paired", "Device ID: ${DeviceIdentity.get(this@SettingsActivity)}")
                     Item("Pair this device", pairingStatus.ifBlank { "Sign in once in the Telemetry panel. Tailscale keeps the server private." }, onClick = ::beginPairing)
                 }
-                Section("Blocking") {
+                Section("Blocking", SettingsSection.PERMISSIONS) {
                     Item("Blocking service", if (blockingOn) "On. Blocked apps are closed during blocks." else "Off. Tap to switch on Telemetry blocking in Accessibility.",
                         onClick = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) })
                     Item(if (blockingEnforced) "Blocking is enforced" else "Set up blocking",
@@ -233,7 +255,7 @@ class SettingsActivity : ComponentActivity() {
                 }
                 // Which notifications Telemetry sends. Nothing here is switched
                 // back on or asked for unless the owner taps it.
-                Section("Notifications Telemetry sends") {
+                Section("Notifications Telemetry sends", SettingsSection.NOTIFICATIONS) {
                     if (!notificationsAllowed) {
                         Item("Off for Telemetry in Android", "None of these are sent. Tap to allow them.",
                             onClick = { notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) })
@@ -304,9 +326,9 @@ class SettingsActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) {
+    private fun Section(title: String, key: SettingsSection? = null, content: @Composable ColumnScope.() -> Unit) {
         Text(title.uppercase(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 4.dp, top = 12.dp))
+            modifier = Modifier.onGloballyPositioned { if (key != null) sectionTops[key] = it.positionInParent().y.toInt() }.padding(start = 4.dp, top = 12.dp))
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer), modifier = Modifier.fillMaxWidth(), content = content)
     }
 

@@ -3,7 +3,7 @@ package cyou.rime.telemetry.collector
 import android.content.Context
 import java.time.Instant
 
-/** The last /v1/device/now response, shared by the Now screen, blocking and the watcher. */
+/** The last /v1/device/now response, shared by blocking, the watcher and the app while it is open. */
 object NowCache {
     private const val PREFS = "telemetry-now"
     private const val KEY_JSON = "json"
@@ -35,7 +35,7 @@ object NowCache {
     }
 
     /**
-     * Puts a new `budget` (the answer to a habit tick, say) into the cached
+     * Puts a new `budget` (an offline door answer, say) into the cached
      * answer, leaving its timeline and when it was fetched as they were.
      */
     fun patchBudget(context: Context, budget: org.json.JSONObject) {

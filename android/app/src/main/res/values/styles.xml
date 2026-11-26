@@ -1,8 +1,10 @@
 <resources>
     <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar" />
 
-    <!-- Compose screens: dark from the first frame. -->
-    <style name="AppTheme.Dark" parent="android:style/Theme.Material.NoActionBar">
+    <!-- The panel and Settings follow the phone's light or dark setting
+         (values-night has the dark one); the web view's prefers-color-scheme
+         follows this theme. -->
+    <style name="AppTheme.Main" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/background</item>
     </style>
 </resources>

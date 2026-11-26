@@ -9,7 +9,7 @@ enum class SetupStep(
     val title: String,
     val why: String,
     val action: String,
-    /** Said on the Now screen while missing, even when skipped in setup; null for extras. */
+    /** Named while missing, even when skipped in setup (the app shows "Setup needs attention"); null for extras. */
     val missing: String? = null,
 ) {
     PAIR(true, "Connect this phone",
@@ -63,7 +63,7 @@ enum class SetupStep(
 
         fun remainingRequired(done: Set<SetupStep>): Int = entries.count { it.required && it !in done }
 
-        /** What the Now screen names as missing, in setup order. */
+        /** What the app counts as missing, in setup order; its strip opens the first. */
         fun missing(done: Set<SetupStep>): List<SetupStep> = entries.filter { it.missing != null && it !in done }
     }
 }
