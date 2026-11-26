@@ -95,7 +95,8 @@ class HabitWidget : GlanceAppWidget() {
                 state.empty?.let { Text(it, GlanceModifier.fillMaxWidth().clickable(openToday).padding(vertical = 4.dp), style = text(Colors.muted, 12)) }
                 val rows = state.rows.orEmpty()
                 if (rows.isNotEmpty()) {
-                    LazyColumn(GlanceModifier.fillMaxWidth()) {
+                    // Takes the height left, so many habits scroll.
+                    LazyColumn(GlanceModifier.fillMaxWidth().defaultWeight()) {
                         items(rows, itemId = { it.id }) { row ->
                             HabitRow(row, state.ticksOpen, wide, if (state.ticksOpen) tick(row.id) else openToday)
                         }
