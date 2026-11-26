@@ -267,7 +267,7 @@ func explain(err error) error {
 	}
 	switch h.Status {
 	case 403:
-		return errors.New("the server refused this: the setup code is wrong, already used or expired; make a new one in the panel (Devices → Add a device)")
+		return errors.New("the server refused this: the setup code is wrong, already used or expired; make a new one in the panel (Settings → Devices → Add a device)")
 	case 404:
 		return errors.New("this server does not accept new devices yet: set TELEMETRY_PUBLIC_URL (install-server.sh does) and restart it")
 	case 409:

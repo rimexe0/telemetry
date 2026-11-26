@@ -133,7 +133,7 @@ class PairingFlow(
                         }
                         PairingStatus.State.EXPIRED -> {
                             config.clearPairing()
-                            onStatus(if (resumed) "" else "Nobody clicked Connect in time, so the request expired. Tap Connect to ask again, or use a setup code from the panel (Devices → Add a device).")
+                            onStatus(if (resumed) "" else "Nobody clicked Connect in time, so the request expired. Tap Connect to ask again, or use a setup code from the panel (Settings → Devices → Add a device).")
                             return@launch
                         }
                     }
@@ -160,7 +160,7 @@ class PairingFlow(
     /** What went wrong, in words that say what to do about it. */
     private fun explain(error: Throwable, serverUrl: String): String {
         if (error is PairingException) return when {
-            error.code == "invalid_code" -> "That setup code is wrong, already used or expired. Make a new one in the panel: Devices → Add a device."
+            error.code == "invalid_code" -> "That setup code is wrong, already used or expired. Make a new one in the panel: Settings → Devices → Add a device."
             error.status == 404 -> "$serverUrl answered, but it does not accept new devices yet: its TELEMETRY_PUBLIC_URL is not set. Running install-server.sh again sets it."
             error.status == 429 -> "Too many tries. Wait ten minutes, then try again."
             error.code == "device_already_registered" -> "The server refused this phone's ID. Remove the old phone in the panel under Devices, then try again."

@@ -8,7 +8,7 @@
 #   curl -fsSL .../install.sh | TELEMETRY_SERVER=https://server.example.ts.net:8443 bash
 #   curl -fsSL .../install.sh | bash -s -- 'https://te.rime.cyou/join#c=…&s=…'
 #
-# The last form is what the panel shows under Devices → Add a device: it
+# The last form is what the panel shows under Settings → Devices → Add a device: it
 # carries the server's address and a one-time setup code, so this computer is
 # connected without approving it again.
 set -euo pipefail
@@ -50,7 +50,7 @@ fi
 
 # The server's address, unless this computer is already connected.
 if [[ -z "$server" ]] && ! connected; then
-  echo "Tip: in the panel, Devices → Add a device shows one command that does all of this."
+  echo "Tip: in the panel, Settings → Devices → Add a device shows one command that does all of this."
   echo "The address of your Telemetry server is printed at the end of install-server.sh"
   echo "(and kept in ~/telemetry/setup.txt on the server), such as https://server.your-tailnet.ts.net:8443"
   read -r -p "Telemetry server address: " server </dev/tty

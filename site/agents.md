@@ -75,7 +75,7 @@ curl -fsSL https://te.rime.cyou/i/server | bash
 
 ### 5b. Each Mac or Linux computer
 
-The easy way: the **person** opens the panel, goes to **Devices → Add a device**, and gives you the command it shows for this computer. It looks like this and carries a one-time setup code, so the computer connects without anyone approving it afterwards:
+The easy way: the **person** opens the panel, goes to **Settings → Devices → Add a device**, and gives you the command it shows for this computer. It looks like this and carries a one-time setup code, so the computer connects without anyone approving it afterwards:
 
 ```sh
 curl -fsSL https://te.rime.cyou/i/mac | bash -s -- 'https://te.rime.cyou/join#c=XXXX-XXXX&s=https%3A%2F%2F…'
@@ -97,7 +97,7 @@ The script asks for the server address. Then:
 
 ### 5c. The phone (the person does this)
 
-They install Tailscale from the Play Store and sign in. Then, in the panel on a computer, they open **Devices → Add a device** and scan the QR with the phone's camera. The page it opens offers the app (Obtainium, which keeps it updated, or the APK) and then opens it with the code, so it connects at once. They grant the permissions it asks for. Without the QR, they type the server address and the setup code into the app. You can't do this part for them unless the phone is connected to a Mac with USB debugging on, in which case `install-phone.sh` from the release can grant permissions over adb.
+They install Tailscale from the Play Store and sign in. Then, in the panel on a computer, they open **Settings → Devices → Add a device** and scan the QR with the phone's camera. The page it opens offers the app (Obtainium, which keeps it updated, or the APK) and then opens it with the code, so it connects at once. They grant the permissions it asks for. Without the QR, they type the server address and the setup code into the app. You can't do this part for them unless the phone is connected to a Mac with USB debugging on, in which case `install-phone.sh` from the release can grant permissions over adb.
 
 ### 6. Connecting an assistant (optional, recommended)
 

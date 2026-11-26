@@ -80,7 +80,7 @@
 <li>Running it again is safe: data and secrets stay.</li>
 </ul>
 <h3>5b. Each Mac or Linux computer</h3>
-<p>The easy way: the <b>person</b> opens the panel, goes to <b>Devices → Add a device</b>, and gives you the command it shows for this computer. It looks like this and carries a one-time setup code, so the computer connects without anyone approving it afterwards:</p>
+<p>The easy way: the <b>person</b> opens the panel, goes to <b>Settings → Devices → Add a device</b>, and gives you the command it shows for this computer. It looks like this and carries a one-time setup code, so the computer connects without anyone approving it afterwards:</p>
 <div class="code"><pre>curl -fsSL https://te.rime.cyou/i/mac | bash -s -- &#x27;https://te.rime.cyou/join#c=XXXX-XXXX&amp;s=https%3A%2F%2F…&#x27;</pre></div>
 <p>Run it as given. The code works once and expires after an hour; for another computer, ask for another code. Treat it like a password: don't save it anywhere.</p>
 <p>Without a code:</p>
@@ -93,7 +93,7 @@ curl -fsSL https://te.rime.cyou/i/linux | bash    # Linux (window tracking needs
 <li>The browser extension installs by policy for Chromium browsers. Chrome on an unmanaged Mac may refuse it, and the installer explains how to load it instead.</li>
 </ul>
 <h3>5c. The phone (the person does this)</h3>
-<p>They install Tailscale from the Play Store and sign in. Then, in the panel on a computer, they open <b>Devices → Add a device</b> and scan the QR with the phone's camera. The page it opens offers the app (Obtainium, which keeps it updated, or the APK) and then opens it with the code, so it connects at once. They grant the permissions it asks for. Without the QR, they type the server address and the setup code into the app. You can't do this part for them unless the phone is connected to a Mac with USB debugging on, in which case <code>install-phone.sh</code> from the release can grant permissions over adb.</p>
+<p>They install Tailscale from the Play Store and sign in. Then, in the panel on a computer, they open <b>Settings → Devices → Add a device</b> and scan the QR with the phone's camera. The page it opens offers the app (Obtainium, which keeps it updated, or the APK) and then opens it with the code, so it connects at once. They grant the permissions it asks for. Without the QR, they type the server address and the setup code into the app. You can't do this part for them unless the phone is connected to a Mac with USB debugging on, in which case <code>install-phone.sh</code> from the release can grant permissions over adb.</p>
 <h3>6. Connecting an assistant (optional, recommended)</h3>
 <p>Ask first: this gives the assistant, and its provider, read access to everything in step 1. With a yes, for Claude Code:</p>
 <div class="code"><pre>claude mcp add --scope user --transport http telemetry https://SERVER/mcp --header &quot;Authorization: Bearer READ_TOKEN&quot;</pre></div>

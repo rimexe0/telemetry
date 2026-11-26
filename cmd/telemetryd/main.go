@@ -263,6 +263,8 @@ func main() {
 			log.Fatalf("load panel: %v", err)
 		}
 		router.Handle("GET /panel", http.RedirectHandler("/panel/", http.StatusTemporaryRedirect))
+		// The bare address opens the panel instead of a 404 (owner 2026-11-26).
+		router.Handle("GET /{$}", http.RedirectHandler("/panel/", http.StatusTemporaryRedirect))
 		router.Handle("GET /panel/", http.StripPrefix("/panel/", panel))
 	}
 	router.Handle("/", server)

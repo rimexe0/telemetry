@@ -149,7 +149,7 @@ class SetupActivity : ComponentActivity() {
             setHintTextColor(MUTED)
             visibility = View.GONE
         }
-        // The one-time code from the panel's Devices → Add a device.
+        // The one-time code from the panel's Settings → Devices → Add a device.
         code = EditText(this).apply {
             hint = "Setup code, like K7QM-3XPD (optional)"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
@@ -286,7 +286,7 @@ class SetupActivity : ComponentActivity() {
                 }
                 val address = server.text.toString().trim().trimEnd('/')
                 if (!address.startsWith("https://")) {
-                    status.text = "Enter your Telemetry server's address, starting with https://. The panel shows it under Devices → Add a device."
+                    status.text = "Enter your Telemetry server's address, starting with https://. The panel shows it under Settings → Devices → Add a device."
                     return
                 }
                 DeliveryConfig(this).serverUrl = address
@@ -332,7 +332,7 @@ class SetupActivity : ComponentActivity() {
                 val text = barcode.rawValue
                 val link = SetupLink.parse(text)
                 if (link == null) {
-                    status.text = "That QR isn't a Telemetry setup code. In the panel, open Devices → Add a device and scan the QR it shows."
+                    status.text = "That QR isn't a Telemetry setup code. In the panel, open Settings → Devices → Add a device and scan the QR it shows."
                     return@addOnSuccessListener
                 }
                 SetupLink.applyLink(this, text)

@@ -13,7 +13,7 @@ enum class SetupStep(
     val missing: String? = null,
 ) {
     PAIR(true, "Connect this phone",
-        "Links the phone to your Telemetry server. In the panel on your computer, open Devices → Add a device, then tap Scan the QR here and point the phone at it. Or type the server's address and the setup code below.",
+        "Links the phone to your Telemetry server. Open the panel on your computer, at your server's address followed by /panel/ (like https://server.your-tailnet.ts.net:8443/panel/), and go to Settings → Devices → Add a device, then tap Scan the QR here and point the phone at it. Or type the server's address and the setup code below.",
         "Connect", "Not connected to the server"),
     // Optional, and never named as missing: the owner may keep them off
     // (2026-11-22). Settings → Notifications picks which kinds are sent.
