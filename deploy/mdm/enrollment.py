@@ -85,8 +85,9 @@ for browser in ["net.imput.helium", "com.google.Chrome", "org.chromium.Chromium"
 # their own bundle ID (/Library/Managed Preferences/<bundle ID>.plist, which
 # macOS writes from this profile), once EnterprisePoliciesEnabled is set. The
 # same policy as Policies in internal/xpi: Telemetry force-installed from the
-# collector, in private windows too, updating from there; the ActivityWatch
-# web watcher installed, which splits browser time by site.
+# collector, in private windows too, updating from there. The extension
+# records the tab in front itself, so no ActivityWatch add-on is installed
+# (owner 2026-11-26).
 firefox_policy = {
     "EnterprisePoliciesEnabled": True,
     "ExtensionSettings": {
@@ -94,11 +95,6 @@ firefox_policy = {
             "installation_mode": "force_installed",
             "install_url": "http://127.0.0.1:5600/api/telemetry/extension.xpi",
             "update_url": "http://127.0.0.1:5600/api/telemetry/updates.json",
-            "private_browsing": True,
-        },
-        "{ef87d84c-2127-493f-b952-5b4e744245bc}": {
-            "installation_mode": "normal_installed",
-            "install_url": "https://addons.mozilla.org/firefox/downloads/latest/aw-watcher-web/latest.xpi",
             "private_browsing": True,
         },
     },

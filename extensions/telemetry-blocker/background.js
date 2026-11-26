@@ -220,6 +220,53 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   }
 });
 
+// In LibreWolf and Firefox this extension also records which tab is in
+// front, as ActivityWatch's web watcher does in Helium, so the collector can
+// split the browser's time by site and the distraction budget can charge
+// what was open (owner 2026-11-26: no ActivityWatch add-on in LibreWolf).
+// The records go to the collector's ActivityWatch-compatible API, in the
+// watcher's own form, so the server reads them like Helium's.
+const AW = "http://127.0.0.1:5600/api/0/";
+const TAB_PULSE = 35;
+let tabBucket = null;
+async function tabTimeBucket() {
+  if (tabBucket) return tabBucket;
+  const info = globalThis.browser && browser.runtime && browser.runtime.getBrowserInfo ? await browser.runtime.getBrowserInfo() : null;
+  if (!info) return null; // Chromium: the web watcher records this
+  const host = (await (await fetch(AW + "info", { cache: "no-store" })).json()).hostname || "unknown";
+  const id = "aw-watcher-web-" + String(info.name || "firefox").toLowerCase().replace(/[^a-z0-9]+/g, "-") + "_" + host;
+  const response = await fetch(AW + "buckets/" + encodeURIComponent(id), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ client: "telemetry-extension", type: "web.tab.current", hostname: host }),
+  });
+  // 304 means it exists already.
+  if (!response.ok && response.status !== 304) return null;
+  tabBucket = id;
+  return id;
+}
+async function recordTab() {
+  try {
+    const bucket = await tabTimeBucket();
+    if (!bucket) return;
+    const window = await chrome.windows.getLastFocused({ populate: false });
+    if (!window || !window.focused) return;
+    const [tab] = await chrome.tabs.query({ active: true, windowId: window.id });
+    if (!tab || !/^https?:/.test(tab.url || "")) return;
+    const count = (await chrome.tabs.query({ windowId: window.id })).length;
+    await fetch(AW + "buckets/" + encodeURIComponent(bucket) + "/heartbeat?pulsetime=" + TAB_PULSE, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ timestamp: new Date().toISOString(), duration: 0,
+        data: { url: tab.url, title: tab.title || "", audible: !!tab.audible, incognito: !!tab.incognito, tabCount: count } }),
+    });
+  } catch {}
+}
+chrome.tabs.onActivated.addListener(recordTab);
+chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
+  if (tab.active && (change.title || change.url)) recordTab();
+});
+chrome.windows.onFocusChanged.addListener(recordTab);
+setInterval(recordTab, 10 * 1000);
+
 // The backup, and the check-in: every 30 seconds, the shortest alarm Chrome
 // allows.
 chrome.alarms.create("recheck", { periodInMinutes: 0.5 });
@@ -227,6 +274,7 @@ chrome.alarms.onAlarm.addListener(() => {
   listen();
   badge();
   refreshTabs();
+  recordTab();
 });
 chrome.runtime.onStartup.addListener(badge);
 listen();

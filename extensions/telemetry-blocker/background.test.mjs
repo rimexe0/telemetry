@@ -19,8 +19,8 @@ function browser({ firefox, installType }) {
     extension: { isAllowedIncognitoAccess: async () => true },
     management: { getSelf: async () => ({ installType }) },
     storage: { local: { get: async () => ({}), set: async () => {} }, session: { get: async () => ({}), set: async () => {} } },
-    tabs: { query: async () => [], sendMessage: async () => {}, onActivated: event(), onUpdated: event() },
-    windows: { onFocusChanged: event() },
+    tabs: { query: async (q) => (q && q.windowId ? [{ id: 5, url: "https://x.com/home", title: "Home / X", active: true, incognito: false }] : []), sendMessage: async () => {}, onActivated: event(), onUpdated: event() },
+    windows: { onFocusChanged: event(), getLastFocused: async () => ({ id: 1, focused: true }) },
     alarms: { create() {}, onAlarm: event() },
     action: { setBadgeText() {}, setBadgeBackgroundColor() {} },
     scripting: { executeScript: async () => {} },
@@ -30,8 +30,14 @@ function browser({ firefox, installType }) {
     constructor(address) { this.address = address; this.readyState = 0; w.sockets.push(this); }
     send() {}
   }
+  w.requests = [];
   const ctx = { chrome, WebSocket, URL, console, setTimeout: () => 0, setInterval: () => 0, clearInterval() {},
-    fetch: async () => ({ ok: true, json: async () => ({ connected: true, blocking_sites: [] }) }) };
+    fetch: async (address, options) => {
+      w.requests.push({ address, body: options && options.body });
+      return { ok: true, status: 200, json: async () => (address.endsWith("/api/0/info") ? { hostname: "plagiarism.local" } : { connected: true, blocking_sites: [] }) };
+    } };
+  if (firefox) ctx.browser = { runtime: { getBrowserInfo: async () => ({ name: "LibreWolf" }) } };
+  w.ctx = ctx;
   vm.createContext(ctx);
   process.on("unhandledRejection", (error) => w.errors.push(error));
   vm.runInContext(src, ctx);
@@ -57,3 +63,14 @@ check("a copy loaded from the folder reloads to take the new version", w.reloads
 w.hello("0.11.0");
 await settle();
 check("and not for the version it has", w.reloads === 1);
+
+// LibreWolf records the tab in front itself, in the web watcher's form, so
+// no ActivityWatch add-on is needed there; Helium keeps its watcher.
+w = browser({ firefox: true, installType: "admin" });
+await w.ctx.recordTab();
+const beat = w.requests.find((r) => r.address.includes("/heartbeat"));
+check("LibreWolf records the tab in front", beat && beat.address.startsWith("http://127.0.0.1:5600/api/0/buckets/aw-watcher-web-librewolf_plagiarism.local/heartbeat?pulsetime=")
+  && JSON.parse(beat.body).data.url === "https://x.com/home" && w.requests.some((r) => r.address.endsWith("/buckets/aw-watcher-web-librewolf_plagiarism.local")));
+w = browser({ firefox: false, installType: "admin" });
+await w.ctx.recordTab();
+check("Chromium leaves it to the web watcher", !w.requests.some((r) => r.address.includes("/api/0/")));

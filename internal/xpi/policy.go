@@ -11,15 +11,6 @@ const (
 	UpdateURL  = "http://127.0.0.1:5600/api/telemetry/updates.json"
 )
 
-// ActivityWatchID is the ActivityWatch web watcher's ID on
-// addons.mozilla.org. Its tab records split browser time by site, which the
-// activity view and the distraction budget need; the Helium copy does the
-// same there.
-const ActivityWatchID = "{ef87d84c-2127-493f-b952-5b4e744245bc}"
-
-// ActivityWatchURL is where Firefox installs the newest web watcher from.
-const ActivityWatchURL = "https://addons.mozilla.org/firefox/downloads/latest/aw-watcher-web/latest.xpi"
-
 // UpdateIntervalSeconds is how often Firefox asks for add-on updates under
 // this policy. Firefox cannot be told to check now, so a new extension
 // arrives within this time, or at the next start. Its own default is a day.
@@ -31,8 +22,9 @@ const UpdateIntervalSeconds = 3600
 //
 //   - Telemetry is force-installed from the collector, cannot be removed or
 //     switched off, runs in private windows, and updates from the collector.
-//   - The ActivityWatch web watcher is installed and can be switched off, as
-//     the owner installed it themselves in Helium.
+//   - Nothing else is installed: the Telemetry extension itself records the
+//     tab in front for the collector (owner 2026-11-26: no ActivityWatch
+//     add-on in LibreWolf).
 //   - An unsigned package installs only where signatures are not required,
 //     which LibreWolf allows policy to say. That lets any unsigned add-on
 //     install, so it is set only while the kept package is unsigned.
@@ -46,8 +38,6 @@ func Policies(signed bool) map[string]any {
 	return map[string]any{
 		"ExtensionSettings": map[string]any{
 			ID: map[string]any{"installation_mode": "force_installed", "install_url": InstallURL, "update_url": UpdateURL,
-				"private_browsing": true},
-			ActivityWatchID: map[string]any{"installation_mode": "normal_installed", "install_url": ActivityWatchURL,
 				"private_browsing": true},
 		},
 		"Preferences": preferences,

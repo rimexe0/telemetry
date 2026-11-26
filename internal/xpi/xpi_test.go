@@ -134,8 +134,12 @@ func TestPolicyKeepsTheBrowsersOwnSettings(t *testing.T) {
 	if ours["installation_mode"] != "force_installed" || ours["install_url"] != InstallURL || ours["update_url"] != UpdateURL || ours["private_browsing"] != true {
 		t.Fatalf("Telemetry entry = %v", ours)
 	}
-	if settings["*"] == nil || settings["uBlock0@raymondhill.net"] == nil || settings[ActivityWatchID] == nil {
+	if settings["*"] == nil || settings["uBlock0@raymondhill.net"] == nil {
 		t.Fatalf("settings = %v", settings)
+	}
+	// The owner wants no ActivityWatch add-on in LibreWolf (2026-11-26).
+	if settings["{ef87d84c-2127-493f-b952-5b4e744245bc}"] != nil || len(settings) != 3 {
+		t.Fatalf("only Telemetry is added: %v", settings)
 	}
 	preferences := merged["Preferences"].(map[string]any)
 	if preferences["browser.x"] == nil || preferences["extensions.update.interval"] == nil || preferences["xpinstall.signatures.required"] != nil {
@@ -165,7 +169,7 @@ func TestEnrollmentProfileUsesTheSamePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{ID, InstallURL, UpdateURL, ActivityWatchID, ActivityWatchURL, "net.librewolf.librewolf", "org.mozilla.firefox",
+	for _, want := range []string{ID, InstallURL, UpdateURL, "net.librewolf.librewolf", "org.mozilla.firefox",
 		"EnterprisePoliciesEnabled", "extensions.update.interval", "xpinstall.signatures.required"} {
 		if !strings.Contains(string(script), want) {
 			t.Errorf("enrollment.py does not mention %q", want)

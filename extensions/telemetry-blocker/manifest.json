@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Telemetry",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "update_url": "http://127.0.0.1:5600/api/telemetry/extension.xml",
   "description": "Covers sites your Telemetry plan blocks right now with the reason, without losing the page, or hides their feeds where a page may stay open.",
   "permissions": [
