@@ -51,6 +51,14 @@ func Timeline(config Config, version int64, facts Facts, from, to time.Time) []S
 	if facts.WakeAt != nil {
 		add(*facts.WakeAt)
 	}
+	if door := facts.Door; door != nil {
+		add(door.OpensAt)
+		add(door.EndsAt)
+	}
+	if budget := facts.Budget; budget != nil {
+		add(budget.EndsAt)
+		add(budget.DayEnd)
+	}
 	if facts.BreakSince != nil {
 		add(*facts.BreakSince)
 	}
@@ -107,7 +115,7 @@ func Timeline(config Config, version int64, facts Facts, from, to time.Time) []S
 				}
 			}
 		}
-		for _, date := range []string{config.OutsideNextFrom, config.MorningNextFrom, config.BedtimeNextFrom, config.ExtensionNextFrom} {
+		for _, date := range []string{config.OutsideNextFrom, config.MorningNextFrom, config.BedtimeNextFrom, config.ExtensionNextFrom, config.BudgetNextFrom} {
 			if date == "" {
 				continue
 			}

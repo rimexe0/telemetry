@@ -35,6 +35,10 @@ type Segment struct {
 	App    string    `json:"app"`
 	Title  string    `json:"title,omitempty"`
 	Domain string    `json:"domain,omitempty"`
+	// URL is the page a browser tab showed. It is kept so a page the owner
+	// keeps open (policy open_addresses) is not charged to the distraction
+	// budget; outputs that list segments do not show it.
+	URL string `json:"-"`
 	// AFKUnknown marks Mac time with no AFK record: the window was in front
 	// but whether the owner was present is not known.
 	AFKUnknown bool `json:"afk_unknown,omitempty"`
@@ -281,7 +285,7 @@ func browserSegments(app, windowTitle string, part span, web []span) []Segment {
 		if tab.start.After(cursor) {
 			segments = append(segments, Segment{Device: DeviceMac, Start: cursor, End: tab.start, App: app, Title: windowTitle})
 		}
-		segments = append(segments, Segment{Device: DeviceMac, Start: tab.start, End: tab.end, App: app, Title: text(tab.data, "title"), Domain: domain(text(tab.data, "url"))})
+		segments = append(segments, Segment{Device: DeviceMac, Start: tab.start, End: tab.end, App: app, Title: text(tab.data, "title"), Domain: domain(text(tab.data, "url")), URL: text(tab.data, "url")})
 		cursor = tab.end
 	}
 	if part.end.After(cursor) {
@@ -385,7 +389,7 @@ func clipAndMerge(segments []Segment, from, to time.Time) []Segment {
 		}
 		if n := len(result); n > 0 {
 			last := &result[n-1]
-			if last.Device == segment.Device && last.Machine == segment.Machine && last.App == segment.App && last.Domain == segment.Domain && last.Title == segment.Title && last.AFKUnknown == segment.AFKUnknown &&
+			if last.Device == segment.Device && last.Machine == segment.Machine && last.App == segment.App && last.Domain == segment.Domain && last.Title == segment.Title && last.URL == segment.URL && last.AFKUnknown == segment.AFKUnknown &&
 				!segment.Start.After(last.End.Add(mergeTolerance)) {
 				last.End = later(last.End, segment.End)
 				continue

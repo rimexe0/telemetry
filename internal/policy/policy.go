@@ -109,8 +109,17 @@ type Config struct {
 	Extension         ExtensionRule  `json:"extension,omitempty"`
 	ExtensionNext     *ExtensionRule `json:"extension_next,omitempty"`
 	ExtensionNextFrom string         `json:"extension_next_from,omitempty"`
+	// Budget makes distraction time a budget earned with habits and spent at
+	// a rate, with the door as the way to open outside it (2026-11-26).
+	Budget         Budget  `json:"budget,omitempty"`
+	BudgetNext     *Budget `json:"budget_next,omitempty"`
+	BudgetNextFrom string  `json:"budget_next_from,omitempty"`
+	// BudgetSince is when the budget was last switched on. Days before it
+	// are never charged, so switching it on brings no debt or penalty.
+	BudgetSince *time.Time `json:"budget_since,omitempty"`
 	// RuleChanged is when each rule last changed in force, by name
-	// (outside, opening_rule, morning, settings_lock, bedtime, extension),
+	// (outside, opening_rule, morning, settings_lock, bedtime, extension,
+	// budget),
 	// so a quick correction is not mistaken for loosening.
 	RuleChanged map[string]time.Time `json:"rule_changed,omitempty"`
 	// RuleBefore is each rule as it was in force just before RuleChanged.
@@ -220,6 +229,10 @@ type Facts struct {
 	OutsideMinutes float64 `json:"outside_minutes,omitempty"`
 	// MorningScannedAt is the latest scan of the morning code.
 	MorningScannedAt *time.Time `json:"morning_scanned_at,omitempty"`
+	// Door is the door waiting or open, and Budget today's budget, when the
+	// budget is on.
+	Door   *DoorFact   `json:"door,omitempty"`
+	Budget *BudgetFact `json:"budget,omitempty"`
 }
 
 type Targets struct {
@@ -361,6 +374,19 @@ func (c *Config) Normalize() error {
 			}
 		}
 	}
+	for _, rule := range []*Budget{&c.Budget, c.BudgetNext} {
+		if rule == nil {
+			continue
+		}
+		if err := rule.Normalize(); err != nil {
+			return err
+		}
+		// The distraction times are the 1x hours; without closed by default
+		// nothing would be closed for the budget to open.
+		if rule.Enabled && !c.ClosedByDefault {
+			return fmt.Errorf("%w: the budget needs closed_by_default on", ErrInvalidConfig)
+		}
+	}
 	return nil
 }
 
@@ -471,6 +497,15 @@ func evaluate(config Config, version int64, facts Facts, at time.Time) Decision 
 		decision.Blocked = emptyTargets()
 		return decision
 	}
+	// The door is the agreed way out, so like the emergency unlock it opens
+	// through bedtime and every hold.
+	if door := facts.Door; door != nil && !at.Before(door.OpensAt) && at.Before(door.EndsAt) {
+		decision.Mode = ModeDoor
+		decision.Reason = "Opened through the door until " + clock(door.EndsAt) + "."
+		decision.Basis = append(decision.Basis, fmt.Sprintf("door:%d", door.ID))
+		decision.Blocked = emptyTargets()
+		return decision
+	}
 	if end, in := bedtimeEnd(config.BedtimeAt(at), location, at); in {
 		decision.Mode = ModeBedtime
 		decision.BlockAll = len(config.Essentials) > 0
@@ -568,6 +603,13 @@ func evaluate(config Config, version int64, facts Facts, at time.Time) Decision 
 	}
 	if config.ClosedByDefault {
 		if end, open := distractionTime(config, location, at); open {
+			if budgetUsed(config, facts, at) {
+				decision.Mode = ModeBudgetUsed
+				decision.Reason = "Today's distraction time is used up."
+				decision.Basis = append(decision.Basis, "budget")
+				blockDistractions(nil)
+				return decision
+			}
 			decision.Mode = ModeLeisure
 			decision.Reason = "Distraction time until " + clock(end) + "."
 			decision.Basis = append(decision.Basis, "distraction_time")
