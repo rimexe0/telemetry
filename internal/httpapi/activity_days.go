@@ -180,10 +180,24 @@ func (s *Server) activityDays(writer http.ResponseWriter, request *http.Request)
 		}
 		days = append(days, day)
 	}
-	labels, err := s.repository.ListActivityLabels(ctx)
+	rows, version, err := s.activityDayRows(ctx, days, now, location)
 	if err != nil {
 		writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
 		return
+	}
+	writer.Header().Set("Cache-Control", "no-store")
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"timezone": location.String(), "version": version, "generated_at": now,
+		"from": first.Format("2006-01-02"), "to": last.Format("2006-01-02"), "days": rows,
+	})
+}
+
+// activityDayRows gives each day's row, from the cache for finished days and
+// worked out from the records for the rest.
+func (s *Server) activityDayRows(ctx context.Context, days []time.Time, now time.Time, location *time.Location) ([]activityDay, string, error) {
+	labels, err := s.repository.ListActivityLabels(ctx)
+	if err != nil {
+		return nil, "", err
 	}
 	summaryLabels := store.LabelsForSummary(labels)
 	version := labelsVersion(summaryLabels)
@@ -199,14 +213,12 @@ func (s *Server) activityDays(writer http.ResponseWriter, request *http.Request)
 	if len(missing) > 0 {
 		reader, err := s.newDayReader(ctx, days[missing[0]], days[missing[len(missing)-1]], now, location, summaryLabels)
 		if err != nil {
-			writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
-			return
+			return nil, "", err
 		}
 		for _, i := range missing {
 			row, err := reader.day(ctx, days[i])
 			if err != nil {
-				writeError(writer, http.StatusServiceUnavailable, "store_unavailable", err.Error())
-				return
+				return nil, "", err
 			}
 			if row.Final {
 				s.dayRows.put(version+row.Date, row)
@@ -214,11 +226,33 @@ func (s *Server) activityDays(writer http.ResponseWriter, request *http.Request)
 			rows[i] = row
 		}
 	}
-	writer.Header().Set("Cache-Control", "no-store")
-	writeJSON(writer, http.StatusOK, map[string]any{
-		"timezone": location.String(), "version": version, "generated_at": now,
-		"from": first.Format("2006-01-02"), "to": last.Format("2006-01-02"), "days": rows,
-	})
+	return rows, version, nil
+}
+
+// WarmActivityDays works out the finished days of the last year ahead of
+// time, a month at a time, so a week, month or year opens on the phone at
+// once instead of waiting on the first request (owner 2026-11-27).
+func (s *Server) WarmActivityDays(ctx context.Context) error {
+	location, err := store.OwnerLocation(ctx, s.repository)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	local := now.In(location)
+	yesterday := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, location).AddDate(0, 0, -1)
+	for end := yesterday; end.After(yesterday.AddDate(-1, 0, 0)); end = end.AddDate(0, 0, -activityDaysLimit) {
+		days := []time.Time{}
+		for day := end.AddDate(0, 0, -(activityDaysLimit - 1)); !day.After(end); day = day.AddDate(0, 0, 1) {
+			days = append(days, day)
+		}
+		if _, _, err := s.activityDayRows(ctx, days, now, location); err != nil {
+			return err
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+	}
+	return nil
 }
 
 // dayReader reads what a run of days needs once: positions, coding records,

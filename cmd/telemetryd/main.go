@@ -195,6 +195,21 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// The year's finished days, worked out ahead so the phone's weeks,
+	// months and years open at once; again each hour for the day that
+	// became final.
+	go func() {
+		for {
+			if err := server.WarmActivityDays(context); err != nil && context.Err() == nil {
+				log.Printf("activity days: %v", err)
+			}
+			select {
+			case <-context.Done():
+				return
+			case <-time.After(time.Hour):
+			}
+		}
+	}()
 	// The owner, for approving devices and changing sign-in: the Clerk owner
 	// from the environment, or, with stored settings, a panel token session
 	// or the linked Clerk account, whichever are on.

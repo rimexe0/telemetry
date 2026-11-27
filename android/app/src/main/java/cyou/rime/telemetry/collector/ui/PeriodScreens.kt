@@ -241,7 +241,9 @@ private fun PeriodApps(view: PeriodActivity, period: Period) {
     }
     for (device in view.devices) {
         val active = device.active
-        PanelCard(ActivityText.deviceName(device.device), if (active == null) "" else "${PeriodText.perDay(active)} · ${PeriodText.over(active.days)}") {
+        // Only the time a day beside the name; how many days it covers goes under it, so the head never wraps into the name.
+        PanelCard(ActivityText.deviceName(device.device), if (active == null) "" else PeriodText.perDay(active)) {
+            if (active != null) Small(PeriodText.over(active.days), Modifier.padding(top = 4.dp))
             UsageList("Apps, a day", device.apps.map { Usage(it.name, it.label, it.perDay) }, "Nothing recorded.")
             if (device.sites.isNotEmpty()) UsageList("Sites, a day", device.sites.map { Usage(it.name, it.label, it.perDay) }, "")
         }
