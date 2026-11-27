@@ -111,7 +111,10 @@ class TelemetryLocationService : Service() {
             .putNullable("speed_meters_per_second", if (location.hasSpeed()) location.speed else null)
             .putNullable("bearing_degrees", if (location.hasBearing()) location.bearing else null)
         PlaceReminders.onPosition(this, location.latitude, location.longitude, location.accuracy.toDouble())
-        HabitRuleWatch.onPosition(this, RuleFix(Instant.ofEpochMilli(location.time), location.latitude, location.longitude, location.accuracy.toDouble()))
+        val fix = RuleFix(Instant.ofEpochMilli(location.time), location.latitude, location.longitude, location.accuracy.toDouble())
+        HabitRuleWatch.onPosition(this, fix)
+        // Kept on the phone too, for the Places map without the server.
+        runCatching { FixLog.of(this).record(fix) }
         getSharedPreferences("telemetry-location-status", MODE_PRIVATE).edit()
             .putString("state", "fix_received")
             .putLong("last_fix_at", location.time).apply()

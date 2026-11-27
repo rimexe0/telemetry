@@ -44,6 +44,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import cyou.rime.telemetry.collector.ui.ActivityScreen
 import cyou.rime.telemetry.collector.ui.HabitEditing
 import cyou.rime.telemetry.collector.ui.HabitsScreen
 import cyou.rime.telemetry.collector.ui.RulePicker
@@ -97,6 +98,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private lateinit var web: WebView
+    /** Activity's answers, kept for the life of the screen so a tab switch never reloads them. */
+    private lateinit var activity: ActivityData
 
     private var place by mutableStateOf(Place.TODAY)
     // Kept in memory for the life of the app, so each place shows at once on every visit.
@@ -135,6 +138,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         if (savedInstanceState == null) SetupLink.apply(this, intent)
         web = buildWebView()
+        activity = ActivityData(applicationContext, lifecycleScope)
+        activity.prune()
         DeliveryConfig(this).let { config ->
             paired = config.token() != null
             removed = config.removed
@@ -145,7 +150,7 @@ class MainActivity : ComponentActivity() {
         CollectionStarter.ensureRunning(this)
         if (savedInstanceState == null && SetupActivity.needsSetup(this)) openSetup(null)
         // The panel loads behind Today, so the first tap on Activity or Settings shows it at once.
-        if (paired && !removed) openPanel(activityHash)
+        if (paired && !removed) openPanel(settingsHash)
 
         // A tick from the home-screen widget shows here at once.
         lifecycleScope.launch {
@@ -185,9 +190,9 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    private val Place.web: Boolean get() = this == Place.ACTIVITY || this == Place.SETTINGS
+    private val Place.web: Boolean get() = this == Place.SETTINGS
 
-    private fun hashFor(place: Place): String = if (place == Place.SETTINGS) settingsHash else activityHash
+    private fun hashFor(place: Place): String = settingsHash
 
     /** Reads the saved answers and the queues again; what has not changed comes from memory. */
     private fun reload() {
@@ -224,6 +229,7 @@ class MainActivity : ComponentActivity() {
             fresh
         } }
         reload()
+        if (place == Place.ACTIVITY) activity.show()
     }
 
     /**
@@ -294,6 +300,7 @@ class MainActivity : ComponentActivity() {
             if (next == Place.SETTINGS) settingsHash = SETTINGS_HASH else if (next == Place.ACTIVITY) activityHash = ACTIVITY_HASH
         }
         place = next
+        if (next == Place.ACTIVITY) activity.show()
         if (!next.web) return
         hash?.let { if (next == Place.SETTINGS) settingsHash = it else activityHash = it }
         when (webState) {
@@ -356,7 +363,7 @@ class MainActivity : ComponentActivity() {
         if (webState != Web.Open) return
         val hash = runCatching { Uri.parse(url).fragment }.getOrNull()?.let { "#$it" } ?: return
         when (PanelLinks.place(hash)) {
-            "activity" -> { activityHash = hash; if (place.web) place = Place.ACTIVITY }
+            "activity" -> { activityHash = hash; if (place.web) { place = Place.ACTIVITY; activity.show() } }
             "settings" -> { settingsHash = hash; if (place.web) place = Place.SETTINGS }
             // A link in the panel to Today opens the app's own.
             else -> if (place.web) place = Place.TODAY
@@ -437,7 +444,8 @@ class MainActivity : ComponentActivity() {
                             editing = habitEditing,
                         )
                     }
-                    Place.ACTIVITY, Place.SETTINGS -> when (val state = webState) {
+                    Place.ACTIVITY -> ActivityScreen(activity, now, zone)
+                    Place.SETTINGS -> when (val state = webState) {
                         Web.Open -> Unit
                         is Web.Unavailable -> PanelUnavailable(false, state.refusedWith, onRetry = { openPanel(hashFor(place)) },
                             onPhoneSettings = { startActivity(SettingsActivity.intent(this@MainActivity, null)) })
