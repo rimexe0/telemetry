@@ -16,6 +16,8 @@ data class WidgetRow(
     val worth: String,
     /** The last seven days, oldest first, drawn behind the name. */
     val week: List<CellState> = emptyList(),
+    /** Under a habit with a rule: "Karantina İskelesi · 420 m away". */
+    val rule: String? = null,
 )
 
 /** What the home-screen widget shows, from what the phone has saved. */
@@ -40,8 +42,9 @@ object WidgetModel {
     /** The collection cycle refreshes the saved copy every few minutes; older than this it says when it is from. */
     val STALE_AFTER: Duration = Duration.ofMinutes(15)
 
-    fun state(saved: Saved, savedAt: Instant?, now: Instant, zone: ZoneId): WidgetState {
+    fun state(saved: Saved, savedAt: Instant?, now: Instant, zone: ZoneId, latest: RuleFix? = null): WidgetState {
         val today = HomeState.today(saved, now, zone)
+        val lines = ruleLines(today.habits, latest, now, zone)
         val habits = today.habits
         val budget = today.budget
         val worthShown = budget?.enabled != false
@@ -50,7 +53,7 @@ object WidgetModel {
             // A ticked habit leaves the list; it is unticked in the app
             // (owner 2026-11-26).
             rows = habits?.filter { !it.done }?.map {
-                WidgetRow(it.id, it.name, it.done, if (worthShown) HabitCells.worth(it.value) else "", today.strips[it.id].orEmpty().map { cell -> cell.state })
+                WidgetRow(it.id, it.name, it.done, if (worthShown) HabitCells.worth(it.value) else "", today.strips[it.id].orEmpty().map { cell -> cell.state }, lines[it.id])
             },
             empty = when {
                 habits == null -> "Unknown: today's habits were never saved on this phone."

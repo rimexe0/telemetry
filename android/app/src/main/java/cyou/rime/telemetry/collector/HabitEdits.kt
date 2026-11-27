@@ -24,6 +24,10 @@ data class HabitEdit(
     val archived: Boolean? = null,
     /** The whole list, for [REASONS]. */
     val reasons: List<String>? = null,
+    /** A rule to set, for [CHANGE]. */
+    val rule: HabitRule? = null,
+    /** Removes the habit's rule, for [CHANGE]. */
+    val clearRule: Boolean = false,
 ) {
     companion object {
         const val ADD = "add"
@@ -41,6 +45,8 @@ data class HabitEdit(
             name?.let { put("name", it) }
             weekdays?.let { put("weekdays", JSONArray(it)) }
             archived?.let { put("archived", it) }
+            rule?.let { put("rule", it.toJson()) }
+            if (clearRule && rule == null) put("rule", JSONObject.NULL)
         }.toString())
     }
 }
@@ -88,10 +94,11 @@ class EditQueue(private val store: TickStore) {
     }
 
     @Synchronized
-    fun change(habitId: Long, name: String? = null, weekdays: List<Int>? = null, archived: Boolean? = null): HabitEdit {
+    fun change(habitId: Long, name: String? = null, weekdays: List<Int>? = null, archived: Boolean? = null, rule: HabitRule? = null, clearRule: Boolean = false): HabitEdit {
         val state = load()
         val id = state.resolved[habitId] ?: habitId
-        val edit = HabitEdit(UUID.randomUUID().toString(), HabitEdit.CHANGE, id, name = name, weekdays = weekdays, archived = archived)
+        val edit = HabitEdit(UUID.randomUUID().toString(), HabitEdit.CHANGE, id, name = name, weekdays = weekdays, archived = archived,
+            rule = rule, clearRule = clearRule && rule == null)
         save(state.copy(entries = state.entries + edit))
         return edit
     }
@@ -186,6 +193,7 @@ class EditQueue(private val store: TickStore) {
                             name = edit.name?.trim() ?: habit.name,
                             weekdays = edit.weekdays?.toSet() ?: habit.weekdays,
                             archived = edit.archived ?: habit.archived,
+                            rule = if (edit.clearRule) null else edit.rule ?: habit.rule,
                         )
                     }
                 }
@@ -207,6 +215,8 @@ class EditQueue(private val store: TickStore) {
                     edit.weekdays?.let { put("weekdays", JSONArray(it)) }
                     edit.archived?.let { put("archived", it) }
                     edit.reasons?.let { put("reasons", JSONArray(it)) }
+                    edit.rule?.let { put("rule", it.toJson()) }
+                    if (edit.clearRule) put("clear_rule", true)
                 })
             })
             .put("resolved", JSONObject().apply { for ((from, to) in resolved) put(from.toString(), to) })
@@ -227,6 +237,8 @@ class EditQueue(private val store: TickStore) {
                         weekdays = item.optJSONArray("weekdays")?.let { days -> (0 until days.length()).map { days.getInt(it) } },
                         archived = if (item.has("archived")) item.getBoolean("archived") else null,
                         reasons = item.optJSONArray("reasons")?.let { lines -> (0 until lines.length()).map { lines.getString(it) } },
+                        rule = HabitRule.parse(item.optJSONObject("rule")),
+                        clearRule = item.optBoolean("clear_rule"),
                     )
                 }.getOrNull()
             }

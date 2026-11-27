@@ -83,4 +83,6 @@ dependencies {
     // Scans the panel's setup QR; Google Play services shows the camera, so
     // the app needs no camera permission.
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
+    // The map in the habit rule's place picker: OpenStreetMap tiles, no account or key.
+    implementation("org.osmdroid:osmdroid-android:6.1.20")
 }

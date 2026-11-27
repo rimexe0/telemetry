@@ -21,6 +21,8 @@ data class TodayState(
     /** A waiting or open door: its phase and its words. */
     val door: Pair<String, String>?,
     val rightNow: RightNow?,
+    /** Today's window of each habit with a rule, while something is left of it. */
+    val windows: Map<Long, RuleWindow> = emptyMap(),
 )
 
 /** What Habits shows. */
@@ -128,6 +130,10 @@ object HomeState {
             habit.id to HabitCells.week(rows[habit.id]?.days, day, habit.done, TickQueue.doneByDay(saved.queued, habit.id))
         }
         val closeAt = HabitDay.ticksCloseAt(day, zone, clock, cached, bedtimes)
+        val windows = habits.orEmpty().mapNotNull { habit ->
+            val rule = habit.rule ?: return@mapNotNull null
+            HabitRuleEval.window(rule, day, zone, clock, closeAt, habit.window)?.let { habit.id to it }
+        }.toMap()
         val door = forToday?.door
         val doorWords = door?.let { TodayText.door(it, now, zone) }
         return TodayState(
@@ -141,6 +147,7 @@ object HomeState {
             doorId = door?.id?.takeIf { doorWords != null },
             door = doorWords,
             rightNow = TodayText.rightNow(saved.nowJson, zone),
+            windows = windows,
         )
     }
 

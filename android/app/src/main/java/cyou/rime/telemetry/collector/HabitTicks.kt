@@ -17,6 +17,8 @@ data class HabitTick(
     val at: Instant,
     /** "tick" or "untick". */
     val action: String,
+    /** Made by a habit rule, not by a tap: the server keeps it only while nobody ticked or unticked the habit that day. */
+    val byRule: Boolean = false,
 ) {
     val done: Boolean get() = action == TICK
 
@@ -58,8 +60,8 @@ class TickQueue(private val store: TickStore) {
     fun entries(): List<HabitTick> = decode(store.load())
 
     @Synchronized
-    fun add(habitId: Long, day: String, at: Instant, done: Boolean): HabitTick {
-        val tick = HabitTick(UUID.randomUUID().toString(), habitId, day, at, if (done) HabitTick.TICK else HabitTick.UNTICK)
+    fun add(habitId: Long, day: String, at: Instant, done: Boolean, byRule: Boolean = false): HabitTick {
+        val tick = HabitTick(UUID.randomUUID().toString(), habitId, day, at, if (done) HabitTick.TICK else HabitTick.UNTICK, byRule = byRule && done)
         store.save(encode(entries() + tick))
         return tick
     }
@@ -79,7 +81,8 @@ class TickQueue(private val store: TickStore) {
                     sent++
                     result.budget?.let { budget = it }
                 }
-                is TickSend.Refused -> refusals += result.message
+                // A rule's tick refused (the day closed, say) is not the owner's to hear about.
+                is TickSend.Refused -> if (!tick.byRule) refusals += result.message
             }
             remove(tick.key)
         }
@@ -94,6 +97,13 @@ class TickQueue(private val store: TickStore) {
         fun doneByQueue(entries: List<HabitTick>, day: String): Map<Long, Boolean> {
             val result = mutableMapOf<Long, Boolean>()
             for (tick in entries) if (tick.day == day) result[tick.habitId] = tick.done
+            return result
+        }
+
+        /** Each habit's last queued entry for [day]. */
+        fun lastByQueue(entries: List<HabitTick>, day: String): Map<Long, HabitTick> {
+            val result = mutableMapOf<Long, HabitTick>()
+            for (tick in entries) if (tick.day == day) result[tick.habitId] = tick
             return result
         }
 
@@ -119,7 +129,7 @@ class TickQueue(private val store: TickStore) {
         fun encode(entries: List<HabitTick>): String = JSONArray().apply {
             for (tick in entries) put(JSONObject()
                 .put("key", tick.key).put("habit_id", tick.habitId).put("day", tick.day)
-                .put("at", tick.at.toString()).put("action", tick.action))
+                .put("at", tick.at.toString()).put("action", tick.action).apply { if (tick.byRule) put("by", "rule") })
         }.toString()
 
         fun decode(json: String?): List<HabitTick> {
@@ -128,7 +138,8 @@ class TickQueue(private val store: TickStore) {
                 val item = array.optJSONObject(index) ?: return@mapNotNull null
                 runCatching {
                     HabitTick(item.getString("key"), item.getLong("habit_id"), item.getString("day"),
-                        Instant.parse(item.getString("at")), item.getString("action").takeIf { it == HabitTick.TICK || it == HabitTick.UNTICK }!!)
+                        Instant.parse(item.getString("at")), item.getString("action").takeIf { it == HabitTick.TICK || it == HabitTick.UNTICK }!!,
+                        byRule = item.optString("by") == "rule")
                 }.getOrNull()
             }
         }
@@ -164,6 +175,11 @@ object HabitTicks {
         queue(context).add(habitId, day, at, done)
     }
 
+    /** Keeps a tick a habit rule made, at the moment the rule was met. */
+    fun recordRule(context: Context, habitId: Long, day: String, at: Instant) {
+        queue(context).add(habitId, day, at, done = true, byRule = true)
+    }
+
     /**
      * Sends what is waiting, in order. A refusal's message is kept to be
      * shown once; the newest budget the server gave goes into the cached
@@ -171,7 +187,7 @@ object HabitTicks {
      */
     fun flush(context: Context): TickQueue.Flushed {
         val flushed = queue(context).flush { tick ->
-            val body = JSONObject().put("day", tick.day).put("at", tick.at.toString()).toString()
+            val body = JSONObject().put("day", tick.day).put("at", tick.at.toString()).apply { if (tick.byRule) put("by", "rule") }.toString()
             TickQueue.outcome(DeviceApi.send(context, "POST", "/v1/device/habits/${tick.habitId}/${tick.action}", body))
         }
         flushed.refusals.lastOrNull()?.let { message ->

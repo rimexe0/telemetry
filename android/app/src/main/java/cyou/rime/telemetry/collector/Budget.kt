@@ -31,7 +31,17 @@ data class BudgetDoor(
     val open: Boolean get() = state == "open" || state == "grace"
 }
 
-data class BudgetHabit(val id: Long, val name: String, val done: Boolean, val value: Double)
+data class BudgetHabit(
+    val id: Long,
+    val name: String,
+    val done: Boolean,
+    val value: Double,
+    val doneAt: Instant? = null,
+    val doneBy: String? = null,
+    val unticked: Boolean = false,
+    val rule: HabitRule? = null,
+    val window: RuleWindow? = null,
+)
 
 data class BudgetSettings(
     val waitMinutes: Double,
@@ -110,7 +120,9 @@ object Budget {
             doorUnavailableReason = budget.optString("door_unavailable_reason"),
             nextDoorAt = instant(budget, "next_door_at"),
             habits = objects(budget.optJSONArray("habits")).map {
-                BudgetHabit(it.optLong("id"), it.optString("name"), it.optBoolean("done"), it.optDouble("value", 0.0))
+                BudgetHabit(it.optLong("id"), it.optString("name"), it.optBoolean("done"), it.optDouble("value", 0.0),
+                    doneAt = instant(it, "done_at"), doneBy = it.optString("done_by").ifBlank { null }, unticked = it.optBoolean("unticked"),
+                    rule = HabitRule.of(it), window = RuleWindow.parse(it.optJSONObject("window")))
             },
             reasons = strings(budget.optJSONArray("reasons")),
             settings = BudgetSettings(

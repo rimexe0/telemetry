@@ -18,6 +18,8 @@ data class HabitDef(
     /** 0 Sunday to 6 Saturday; empty means every day. */
     val weekdays: Set<Int>,
     val archived: Boolean,
+    /** Ticks the habit by itself; null when it has none. */
+    val rule: HabitRule? = null,
 )
 
 /** /v1/device/habits: every habit, and the owner's reasons. */
@@ -41,7 +43,22 @@ data class HeatmapRow(
 data class HeatmapView(val habits: List<HeatmapRow>, val combined: Map<String, Double>)
 
 /** One of today's habits as Today shows it. */
-data class TodayHabit(val id: Long, val name: String, val done: Boolean, /** Budget minutes it is worth; null when unknown. */ val value: Double?)
+data class TodayHabit(
+    val id: Long,
+    val name: String,
+    val done: Boolean,
+    /** Budget minutes it is worth; null when unknown. */
+    val value: Double?,
+    val rule: HabitRule? = null,
+    /** When the tick in force was made, while done. */
+    val doneAt: java.time.Instant? = null,
+    /** "rule" when a habit rule ticked it, "hand" otherwise. */
+    val doneBy: String? = null,
+    /** The owner undid today's tick: a rule leaves it alone. */
+    val unticked: Boolean = false,
+    /** The server's window for the rule today, which knows the wake. */
+    val window: RuleWindow? = null,
+)
 
 object HabitJson {
     fun list(json: String): HabitList? = runCatching {
@@ -54,6 +71,7 @@ object HabitJson {
                 position = item.optInt("position"),
                 weekdays = if (weekdays == null) emptySet() else (0 until weekdays.length()).map { weekdays.optInt(it, -1) % 7 }.filter { it in 0..6 }.toSet(),
                 archived = item.optBoolean("archived") || (item.has("archived_at") && !item.isNull("archived_at") && item.optString("archived_at").isNotBlank()),
+                rule = HabitRule.of(item),
             )
         }
         HabitList(habits, strings(root.optJSONArray("reasons")))
@@ -242,14 +260,23 @@ object TodayHabits {
      * Null when nothing saved says what today's habits are.
      */
     fun list(day: String, budget: BudgetView?, habits: HabitList?, queued: List<HabitTick>): List<TodayHabit>? {
+        val rules = habits?.habits?.associate { it.id to it.rule }.orEmpty()
         val base = if (budget != null && budget.day == day) {
-            budget.habits.map { TodayHabit(it.id, it.name, it.done, it.value) }
+            budget.habits.map {
+                // The saved habit list may be newer than the budget about a rule.
+                val rule = if (it.id in rules) rules[it.id] else it.rule
+                TodayHabit(it.id, it.name, it.done, it.value, rule, it.doneAt, it.doneBy, it.unticked, it.window.takeIf { rule != null })
+            }
         } else {
             val weekday = HabitDay.weekday(day) ?: return null
-            habits?.active?.filter { it.weekdays.isEmpty() || weekday in it.weekdays }?.map { TodayHabit(it.id, it.name, false, null) } ?: return null
+            habits?.active?.filter { it.weekdays.isEmpty() || weekday in it.weekdays }?.map { TodayHabit(it.id, it.name, false, null, it.rule) } ?: return null
         }
-        val overlay = TickQueue.doneByQueue(queued, day)
-        return base.map { habit -> overlay[habit.id]?.let { habit.copy(done = it) } ?: habit }
+        val last = TickQueue.lastByQueue(queued, day)
+        return base.map { habit ->
+            val tick = last[habit.id] ?: return@map habit
+            if (tick.done) habit.copy(done = true, doneAt = tick.at, doneBy = if (tick.byRule) "rule" else "hand", unticked = false)
+            else habit.copy(done = false, doneAt = null, doneBy = null, unticked = true)
+        }
     }
 }
 

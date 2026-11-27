@@ -46,6 +46,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import cyou.rime.telemetry.collector.ui.HabitEditing
 import cyou.rime.telemetry.collector.ui.HabitsScreen
+import cyou.rime.telemetry.collector.ui.RulePicker
 import cyou.rime.telemetry.collector.ui.PText
 import cyou.rime.telemetry.collector.ui.PanelUnavailable
 import cyou.rime.telemetry.collector.ui.Place
@@ -113,6 +114,8 @@ class MainActivity : ComponentActivity() {
     private var doorNotice by mutableStateOf<String?>(null)
     private var doorBusy by mutableStateOf(false)
     private var canGoBack by mutableStateOf(false)
+    /** The habit whose rule is being picked on the Habits place, or null. */
+    private var pickingRule by mutableStateOf<Long?>(null)
 
     private var server = ""
     private var loadFailed = false
@@ -366,6 +369,8 @@ class MainActivity : ComponentActivity() {
         archive = { id, archived -> edit { it.change(id, archived = archived) } },
         add = { name -> edit { it.addHabit(name) } },
         reasons = { reasons -> edit { it.reasons(reasons) } },
+        pickRule = { id -> pickingRule = id },
+        clearRule = { id -> edit { it.change(id, clearRule = true) } },
     )
 
     @Composable
@@ -413,13 +418,25 @@ class MainActivity : ComponentActivity() {
                         doorBusy = doorBusy,
                         onTick = { id, done -> if (today.ticksOpen) tick(id, today.day, done) },
                         onCancelDoor = ::cancelDoor,
+                        ruleLines = remember(today, now) { ruleLines(today.habits, HabitRuleWatch.latest(this@MainActivity), now, zone) },
                     )
-                    Place.HABITS -> HabitsScreen(
-                        state = remember(saved, now) { HomeState.habits(saved, now, zone) },
-                        stale = stale,
-                        notice = editNotice,
-                        editing = habitEditing,
-                    )
+                    Place.HABITS -> {
+                        val habitsState = remember(saved, now) { HomeState.habits(saved, now, zone) }
+                        val picking = pickingRule?.let { id -> habitsState.habits?.firstOrNull { it.id == id } }
+                        if (picking != null) {
+                            RulePicker(picking.name, picking.rule, remember(picking.id) { HabitRuleWatch.latest(this@MainActivity) },
+                                onSave = { rule ->
+                                    pickingRule = null
+                                    edit { it.change(picking.id, rule = rule) }
+                                },
+                                onCancel = { pickingRule = null })
+                        } else HabitsScreen(
+                            state = habitsState,
+                            stale = stale,
+                            notice = editNotice,
+                            editing = habitEditing,
+                        )
+                    }
                     Place.ACTIVITY, Place.SETTINGS -> when (val state = webState) {
                         Web.Open -> Unit
                         is Web.Unavailable -> PanelUnavailable(false, state.refusedWith, onRetry = { openPanel(hashFor(place)) },

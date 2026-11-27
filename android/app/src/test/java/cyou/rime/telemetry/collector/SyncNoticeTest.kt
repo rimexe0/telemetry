@@ -45,6 +45,7 @@ class SyncNoticeTest {
 
     @Test
     fun theNoisyKindsStartOff() {
-        assertEquals(listOf(NoticeKind.SYNC, NoticeKind.FOLLOW_UPS), NoticeKind.entries.filter { it.defaultOn })
+        // A habit's place in the morning starts on: the owner asked to be asked (2026-11-26).
+        assertEquals(listOf(NoticeKind.SYNC, NoticeKind.FOLLOW_UPS, NoticeKind.HABIT_PLACES), NoticeKind.entries.filter { it.defaultOn })
     }
 }

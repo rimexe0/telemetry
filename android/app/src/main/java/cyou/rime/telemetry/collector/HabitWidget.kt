@@ -122,7 +122,10 @@ class HabitWidget : GlanceAppWidget() {
                 Row(GlanceModifier.fillMaxSize().padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     TickBox(row.done, open)
                     Spacer(GlanceModifier.width(10.dp))
-                    Text(row.name, GlanceModifier.defaultWeight(), style = text(if (row.done) Colors.muted else Colors.fg, 14), maxLines = 2)
+                    Column(GlanceModifier.defaultWeight()) {
+                        Text(row.name, style = text(if (row.done) Colors.muted else Colors.fg, 14), maxLines = 2)
+                        row.rule?.let { Text(it, style = text(Colors.muted, 11), maxLines = 1) }
+                    }
                     if (wide && row.worth.isNotEmpty()) Text(row.worth, GlanceModifier.padding(start = 8.dp), style = text(Colors.muted, 12), maxLines = 1)
                 }
             }
@@ -236,7 +239,7 @@ object HabitWidgets {
     fun read(context: Context): WidgetState {
         val saved = Saved.read(context)
         val savedAt = NowCache.read(context)?.fetchedAt ?: HabitCache.read(context, HabitCache.LIST)?.fetchedAt
-        return WidgetModel.state(saved, savedAt, Instant.now(), ZoneId.systemDefault())
+        return WidgetModel.state(saved, savedAt, Instant.now(), ZoneId.systemDefault(), HabitRuleWatch.latest(context))
     }
 
     /**

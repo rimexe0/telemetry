@@ -78,7 +78,10 @@ class HabitDayTest {
             HabitTick("b", 2, "2026-11-26", Instant.parse("2026-11-26T06:01:00Z"), HabitTick.TICK),
         )
         val habits = TodayHabits.list("2026-11-26", cached, list, queue)!!
-        assertEquals(listOf(TodayHabit(1, "Walk", false, 30.0), TodayHabit(2, "Gym", true, 30.0)), habits)
+        assertEquals(listOf(
+            TodayHabit(1, "Walk", false, 30.0, unticked = true),
+            TodayHabit(2, "Gym", true, 30.0, doneAt = Instant.parse("2026-11-26T06:01:00Z"), doneBy = "hand"),
+        ), habits)
     }
 
     @Test

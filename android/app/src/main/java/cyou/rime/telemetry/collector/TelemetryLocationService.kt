@@ -22,6 +22,7 @@ class TelemetryLocationService : Service() {
     private lateinit var listener: LocationListener
     private val handler = Handler(Looper.getMainLooper())
     private var intervalMillis = 0L
+    private var minDistance = -1f
     private val resourceCheck = object : Runnable {
         override fun run() {
             updateLocationRequest()
@@ -74,18 +75,23 @@ class TelemetryLocationService : Service() {
         if (budget.constrainedReason != null) {
             stopLocationUpdates()
             intervalMillis = 0L
+            minDistance = -1f
             prefs.edit().putString("state", "paused_resources:${budget.constrainedReason}").apply()
             return
         }
-        if (intervalMillis == budget.intervalMillis) return
+        // While a place habit's window is open and it isn't done, positions
+        // come even while the phone stays still, so a stay there is seen.
+        val distance = if (HabitRuleWatch.wantsPrecise(this)) 0f else 25f
+        if (intervalMillis == budget.intervalMillis && minDistance == distance) return
         try {
             stopLocationUpdates()
             if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
                 ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
             ) {
                 locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER,
-                    budget.intervalMillis, 25f, listener, mainLooper)
+                    budget.intervalMillis, distance, listener, mainLooper)
                 intervalMillis = budget.intervalMillis
+                minDistance = distance
                 prefs.edit().putString("state", "active_waiting_for_fix").apply()
             }
         } catch (error: Exception) {
@@ -105,6 +111,7 @@ class TelemetryLocationService : Service() {
             .putNullable("speed_meters_per_second", if (location.hasSpeed()) location.speed else null)
             .putNullable("bearing_degrees", if (location.hasBearing()) location.bearing else null)
         PlaceReminders.onPosition(this, location.latitude, location.longitude, location.accuracy.toDouble())
+        HabitRuleWatch.onPosition(this, RuleFix(Instant.ofEpochMilli(location.time), location.latitude, location.longitude, location.accuracy.toDouble()))
         getSharedPreferences("telemetry-location-status", MODE_PRIVATE).edit()
             .putString("state", "fix_received")
             .putLong("last_fix_at", location.time).apply()

@@ -5,8 +5,8 @@ import android.content.Context
 /**
  * The kinds of notification the app may send, each with its own switch in
  * Settings. The owner found most of them irritating (2026-11-22) and called
- * them useless (2026-11-24), so only the sync notice and follow-ups start
- * on, and a switched-off kind stays off: nothing in the app switches one
+ * them useless (2026-11-24), so only the sync notice, follow-ups and a
+ * habit's place (which the owner asked for on 2026-11-26) start on, and a switched-off kind stays off: nothing in the app switches one
  * back on or asks for it again.
  */
 enum class NoticeKind(val title: String, val detail: String, val defaultOn: Boolean) {
@@ -16,6 +16,8 @@ enum class NoticeKind(val title: String, val detail: String, val defaultOn: Bool
     COMPUTER_STOPPED("Telemetry stopped on a computer", "Once each time, not repeated.", false),
     COMPUTER_PROBLEMS("Other collection problems on a computer", "Such as a computer that went quiet or can't read window titles.", false),
     TASKS("Tasks", "When a coding agent waits for you, and the day's tasks in the morning.", false),
+    // The owner asked to be asked to go out in the morning (2026-11-26).
+    HABIT_PLACES("A habit's place in the morning", "Once a day when a place habit's window opens and it isn't done: how far the place is.", true),
 }
 
 object Notices {

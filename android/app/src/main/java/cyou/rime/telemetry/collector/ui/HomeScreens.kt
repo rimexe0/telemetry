@@ -141,6 +141,8 @@ fun TodayScreen(
     doorBusy: Boolean,
     onTick: (Long, Boolean) -> Unit,
     onCancelDoor: (Long) -> Unit,
+    /** Under a habit with a rule: "Karantina İskelesi · 420 m away", or "reached 08:12". */
+    ruleLines: Map<Long, String> = emptyMap(),
 ) = Page {
     val colors = panelColors()
     PageHead("Today", dateLabel)
@@ -172,6 +174,7 @@ fun TodayScreen(
                         val worth = HabitCells.worth(habit.value)
                         if (worth.isNotEmpty() && state.budget?.enabled != false) Small(worth)
                     }
+                    ruleLines[habit.id]?.let { Small(it, Modifier.padding(start = 32.dp, bottom = 4.dp)) }
                     WeekStrip(state.strips[habit.id].orEmpty(), letters = last, modifier = Modifier.padding(start = 32.dp))
                 }
             }
@@ -265,6 +268,10 @@ class HabitEditing(
     val archive: (Long, Boolean) -> Unit,
     val add: (String) -> Unit,
     val reasons: (List<String>) -> Unit,
+    /** Opens the place picker for a habit's rule. */
+    val pickRule: (Long) -> Unit = {},
+    /** Removes a habit's rule. */
+    val clearRule: (Long) -> Unit = {},
 )
 
 @Composable
@@ -301,6 +308,7 @@ private fun HabitEditor(habits: List<HabitDef>?, notice: String?, editing: Habit
     val colors = panelColors()
     var naming by remember { mutableStateOf<Long?>(null) }
     var days by remember { mutableStateOf<Long?>(null) }
+    var rules by remember { mutableStateOf<Long?>(null) }
     var adding by remember { mutableStateOf(false) }
     var removed by remember { mutableStateOf<Long?>(null) }
     LaunchedEffect(removed) {
@@ -340,6 +348,15 @@ private fun HabitEditor(habits: List<HabitDef>?, notice: String?, editing: Habit
                     Small(weekdaysLabel(habit.weekdays), Modifier.heightIn(min = 28.dp).clickable(role = Role.Button) { days = if (days == habit.id) null else habit.id }
                         .padding(vertical = 4.dp))
                     if (days == habit.id) DayToggles(habit.weekdays) { editing.weekdays(habit.id, it) }
+                    // The rule: a place to go to, which ticks the habit by itself.
+                    Small("Rule: ${cyou.rime.telemetry.collector.RuleText.summary(habit.rule)}", Modifier.fillMaxWidth().heightIn(min = 28.dp)
+                        .clickable(role = Role.Button) { rules = if (rules == habit.id) null else habit.id }.padding(vertical = 4.dp))
+                    if (rules == habit.id) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            LinkWord("Go to a place") { rules = null; editing.pickRule(habit.id) }
+                            if (habit.rule != null) LinkWord("No rule") { rules = null; editing.clearRule(habit.id) }
+                        }
+                    }
                 }
             }
         }
