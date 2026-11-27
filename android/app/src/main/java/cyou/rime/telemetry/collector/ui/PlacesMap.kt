@@ -32,7 +32,7 @@ import java.io.File
  * reached. Tiles come only through the owner's server ([ServerTiles]).
  */
 @Composable
-fun PlacesMap(day: PlacesDay, modifier: Modifier) {
+fun PlacesMap(day: PlacesDay, modifier: Modifier, period: Boolean = false) {
     val context = LocalContext.current
     val colors = panelColors()
     val density = LocalDensity.current.density
@@ -62,7 +62,7 @@ fun PlacesMap(day: PlacesDay, modifier: Modifier) {
         modifier = modifier.semantics { contentDescription = "Map of the day's places" },
         update = { view ->
             view.overlays.clear()
-            view.overlays.add(DayOverlay(day, colors, density))
+            view.overlays.add(DayOverlay(day, colors, density, period))
             view.invalidate()
             // Fitted to the day once per day shown, so a refresh never moves the map under a finger.
             if (fitted[0] != day.date) {
@@ -86,14 +86,18 @@ fun PlacesMap(day: PlacesDay, modifier: Modifier) {
     )
 }
 
-/** Everything drawn over the tiles, in screen pixels. */
-private class DayOverlay(private val day: PlacesDay, colors: PanelColors, private val density: Float) : Overlay() {
+/**
+ * Everything drawn over the tiles, in screen pixels. For a week, month or
+ * year ([period]) there is no path: the positions are dots, if any, and
+ * each place stayed at is labelled once, by its name.
+ */
+private class DayOverlay(private val day: PlacesDay, colors: PanelColors, private val density: Float, private val period: Boolean = false) : Overlay() {
     private val fg = colors.fg.toArgb()
     private val bg = colors.bg.toArgb()
     private val muted = colors.muted.toArgb()
     private val done = colors.done.toArgb()
     private val points = Places.usable(day.positions)
-    private val lines = Places.pathLines(points, day.stays)
+    private val lines = if (period) emptyList() else Places.pathLines(points, day.stays)
     private val visits = Places.visits(points, day.rules)
 
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 2 * density; color = fg; alpha = 170; strokeJoin = Paint.Join.ROUND; strokeCap = Paint.Cap.ROUND }
@@ -111,7 +115,8 @@ private class DayOverlay(private val day: PlacesDay, colors: PanelColors, privat
 
         // The habits' places: a circle of their radius, green once reached.
         for (place in day.rules) {
-            val reached = visits.any { it.place.habitId == place.habitId }
+            val reached = visits.any { it.place.habitId == place.habitId } ||
+                (period && day.stays.any { cyou.rime.telemetry.collector.PlaceRule.meters(it.lat, it.lon, place.lat, place.lon) <= place.radiusM })
             val center = pixel(place.lat, place.lon)
             val edge = pixel(place.lat + place.radiusM / 111_320.0, place.lon)
             val radius = kotlin.math.abs(center.y - edge.y).toFloat().coerceAtLeast(4 * density)
@@ -132,7 +137,15 @@ private class DayOverlay(private val day: PlacesDay, colors: PanelColors, privat
             }
             canvas.drawPath(path, line)
         }
-        // No dot per position: at home they pile into a blob; the line says enough.
+        // A day draws no dot per position: at home they pile into a blob; the line says enough.
+        if (period) {
+            fill.color = fg
+            fill.alpha = 110
+            for (fix in points) {
+                val p = pixel(fix.lat, fix.lon)
+                canvas.drawCircle(p.x.toFloat(), p.y.toFloat(), 1.5f * density, fill)
+            }
+        }
         // Home, filled; each other stay, hollow, with its times and place.
         day.stays.firstOrNull { it.home }?.let { home ->
             val p = pixel(home.lat, home.lon)
@@ -141,6 +154,7 @@ private class DayOverlay(private val day: PlacesDay, colors: PanelColors, privat
             canvas.drawCircle(p.x.toFloat(), p.y.toFloat(), 7 * density, fill)
             label(canvas, "home", p.x + 10 * density, p.y + 4 * density)
         }
+        val named = mutableSetOf<String>()
         for (stay in day.stays) {
             if (stay.home) continue
             val p = pixel(stay.lat, stay.lon)
@@ -149,7 +163,8 @@ private class DayOverlay(private val day: PlacesDay, colors: PanelColors, privat
             canvas.drawCircle(p.x.toFloat(), p.y.toFloat(), 6 * density, fill)
             stroke.color = fg
             canvas.drawCircle(p.x.toFloat(), p.y.toFloat(), 6 * density, stroke)
-            label(canvas, Places.stayLabel(stay, visits, day.zone), p.x + 10 * density, p.y + 4 * density)
+            if (!period) label(canvas, Places.stayLabel(stay, visits, day.zone), p.x + 10 * density, p.y + 4 * density)
+            else Places.stayName(stay, visits).takeIf { it.isNotEmpty() && named.add(it) }?.let { label(canvas, it, p.x + 10 * density, p.y + 4 * density) }
         }
     }
 

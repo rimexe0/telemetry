@@ -34,15 +34,27 @@ data class Shown<T>(val value: T?, val at: Instant?, val refresh: Refresh, val l
  * there at once; a fresh one is asked for quietly behind it. Lives as long
  * as the app's screen, so switching places never loads anything again.
  */
-class ActivityData(private val context: Context, private val scope: CoroutineScope, private val zone: ZoneId = ZoneId.systemDefault()) {
+class ActivityData(private val context: Context, private val work: CoroutineScope, private val zone: ZoneId = ZoneId.systemDefault()) {
     var section by mutableStateOf(ActivitySection.TIMELINE)
     var day by mutableStateOf(LocalDate.now(zone).toString())
+
+    /** Day, week, month or year, for all four views at once; kept while the app runs. */
+    var scope by mutableStateOf(kept)
+        private set
+
+    companion object {
+        @Volatile private var kept: Scope = Scope.DAY
+    }
+
+    val period: Period get() = Periods.of(scope, LocalDate.parse(day))
+
+    val periods = PeriodData(context, work, zone)
 
     private val days = mutableStateMapOf<String, Shown<DayView>>()
     private val summaries = mutableStateMapOf<String, Shown<ActivitySummary>>()
     private val places = mutableStateMapOf<String, Shown<PlacesDay>>()
     private val healthDays = mutableStateMapOf<String, Shown<HealthDayView>>()
-    private val loader = AnswerLoader(context, scope)
+    private val loader = AnswerLoader(context, work)
     private val askedAt = mutableMapOf<String, Instant>()
     private val running = mutableSetOf<String>()
 
@@ -53,18 +65,19 @@ class ActivityData(private val context: Context, private val scope: CoroutineSco
 
     val today: String get() = LocalDate.now(zone).toString()
 
-    fun move(days: Long) {
-        val next = LocalDate.parse(day).plusDays(days)
-        if (next.isAfter(LocalDate.now(zone))) return
+    /** One day, week, month or year back or on ([by] -1 or 1), never into a period after today's. */
+    fun move(by: Long) {
+        val next = Periods.step(scope, LocalDate.parse(day), by, LocalDate.now(zone)) ?: return
         day = next.toString()
         show()
     }
 
-    /** A sideways swipe of [dx] pixels: left to the next day, right to the day before, never past today. */
+    /** A sideways swipe of [dx] pixels: left to the next day or period, right to the one before. */
     fun swipe(dx: Float, threshold: Float) {
-        val next = DaySwipe.target(day, today, dx, threshold) ?: return
-        day = next
-        show()
+        when {
+            dx <= -threshold -> move(1)
+            dx >= threshold -> move(-1)
+        }
     }
 
     fun goToday() {
@@ -77,15 +90,43 @@ class ActivityData(private val context: Context, private val scope: CoroutineSco
         show()
     }
 
+    fun selectScope(next: Scope) {
+        scope = next
+        kept = next
+        show()
+    }
+
     /**
      * Shows what is saved for the place in view, then asks for it when it
-     * was not asked lately; the days either side are made ready the same
-     * way, so a swipe shows its day at once.
+     * was not asked lately; the days or periods either side are made ready
+     * the same way, so a swipe shows its day at once.
      */
     fun show(force: Boolean = false) {
         val day = day
+        if (scope != Scope.DAY) {
+            showPeriod(force)
+            return
+        }
         load(section, day, force)
         for (near in DaySwipe.neighbours(day, today)) load(section, near, false)
+    }
+
+    private fun showPeriod(force: Boolean) {
+        val today = LocalDate.now(zone)
+        val period = period
+        val near = listOf(-1L, 1L).mapNotNull { by -> Periods.step(scope, LocalDate.parse(day), by, today)?.let { Periods.of(scope, it) } }
+        when (section) {
+            ActivitySection.HEALTH -> {
+                periods.loadHealth(period, today, force)
+                if (scope != Scope.YEAR) near.forEach { periods.loadHealth(it, today) }
+            }
+            else -> {
+                periods.loadRows(period, today, force)
+                if (scope != Scope.YEAR) near.forEach { periods.loadRows(it, today) }
+                // A week's map shows its positions, from each day's places.
+                if (section == ActivitySection.PLACES && scope == Scope.WEEK) Periods.days(period, today).forEach { load(ActivitySection.PLACES, it.toString(), false) }
+            }
+        }
     }
 
     private fun load(section: ActivitySection, day: String, force: Boolean) {
@@ -125,7 +166,7 @@ class ActivityData(private val context: Context, private val scope: CoroutineSco
         if (!force && asked != null && Duration.between(asked, Instant.now()) < AnswerLoader.EVERY) return
         running += key
         askedAt[key] = Instant.now()
-        scope.launch {
+        work.launch {
             val known = healthDays[day]
             if (known?.value == null) {
                 val saved = withContext(Dispatchers.IO) { HealthDays.saved(context, day) }
@@ -141,7 +182,7 @@ class ActivityData(private val context: Context, private val scope: CoroutineSco
 
     /** Drops per-day answers older than three weeks. */
     fun prune() {
-        scope.launch(Dispatchers.IO) { runCatching { AnswerStore.of(context).prune(LocalDate.now(zone)) } }
+        work.launch(Dispatchers.IO) { runCatching { AnswerStore.of(context).prune(LocalDate.now(zone)) } }
     }
 }
 

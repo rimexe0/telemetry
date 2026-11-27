@@ -61,6 +61,9 @@ import cyou.rime.telemetry.collector.Showing
 import cyou.rime.telemetry.collector.PlaceItem
 import cyou.rime.telemetry.collector.Places
 import cyou.rime.telemetry.collector.PlacesDay
+import cyou.rime.telemetry.collector.Period
+import cyou.rime.telemetry.collector.Periods
+import cyou.rime.telemetry.collector.Scope
 import cyou.rime.telemetry.collector.Refresh
 import cyou.rime.telemetry.collector.Shown
 import cyou.rime.telemetry.collector.TimelineRow
@@ -116,9 +119,9 @@ private fun savedClock(at: Instant, now: Instant, zone: ZoneId): String {
 
 /** Equal square segments in one 1px box, the one in force filled (the panel's .segments). */
 @Composable
-internal fun <T> Segments(items: List<T>, current: T, label: (T) -> String, onSelect: (T) -> Unit) {
+internal fun <T> Segments(items: List<T>, current: T, label: (T) -> String, small: Boolean = false, onSelect: (T) -> Unit) {
     val colors = panelColors()
-    Row(Modifier.fillMaxWidth().height(44.dp).border(1.dp, colors.fg)) {
+    Row(Modifier.fillMaxWidth().height(if (small) 36.dp else 44.dp).border(1.dp, colors.fg)) {
         items.forEachIndexed { index, item ->
             val active = item == current
             Box(
@@ -128,7 +131,7 @@ internal fun <T> Segments(items: List<T>, current: T, label: (T) -> String, onSe
                     .clickable(role = Role.Tab) { onSelect(item) },
                 contentAlignment = Alignment.Center,
             ) {
-                Text(label(item), style = TextStyle(fontFamily = Mono, fontSize = 12.5.sp, color = if (active) colors.bg else colors.fg, fontWeight = if (active) FontWeight.Bold else null))
+                Text(label(item), style = TextStyle(fontFamily = Mono, fontSize = if (small) 11.5.sp else 12.5.sp, color = if (active) colors.bg else colors.fg, fontWeight = if (active) FontWeight.Bold else null))
             }
         }
     }
@@ -141,18 +144,20 @@ fun dayLabel(day: String, today: String): String {
     return DateTimeFormatter.ofPattern("EEE d MMM", Locale.UK).format(date)
 }
 
-/** The day switcher: ‹ day ›, and Today when another day is shown. */
+/** The date switcher: ‹ day, week, month or year ›, and Today when another one is shown. */
 @Composable
-private fun DaySwitcher(day: String, today: String, onMove: (Long) -> Unit, onToday: () -> Unit) {
+private fun PeriodSwitcher(period: Period, today: LocalDate, onMove: (Long) -> Unit, onToday: () -> Unit) {
     val colors = panelColors()
+    val current = Periods.isCurrent(period, today)
     Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.width(44.dp).height(44.dp).border(1.dp, colors.fg).clickable(role = Role.Button) { onMove(-1) }.semantics { contentDescription = "The day before" },
+        Box(Modifier.width(44.dp).height(44.dp).border(1.dp, colors.fg).clickable(role = Role.Button) { onMove(-1) }
+            .semantics { contentDescription = Periods.stepName(period.scope, forward = false) },
             contentAlignment = Alignment.Center) { PText("‹", size = 18.sp) }
-        PText(dayLabel(day, today), Modifier.weight(1f).padding(horizontal = 12.dp), size = 15.sp, weight = FontWeight.Bold)
-        if (day != today) ActWord("Today", onClick = onToday)
-        val canForward = day < today
+        PText(Periods.label(period, today), Modifier.weight(1f).padding(horizontal = 12.dp), size = 15.sp, weight = FontWeight.Bold)
+        if (!current) ActWord("Today", onClick = onToday)
+        val canForward = !current
         Box(Modifier.width(44.dp).height(44.dp).border(1.dp, if (canForward) colors.fg else colors.line)
-            .clickable(enabled = canForward, role = Role.Button) { onMove(1) }.semantics { contentDescription = "The day after" },
+            .clickable(enabled = canForward, role = Role.Button) { onMove(1) }.semantics { contentDescription = Periods.stepName(period.scope, forward = true) },
             contentAlignment = Alignment.Center) { PText("›", size = 18.sp, color = if (canForward) colors.fg else colors.line) }
     }
 }
@@ -194,9 +199,15 @@ fun ActivityScreen(data: ActivityData, now: Instant, zone: ZoneId) {
             .swipeDays(inside = { at -> map[0]?.contains(page[0] + at) == true }, onSwipe = data::swipe),
     ) {
         PageHead("Activity")
-        Segments(ActivitySection.entries, section, { it.label }, data::select)
-        DaySwitcher(data.day, today, data::move, data::goToday)
+        Segments(ActivitySection.entries, section, { it.label }, onSelect = data::select)
+        Gap(8.dp)
+        Segments(Scope.entries, data.scope, { it.label }, small = true, onSelect = data::selectScope)
+        PeriodSwitcher(data.period, LocalDate.parse(today), data::move, data::goToday)
         Gap(10.dp)
+        if (data.scope != Scope.DAY) {
+            PeriodView(data, now, zone) { map[0] = it }
+            return@AppPage
+        }
         when (section) {
             ActivitySection.TIMELINE -> TimelineView(data.timeline(), now, zone)
             ActivitySection.APPS -> AppsView(data.summary(), now, zone)
@@ -289,7 +300,7 @@ private fun Timeline(view: DayView, zone: ZoneId) {
 }
 
 @Composable
-private fun Tag(text: String) {
+internal fun Tag(text: String) {
     val colors = panelColors()
     Text(text.uppercase(), Modifier.padding(start = 6.dp).border(1.dp, colors.line).padding(horizontal = 4.dp),
         style = TextStyle(fontFamily = Mono, fontSize = 10.sp, color = colors.fg))
@@ -339,7 +350,7 @@ private fun Apps(summary: ActivitySummary) {
 }
 
 @Composable
-private fun UsageList(title: String, items: List<cyou.rime.telemetry.collector.Usage>, empty: String) {
+internal fun UsageList(title: String, items: List<cyou.rime.telemetry.collector.Usage>, empty: String) {
     val colors = panelColors()
     Small(title, Modifier.padding(top = 10.dp, bottom = 2.dp))
     if (items.isEmpty() && empty.isNotEmpty()) Small(empty)
@@ -430,7 +441,7 @@ private fun Health(view: HealthDayView, today: String) {
 
 /** 00:00, 12:00 and 24:00 under a chart of the day. */
 @Composable
-private fun ClockAxis() {
+internal fun ClockAxis() {
     Box(Modifier.fillMaxWidth()) {
         Small("00:00", Modifier.align(Alignment.CenterStart))
         Small("12:00", Modifier.align(Alignment.Center))
@@ -439,7 +450,7 @@ private fun ClockAxis() {
 }
 
 @Composable
-private fun HealthLine(label: String, value: String) {
+internal fun HealthLine(label: String, value: String) {
     Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
         Small(label, Modifier.width(96.dp))
         PText(value, Modifier.weight(1f), size = 14.sp)

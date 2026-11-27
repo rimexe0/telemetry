@@ -7,6 +7,7 @@ import androidx.health.connect.client.records.HeartRateRecord
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.request.AggregateGroupByDurationRequest
+import androidx.health.connect.client.request.AggregateGroupByPeriodRequest
 import androidx.health.connect.client.request.AggregateRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
@@ -107,6 +108,67 @@ object HealthDays {
         AnswerStore.of(context).put(key(date.toString()), toJson(view))
         return view
     }
+
+    /**
+     * Each day's numbers from [first] to [last] in one go, for a week, month
+     * or year, with the kinds Health Connect doesn't let the app read. Null
+     * when Health Connect isn't there. A day with nothing recorded has nulls.
+     */
+    suspend fun readDays(context: Context, first: LocalDate, last: LocalDate, zone: ZoneId = ZoneId.systemDefault()): Pair<List<HealthDay>, List<String>>? {
+        val available = runCatching { HealthConnectClient.getSdkStatus(context, PACKAGE) == HealthConnectClient.SDK_AVAILABLE }.getOrDefault(false)
+        if (!available) return null
+        val client = runCatching { HealthConnectClient.getOrCreate(context, PACKAGE) }.getOrNull() ?: return null
+        val granted = runCatching { client.permissionController.getGrantedPermissions() }.getOrNull() ?: return null
+        val steps = HealthPermission.getReadPermission(StepsRecord::class) in granted
+        val heart = HealthPermission.getReadPermission(HeartRateRecord::class) in granted
+        val sleep = HealthPermission.getReadPermission(SleepSessionRecord::class) in granted
+        val missing = buildList {
+            if (!sleep) add("sleep")
+            if (!heart) add("heart rate")
+            if (!steps) add("steps")
+        }
+        val metrics = buildSet {
+            if (steps) add(StepsRecord.COUNT_TOTAL)
+            if (heart) { add(HeartRateRecord.BPM_MIN); add(HeartRateRecord.BPM_AVG); add(HeartRateRecord.BPM_MAX) }
+        }
+        val byDay = mutableMapOf<LocalDate, androidx.health.connect.client.aggregate.AggregationResult>()
+        if (metrics.isNotEmpty()) runCatching {
+            client.aggregateGroupByPeriod(AggregateGroupByPeriodRequest(metrics, TimeRangeFilter.between(first.atStartOfDay(), last.plusDays(1).atStartOfDay()), java.time.Period.ofDays(1)))
+        }.getOrNull()?.forEach { slice -> byDay[slice.startTime.toLocalDate()] = slice.result }
+        val from = first.atStartOfDay(zone).toInstant()
+        val to = last.plusDays(1).atStartOfDay(zone).toInstant()
+        val slept = mutableMapOf<LocalDate, Long>()
+        if (sleep) runCatching {
+            var token: String? = null
+            var pages = 0
+            do {
+                val page = client.readRecords(ReadRecordsRequest(SleepSessionRecord::class, TimeRangeFilter.between(from.minus(Duration.ofDays(1)), to), pageSize = 1000, pageToken = token))
+                page.records.filter { !it.endTime.isBefore(from) && it.endTime.isBefore(to) }.forEach {
+                    val date = it.endTime.atZone(zone).toLocalDate()
+                    slept[date] = (slept[date] ?: 0L) + Duration.between(it.startTime, it.endTime).toMinutes()
+                }
+                token = page.pageToken
+            } while (token != null && ++pages < 50)
+        }
+        val days = mutableListOf<HealthDay>()
+        var date = first
+        while (!date.isAfter(last)) {
+            val result = byDay[date]
+            days += HealthDay(date.toString(), result?.get(StepsRecord.COUNT_TOTAL), result?.get(HeartRateRecord.BPM_MIN), result?.get(HeartRateRecord.BPM_AVG),
+                result?.get(HeartRateRecord.BPM_MAX), slept[date])
+            date = date.plusDays(1)
+        }
+        return days to missing
+    }
+
+    fun dayJson(day: HealthDay): JSONObject = JSONObject().put("date", day.date).put("steps", day.steps ?: JSONObject.NULL)
+        .put("heart_min", day.heartMin ?: JSONObject.NULL).put("heart_avg", day.heartAvg ?: JSONObject.NULL).put("heart_max", day.heartMax ?: JSONObject.NULL)
+        .put("sleep_minutes", day.sleepMinutes ?: JSONObject.NULL)
+
+    fun day(json: JSONObject): HealthDay? = runCatching {
+        fun JSONObject.long(name: String): Long? = if (isNull(name) || !has(name)) null else optLong(name)
+        HealthDay(LocalDate.parse(json.getString("date")).toString(), json.long("steps"), json.long("heart_min"), json.long("heart_avg"), json.long("heart_max"), json.long("sleep_minutes"))
+    }.getOrNull()
 
     /** The day's heart rate as the average of each ten-minute stretch that has any, in time order. */
     fun heartLine(samples: List<Pair<Instant, Long>>, from: Instant, to: Instant): List<HeartPoint> =
