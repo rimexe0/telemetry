@@ -44,6 +44,8 @@ fun PlacesMap(day: PlacesDay, modifier: Modifier) {
         config.osmdroidBasePath = base
         config.osmdroidTileCache = File(base, "tiles")
         MapView(context, ServerTiles.provider(context)).apply {
+            // The tiles stay inside the map's box (owner 2026-11-27: they covered the page).
+            clipToOutline = true
             setMultiTouchControls(true)
             zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
             setBackgroundColor(colors.soft.toArgb())
@@ -94,8 +96,7 @@ private class DayOverlay(private val day: PlacesDay, colors: PanelColors, privat
     private val lines = Places.pathLines(points)
     private val visits = Places.visits(points, day.rules)
 
-    private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 3 * density; color = fg; alpha = 190; strokeJoin = Paint.Join.ROUND; strokeCap = Paint.Cap.ROUND }
-    private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = fg; alpha = 140 }
+    private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 2 * density; color = fg; alpha = 170; strokeJoin = Paint.Join.ROUND; strokeCap = Paint.Cap.ROUND }
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 2 * density }
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.MONOSPACE; textSize = 11 * density; color = fg }
@@ -131,10 +132,7 @@ private class DayOverlay(private val day: PlacesDay, colors: PanelColors, privat
             }
             canvas.drawPath(path, line)
         }
-        for (fix in points) {
-            val p = pixel(fix.lat, fix.lon)
-            canvas.drawCircle(p.x.toFloat(), p.y.toFloat(), 3 * density, dot)
-        }
+        // No dot per position: at home they pile into a blob; the line says enough.
         // Home, filled; each other stay, hollow, with its times and place.
         day.stays.firstOrNull { it.home }?.let { home ->
             val p = pixel(home.lat, home.lon)

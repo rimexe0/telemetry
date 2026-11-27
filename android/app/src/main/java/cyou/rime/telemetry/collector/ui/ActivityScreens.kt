@@ -21,6 +21,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -374,7 +375,7 @@ private fun PlacesView(shown: Shown<PlacesDay>, now: Instant, zone: ZoneId) {
         Small("No positions this day.")
         return
     }
-    PlacesMap(day, Modifier.fillMaxWidth().height(360.dp).border(1.dp, colors.fg))
+    PlacesMap(day, Modifier.fillMaxWidth().height(360.dp).border(1.dp, colors.fg).padding(1.dp).clipToBounds())
     Gap(10.dp)
     val items = Places.list(day)
     items.forEach { item ->
