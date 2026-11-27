@@ -43,9 +43,12 @@ var (
 	signedOnly = map[string]bool{"org.mozilla.firefox": true, "firefox": true}
 	// extensionsPageTitles are the Extensions page's tab title in the owner's
 	// languages; that page stays usable so the extension can be switched
-	// back on. addonsPageTitles are Firefox's Add-ons page's.
+	// back on. addonsPageTitles are Firefox's Add-ons page's, and its
+	// about:config page's (Advanced Preferences), which stays usable too: an
+	// unsigned extension may need a preference changed there before it runs
+	// (owner, 2026-11-27).
 	extensionsPageTitles = []string{"Extensions", "Uzantılar"}
-	addonsPageTitles     = []string{"Add-ons Manager", "Eklenti Yöneticisi", "Eklentiler"}
+	addonsPageTitles     = []string{"Add-ons Manager", "Eklenti Yöneticisi", "Eklentiler", "Advanced Preferences", "Gelişmiş Tercihler"}
 )
 
 // extensionsPage reports whether a browser window shows its Extensions page.
@@ -58,13 +61,15 @@ var (
 //
 // Firefox browsers show the Add-ons page's title alone on macOS and add
 // " — LibreWolf" on Linux, or " — Private Browsing" in a private window.
+// Their about:config page counts as the Add-ons page; while it loads its
+// title is the address.
 func extensionsPage(title, browser string, firefox bool) bool {
 	title = strings.TrimSpace(title)
 	if firefox {
 		if strings.HasPrefix(title, "about:addons") {
 			return true
 		}
-		for _, page := range addonsPageTitles {
+		for _, page := range append(addonsPageTitles, "about:config") {
 			if rest, found := strings.CutPrefix(title, page); found &&
 				(rest == "" || strings.HasPrefix(rest, " — "+browser) || strings.HasPrefix(rest, " — Private Browsing")) {
 				return true
