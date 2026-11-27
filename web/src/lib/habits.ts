@@ -1,4 +1,4 @@
-import type { Habit, HabitDayStatus } from './api';
+import type { Habit, HabitDayStatus, HabitRule } from './api';
 
 // Habits and their heatmap. Days are budget-day keys, YYYY-MM-DD.
 
@@ -21,6 +21,14 @@ export function weekdaysText(days: number[] | null | undefined): string {
   const normal = normalizeWeekdays(days ?? []);
   if (!normal.length) return 'Every day';
   return normal.map(day => weekdays.find(item => item.day === day)?.short).join(', ');
+}
+
+/** "Go to the pier · within 100 m for 1 min · from waking until 11:00", or "" without a rule. */
+export function ruleText(rule: HabitRule | null | undefined): string {
+  if (!rule || rule.kind !== 'place' || !rule.place) return '';
+  const minutes = rule.minutes ?? 1;
+  const from = rule.window.from === 'wake' ? 'from waking' : `from ${rule.window.from}`;
+  return `Go to ${rule.place.name} · within ${rule.radius_m ?? 100} m for ${minutes} min · ${from} until ${rule.window.until}`;
 }
 
 export const isArchived = (habit: Habit) => !!habit.archived || !!habit.archived_at;

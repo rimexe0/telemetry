@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cellState, cellTitle, combinedLevel, combinedTitle, heatmapLayout, moveHabit, normalizeWeekdays, runsText, sortHabits, weekdaysText, weekStrip } from './habits';
+import { cellState, cellTitle, combinedLevel, combinedTitle, heatmapLayout, moveHabit, normalizeWeekdays, ruleText, runsText, sortHabits, weekdaysText, weekStrip } from './habits';
 
 describe('heatmap layout', () => {
   it('puts days in Monday-first week columns', () => {
@@ -130,5 +130,16 @@ describe('week strip', () => {
 
   it('crosses a month boundary', () => {
     expect(weekStrip('Walk', {}, '2026-12-02', false).map(cell => cell.day)[0]).toBe('2026-11-26');
+  });
+});
+
+describe('habit rules', () => {
+  it('says a place rule in one line, and nothing without one', () => {
+    // A made-up place, not the owner's.
+    const rule = { kind: 'place' as const, place: { name: 'Test pier', lat: 41, lon: 29 }, radius_m: 100, minutes: 1, window: { from: 'wake', until: '11:00' } };
+    expect(ruleText(rule)).toBe('Go to Test pier · within 100 m for 1 min · from waking until 11:00');
+    expect(ruleText({ ...rule, radius_m: 150, minutes: 5, window: { from: '09:30', until: '10:30' } })).toBe('Go to Test pier · within 150 m for 5 min · from 09:30 until 10:30');
+    expect(ruleText(null)).toBe('');
+    expect(ruleText(undefined)).toBe('');
   });
 });

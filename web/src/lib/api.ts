@@ -1195,6 +1195,18 @@ export type Habit = {
   archived?: boolean;
   archived_at?: string | null;
   created_at?: string;
+  /** Ticks the habit by itself; set on the phone. Null when it has none. */
+  rule?: HabitRule | null;
+};
+
+/** A habit rule (budget.HabitRule in Go). The only kind is a place to reach. */
+export type HabitRule = {
+  kind: 'place';
+  place?: { name: string; lat: number; lon: number };
+  radius_m?: number;
+  /** from is "wake" or a local "HH:MM"; until a local "HH:MM". */
+  window: { from: string; until: string };
+  minutes?: number;
 };
 
 export type HabitChange = Partial<Pick<Habit, 'name' | 'position' | 'weekdays' | 'archived'>>;

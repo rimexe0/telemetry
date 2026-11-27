@@ -1,7 +1,7 @@
 <script lang="ts">
   import { whenFresh } from './fresh';
   import { createHabit, listHabits, updateHabit, type Habit, type HabitChange } from './api';
-  import { moveHabit, normalizeWeekdays, sortHabits, weekdays, weekdaysText } from './habits';
+  import { moveHabit, normalizeWeekdays, ruleText, sortHabits, weekdays, weekdaysText } from './habits';
 
   // The owner's own habits: nothing is seeded. Archiving keeps the history.
   export let onchange: () => void = () => {};
@@ -102,10 +102,12 @@
               <button disabled={busy || !draftName.trim()}>Save</button>
               <button type="button" class="quiet-button" on:click={() => { editing = 0; }}>Cancel</button>
               <span class="muted small">All days or none means every day.</span>
+              {#if ruleText(habit.rule)}<span class="muted small rule">Rule: {ruleText(habit.rule)} · set on the phone</span>{/if}
             </form>
           {:else}
             <span class="name">{habit.name}</span>
             <span class="muted small">{weekdaysText(habit.weekdays)}</span>
+            {#if ruleText(habit.rule)}<span class="muted small rule">Rule: {ruleText(habit.rule)} · set on the phone</span>{/if}
             <span class="buttons">
               <button class="quiet-button" disabled={busy || index === 0} aria-label="Move {habit.name} up" on:click={() => move(habit, -1)}>↑</button>
               <button class="quiet-button" disabled={busy || index === active.length - 1} aria-label="Move {habit.name} down" on:click={() => move(habit, 1)}>↓</button>
@@ -143,6 +145,7 @@
   .list { list-style: none; margin: 6px 0; padding: 0; }
   .list li { align-items: center; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; font-size: .85rem; gap: 8px; padding: 5px 0; }
   .list .name { overflow-wrap: anywhere; }
+  .rule { flex-basis: 100%; order: 1; overflow-wrap: anywhere; }
   .buttons { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
   .edit { flex: 1; }
   .days { border: 0; display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 0; padding: 0; }
