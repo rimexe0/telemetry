@@ -360,7 +360,7 @@ private fun BedtimeCard(data: SettingsData, lock: LockView, zone: ZoneId) {
             val parts = buildList {
                 val hours = SettingsRules.bedtimeHours(start, end)
                 if (enabled && hours > 12) add("Bedtime would last ${number(hours)} hours, from $start to $end.")
-                if (SettingsRules.bedtimeAsksLess(current, next)) add("This asks less than now, so it only starts when the next bedtime ends; until then it stays as it is.")
+                if (SettingsRules.bedtimeAsksLess(current, next, java.time.LocalTime.now(zone).let { it.hour * 60 + it.minute })) add("This asks less than now, so it only starts when the next bedtime ends; until then it stays as it is.")
             }
             if (parts.isEmpty()) data.saveBedtime(next) else confirming = next to parts.joinToString(" ")
         }

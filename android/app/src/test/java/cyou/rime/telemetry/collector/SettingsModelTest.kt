@@ -90,6 +90,12 @@ class SettingsModelTest {
         assertTrue(SettingsRules.bedtimeAsksLess(midnight, Bedtime(true, "10:00", "18:00", 65)))
         assertTrue(SettingsRules.bedtimeAsksLess(midnight, Bedtime(true, "23:30", "07:00", 65)))
         assertTrue(SettingsRules.bedtimeAsksLess(midnight, Bedtime(true, "23:00", "07:00", 30)))
+        // While bedtime holds, moving it earlier would end it early.
+        assertTrue(SettingsRules.bedtimeAsksLess(midnight, Bedtime(true, "22:00", "06:00", 65), 6 * 60))
+        assertTrue(SettingsRules.bedtimeAsksLess(midnight, Bedtime(true, "23:00", "07:00", 65), 0))
+        assertFalse(SettingsRules.bedtimeAsksLess(midnight, Bedtime(true, "23:00", "07:00", 65), 21 * 60 + 32))
+        assertFalse(SettingsRules.bedtimeAsksLess(midnight, Bedtime(true, "23:00", "07:00", 65), 8 * 60))
+        assertFalse(SettingsRules.bedtimeAsksLess(midnight, Bedtime(true, "23:00", "08:00", 65), 6 * 60))
         assertEquals(9.0, SettingsRules.bedtimeHours("23:00", "08:00"), 0.001)
     }
 

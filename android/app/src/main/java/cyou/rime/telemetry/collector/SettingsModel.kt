@@ -285,9 +285,10 @@ object SettingsRules {
     /**
      * Whether a bedtime asks less than the one in force: off, shorter at
      * either end, or a shorter wind-down. The server decides; this only
-     * says so before it is sent.
+     * says so before it is sent. [nowMinute] is the local minute after
+     * midnight the change is made at, when known.
      */
-    fun bedtimeAsksLess(current: Bedtime, next: Bedtime): Boolean {
+    fun bedtimeAsksLess(current: Bedtime, next: Bedtime, nowMinute: Int? = null): Boolean {
         if (!current.enabled) return false
         if (!next.enabled) return true
         val cs = minutesOf(current.start) ?: return true
@@ -299,8 +300,10 @@ object SettingsRules {
         val nextLength = (ne - ns + 1440) % 1440
         // Moving bedtime earlier, no shorter and ending no earlier than
         // 05:00, asks no less (owner request 2026-11-27; the server's
-        // Bedtime.movedEarlier).
-        if (ne >= EARLIEST_WAKE && ne <= ce && nextLength >= currentLength) return false
+        // Bedtime.movedEarlier). While bedtime holds, it would end that
+        // bedtime early, so it waits like any loosening (loophole case 4).
+        val holds = nowMinute != null && (nowMinute - cs + 1440) % 1440 < currentLength
+        if (!holds && ne >= EARLIEST_WAKE && ne <= ce && nextLength >= currentLength) return false
         // Each minute of the current bedtime must still be inside the new one.
         val startsInside = (cs - ns + 1440) % 1440
         return startsInside + currentLength > nextLength

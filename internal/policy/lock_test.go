@@ -121,6 +121,50 @@ func TestEarlierBedtimeIsNotLooser(t *testing.T) {
 	}
 }
 
+// Moving bedtime earlier while it holds would end that night's bedtime early
+// (loophole case 4): at 06:00 under 00:00-08:00, 22:00-06:00 ends it at once.
+// It waits like any loosening; outside its hours it still applies at once.
+func TestEarlierBedtimeWaitsWhileBedtimeHolds(t *testing.T) {
+	location, _ := time.LoadLocation("Europe/Istanbul")
+	at := func(day, hour, minute int) time.Time { return time.Date(2026, 11, day, hour, minute, 0, 0, location) }
+	config := outsideConfig(OutsideRule{})
+	config.Bedtime = Bedtime{Enabled: true, Start: "00:00", End: "08:00", WindDownMinutes: 65}
+	if err := config.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		now     time.Time
+		earlier Bedtime
+	}{
+		{at(28, 6, 0), Bedtime{Enabled: true, Start: "22:00", End: "06:00", WindDownMinutes: 65}},
+		{at(28, 5, 30), Bedtime{Enabled: true, Start: "23:00", End: "07:00", WindDownMinutes: 65}},
+		{at(28, 7, 59), Bedtime{Enabled: true, Start: "21:00", End: "05:00", WindDownMinutes: 65}},
+	} {
+		if !config.Bedtime.LooserAt(test.earlier, config.Timezone, test.now) {
+			t.Errorf("%v: %+v not looser while bedtime holds", test.now, test.earlier)
+		}
+		changed := config.WithBedtime(test.earlier, test.now)
+		if got := changed.BedtimeAt(test.now); got != config.Bedtime {
+			t.Errorf("%v: %+v applied at once while bedtime holds", test.now, test.earlier)
+		}
+		if _, in := bedtimeEnd(changed.BedtimeAt(at(28, 7, 59)), location, at(28, 7, 59)); !in {
+			t.Errorf("%v: %+v ended this bedtime before 08:00", test.now, test.earlier)
+		}
+	}
+	// Outside its hours, starting earlier asks no less and applies at once.
+	earlier := Bedtime{Enabled: true, Start: "23:00", End: "07:00", WindDownMinutes: 65}
+	if config.Bedtime.LooserAt(earlier, config.Timezone, at(27, 21, 32)) {
+		t.Fatal("earlier bedtime set in the evening counted as looser")
+	}
+	if got := config.WithBedtime(earlier, at(27, 21, 32)).BedtimeAt(at(27, 21, 32)); got != earlier {
+		t.Fatalf("earlier bedtime set in the evening did not apply at once: %+v", got)
+	}
+	// Starting earlier with the same end never frees a minute, even while it holds.
+	if config.Bedtime.LooserAt(Bedtime{Enabled: true, Start: "23:00", End: "08:00", WindDownMinutes: 65}, config.Timezone, at(28, 6, 0)) {
+		t.Fatal("longer bedtime with the same end counted as looser")
+	}
+}
+
 func TestExtensionRuleOnlyWhileSitesAreBlocked(t *testing.T) {
 	location, _ := time.LoadLocation("Europe/Istanbul")
 	config := outsideConfig(OutsideRule{})

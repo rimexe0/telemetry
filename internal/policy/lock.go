@@ -166,6 +166,31 @@ func (b Bedtime) Looser(next Bedtime) bool {
 	if b.movedEarlier(next) {
 		return false
 	}
+	return b.leavesOut(next)
+}
+
+// LooserAt is Looser for a change made at now. While the current bedtime
+// holds, moving it earlier would end that bedtime early, so it asks less
+// and waits like any loosening (loophole case 4, 2026-11-27).
+func (b Bedtime) LooserAt(next Bedtime, timezone string, now time.Time) bool {
+	if b.Looser(next) {
+		return true
+	}
+	if !b.Enabled || !b.movedEarlier(next) {
+		return false
+	}
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		location = time.UTC
+	}
+	if _, in := bedtimeEnd(b, location, now); !in {
+		return false
+	}
+	return b.leavesOut(next)
+}
+
+// leavesOut reports whether next leaves out any minute of b's hours.
+func (b Bedtime) leavesOut(next Bedtime) bool {
 	covered := minutesOf(next)
 	for minute, in := range minutesOf(b) {
 		if in && !covered[minute] {
@@ -224,7 +249,8 @@ func (c Config) BedtimeAt(at time.Time) Bedtime {
 
 // WithBedtime sets bedtime as of now; a looser one waits for the next day.
 func (c Config) WithBedtime(next Bedtime, now time.Time) Config {
-	c.Bedtime, c.BedtimeNext, c.BedtimeNextFrom = withRule(c.Timezone, c.Bedtime, c.BedtimeNext, c.BedtimeNextFrom, next, Bedtime.Looser, now, c.NextDay(now))
+	looser := func(current, next Bedtime) bool { return current.LooserAt(next, c.Timezone, now) }
+	c.Bedtime, c.BedtimeNext, c.BedtimeNextFrom = withRule(c.Timezone, c.Bedtime, c.BedtimeNext, c.BedtimeNextFrom, next, looser, now, c.NextDay(now))
 	return c
 }
 

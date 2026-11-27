@@ -97,7 +97,7 @@ func scheduleLoosens(config policy.Config, change ScheduleChange, now time.Time)
 		change.OpeningRule != nil && config.OpeningRuleAt(now).Looser(*change.OpeningRule) ||
 		change.Morning != nil && config.MorningAt(now).Looser(*change.Morning) ||
 		change.SettingsLock != nil && config.SettingsLockAt(now).Looser(*change.SettingsLock) ||
-		change.Bedtime != nil && config.BedtimeAt(now).Looser(*change.Bedtime) ||
+		change.Bedtime != nil && config.BedtimeAt(now).LooserAt(*change.Bedtime, config.Timezone, now) ||
 		change.Extension != nil && config.ExtensionRuleAt(now).Looser(*change.Extension) ||
 		change.Budget != nil && config.BudgetAt(now).Looser(*change.Budget)
 }
@@ -298,7 +298,7 @@ func applyScheduleTx(ctx context.Context, tx pgx.Tx, change ScheduleChange, note
 		check("opening_rule", change.OpeningRule != nil && original.OpeningRuleAt(now).Looser(*change.OpeningRule))
 		check("morning", change.Morning != nil && original.MorningAt(now).Looser(*change.Morning))
 		check("settings_lock", change.SettingsLock != nil && original.SettingsLockAt(now).Looser(*change.SettingsLock))
-		check("bedtime", change.Bedtime != nil && original.BedtimeAt(now).Looser(*change.Bedtime))
+		check("bedtime", change.Bedtime != nil && original.BedtimeAt(now).LooserAt(*change.Bedtime, original.Timezone, now))
 		check("extension", change.Extension != nil && original.ExtensionRuleAt(now).Looser(*change.Extension))
 		check("budget", change.Budget != nil && original.BudgetAt(now).Looser(*change.Budget))
 		loosens = !onlyCorrections
