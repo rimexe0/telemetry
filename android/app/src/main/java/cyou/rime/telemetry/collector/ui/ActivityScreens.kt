@@ -25,7 +25,6 @@ import androidx.compose.foundation.gestures.horizontalDrag
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -208,7 +207,7 @@ fun ActivityScreen(data: ActivityData, now: Instant, zone: ZoneId) {
 }
 
 @Composable
-private fun <T> StaleNote(shown: Shown<T>, now: Instant, zone: ZoneId) {
+internal fun <T> StaleNote(shown: Shown<T>, now: Instant, zone: ZoneId) {
     staleLine(shown, now, zone)?.let {
         Small(it)
         Gap(8.dp)
@@ -217,23 +216,16 @@ private fun <T> StaleNote(shown: Shown<T>, now: Instant, zone: ZoneId) {
 
 /**
  * An answer as [LoadState] says to draw it: the answer with its muted line;
- * the day shown before, dimmed, while this one comes; grey shapes when
- * there is nothing yet; [unknown] once the try failed with nothing saved.
+ * grey shapes in the real layout while it comes, also after a switch of
+ * day or period; [unknown] once the try failed with nothing saved.
  */
 @Composable
-private fun <T : Any> Loaded(shown: Shown<T>, now: Instant, zone: ZoneId, unknown: String, placeholder: @Composable () -> Unit, content: @Composable (T) -> Unit) {
-    val last = remember { arrayOfNulls<Any>(1) }
-    shown.value?.let { last[0] = it }
-    @Suppress("UNCHECKED_CAST")
-    when (val showing = LoadState.of(shown, last[0] as T?)) {
+internal fun <T : Any> Loaded(shown: Shown<T>, now: Instant, zone: ZoneId, unknown: String, placeholder: @Composable () -> Unit, content: @Composable (T) -> Unit) {
+    when (val showing = LoadState.of(shown)) {
         Showing.Placeholder -> placeholder()
-        // One place for both, so the map and the rows stay as they are when the day comes.
-        is Showing.Dimmed, is Showing.Ready -> {
-            val ready = showing is Showing.Ready
-            Column(Modifier.alpha(if (ready) 1f else DIMMED)) {
-                if (ready) StaleNote(shown, now, zone)
-                content(if (showing is Showing.Ready) showing.value else (showing as Showing.Dimmed).value)
-            }
+        is Showing.Ready -> {
+            StaleNote(shown, now, zone)
+            content(showing.value)
         }
         Showing.Failed -> {
             StaleNote(shown, now, zone)
@@ -242,10 +234,7 @@ private fun <T : Any> Loaded(shown: Shown<T>, now: Instant, zone: ZoneId, unknow
     }
 }
 
-/** How much another day's content shows while the day asked for comes. */
-private const val DIMMED = 0.45f
-
-private const val NEVER_SAVED = "Unknown: this day was never saved on this phone."
+internal const val NEVER_SAVED = "Unknown: this day was never saved on this phone."
 
 @Composable
 private fun TimelineView(shown: Shown<DayView>, now: Instant, zone: ZoneId) {

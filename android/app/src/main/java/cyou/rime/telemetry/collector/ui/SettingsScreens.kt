@@ -130,7 +130,7 @@ private fun Group(title: String) {
 }
 
 /** Nothing saved for it yet and the answer still on its way. */
-private fun <T> waiting(shown: Shown<T>): Boolean = LoadState.of(shown, null) is Showing.Placeholder
+private fun <T> waiting(shown: Shown<T>): Boolean = LoadState.of(shown) is Showing.Placeholder
 
 /** A grey bar where a card's lines go, while nothing is saved yet. */
 @Composable

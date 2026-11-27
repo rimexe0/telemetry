@@ -11,9 +11,6 @@ sealed interface Showing<out T> {
     /** Nothing saved for it yet and nothing else to show: grey shapes in the real layout. */
     data object Placeholder : Showing<Nothing>
 
-    /** Another day's answer, dimmed, while this one comes. */
-    data class Dimmed<T>(val value: T) : Showing<T>
-
     /** The answer, saved or fresh. */
     data class Ready<T>(val value: T) : Showing<T>
 
@@ -24,15 +21,15 @@ sealed interface Showing<out T> {
 object LoadState {
     /**
      * [shown] as it should be drawn: its value once there is one; the
-     * failure once the try failed; else [previous] (what was on the screen
-     * before, another day's) dimmed, or the placeholder.
+     * failure once the try failed; else the placeholder, also when another
+     * day or period was on the screen before (owner 2026-11-27: dimming the
+     * old one was confusing).
      */
-    fun <T> of(shown: Shown<T>, previous: T?): Showing<T> {
+    fun <T> of(shown: Shown<T>): Showing<T> {
         val value = shown.value
         return when {
             value != null -> Showing.Ready(value)
             shown.refresh is Refresh.Unreachable || shown.refresh is Refresh.Refused -> Showing.Failed
-            previous != null -> Showing.Dimmed(previous)
             else -> Showing.Placeholder
         }
     }

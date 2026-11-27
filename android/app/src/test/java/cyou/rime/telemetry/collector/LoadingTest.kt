@@ -14,30 +14,25 @@ class LoadingTest {
     private fun waiting() = Shown<String>(null, null, Refresh.Never, loading = true)
 
     @Test
-    fun nothingSavedAndNothingBeforeIsThePlaceholder() {
-        assertEquals(Showing.Placeholder, LoadState.of(waiting(), null))
+    fun nothingSavedIsThePlaceholder() {
+        assertEquals(Showing.Placeholder, LoadState.of(waiting()))
         // Not asked yet counts as waiting too, never as an empty answer.
-        assertEquals(Showing.Placeholder, LoadState.of(Shown<String>(null, null, Refresh.Never), null))
-    }
-
-    @Test
-    fun anotherDayOnTheScreenIsDimmedWhileTheNewOneComes() {
-        assertEquals(Showing.Dimmed("Thursday"), LoadState.of(waiting(), "Thursday"))
+        assertEquals(Showing.Placeholder, LoadState.of(Shown<String>(null, null, Refresh.Never)))
     }
 
     @Test
     fun aSavedOrFreshAnswerShowsAtOnce() {
         val saved = Shown("Friday", now.minusSeconds(3600), Refresh.Never, loading = true)
-        assertEquals(Showing.Ready("Friday"), LoadState.of(saved, "Thursday"))
-        assertEquals(Showing.Ready("Friday"), LoadState.of(Shown("Friday", now, Refresh.Fresh), null))
+        assertEquals(Showing.Ready("Friday"), LoadState.of(saved))
+        assertEquals(Showing.Ready("Friday"), LoadState.of(Shown("Friday", now, Refresh.Fresh)))
         // A saved copy stays while the server can't be reached.
-        assertEquals(Showing.Ready("Friday"), LoadState.of(Shown("Friday", now, Refresh.Unreachable), null))
+        assertEquals(Showing.Ready("Friday"), LoadState.of(Shown("Friday", now, Refresh.Unreachable)))
     }
 
     @Test
     fun aFailedTryWithNothingSavedIsTheFailureLine() {
-        assertEquals(Showing.Failed, LoadState.of(Shown<String>(null, null, Refresh.Unreachable), "Thursday"))
-        assertEquals(Showing.Failed, LoadState.of(Shown<String>(null, null, Refresh.Refused("no")), null))
+        assertEquals(Showing.Failed, LoadState.of(Shown<String>(null, null, Refresh.Unreachable)))
+        assertEquals(Showing.Failed, LoadState.of(Shown<String>(null, null, Refresh.Refused("no"))))
     }
 
     @Test
