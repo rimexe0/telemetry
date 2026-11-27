@@ -6,11 +6,13 @@ import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.HeartRateRecord
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
+import androidx.health.connect.client.request.AggregateGroupByDurationRequest
 import androidx.health.connect.client.request.AggregateRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import org.json.JSONArray
 import org.json.JSONObject
+import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -26,24 +28,30 @@ data class HealthDay(
     val sleepMinutes: Long?,
 )
 
-/** What Activity › Health shows: the last days, newest first, and what could not be read. */
-data class HealthWeek(val days: List<HealthDay>, val missing: List<String>)
+/** A heart rate in the day: the average of a ten-minute stretch, from [minute] after midnight. */
+data class HeartPoint(val minute: Int, val bpm: Long)
+
+/** What Activity › Health shows for one day: its numbers, steps per hour, heart rate through the day, and what could not be read. */
+data class HealthDayView(val day: HealthDay, val stepsByHour: List<Long?>, val heart: List<HeartPoint>, val missing: List<String>)
 
 /**
- * Sleep, heart rate and steps per day, read on the phone from Health
+ * Sleep, heart rate and steps for one day, read on the phone from Health
  * Connect with the permissions the app already has, so the screen works
- * without the server. The last answer is kept, so it shows at once.
+ * without the server. Each day read is kept, so it shows at once.
  */
 object HealthDays {
     private const val PACKAGE = "com.google.android.apps.healthdata"
-    private const val KEY = "health-week"
-    const val DAYS = 14
+    /** Heart rate is drawn as the average of each stretch this long. */
+    private const val HEART_STEP_MINUTES = 10
 
-    fun saved(context: Context): Pair<HealthWeek, Instant>? =
-        AnswerStore.of(context).read(KEY)?.let { entry -> parse(entry.json)?.let { it to entry.at } }
+    /** Kept per day, so old days are dropped with the other per-day answers. */
+    fun key(day: String) = "health-$day"
 
-    /** Reads the last days from Health Connect and keeps them. Null when Health Connect isn't there. */
-    suspend fun refresh(context: Context, today: LocalDate = LocalDate.now(), zone: ZoneId = ZoneId.systemDefault()): HealthWeek? {
+    fun saved(context: Context, day: String): Pair<HealthDayView, Instant>? =
+        AnswerStore.of(context).read(key(day))?.let { entry -> parse(entry.json)?.let { it to entry.at } }
+
+    /** Reads [date] from Health Connect and keeps it. Null when Health Connect isn't there. */
+    suspend fun read(context: Context, date: LocalDate, zone: ZoneId = ZoneId.systemDefault()): HealthDayView? {
         val available = runCatching { HealthConnectClient.getSdkStatus(context, PACKAGE) == HealthConnectClient.SDK_AVAILABLE }.getOrDefault(false)
         if (!available) return null
         val client = runCatching { HealthConnectClient.getOrCreate(context, PACKAGE) }.getOrNull() ?: return null
@@ -56,53 +64,79 @@ object HealthDays {
             if (!heart) add("heart rate")
             if (!steps) add("steps")
         }
-        val first = today.minusDays((DAYS - 1).toLong())
-        val sleeps = if (!sleep) emptyList() else runCatching {
-            client.readRecords(ReadRecordsRequest(SleepSessionRecord::class,
-                TimeRangeFilter.between(first.minusDays(1).atStartOfDay(zone).toInstant(), today.plusDays(1).atStartOfDay(zone).toInstant()), pageSize = 200)).records
-        }.getOrDefault(emptyList())
-        val days = (0 until DAYS).map { back ->
-            val day = today.minusDays(back.toLong())
-            val from = day.atStartOfDay(zone).toInstant()
-            val to = day.plusDays(1).atStartOfDay(zone).toInstant()
-            val metrics = buildSet {
-                if (steps) add(StepsRecord.COUNT_TOTAL)
-                if (heart) { add(HeartRateRecord.BPM_MIN); add(HeartRateRecord.BPM_AVG); add(HeartRateRecord.BPM_MAX) }
-            }
-            val result = if (metrics.isEmpty()) null else runCatching { client.aggregate(AggregateRequest(metrics, TimeRangeFilter.between(from, to))) }.getOrNull()
-            val slept = sleeps.filter { !it.endTime.isBefore(from) && it.endTime.isBefore(to) }
-            HealthDay(
-                date = day.toString(),
+        val from = date.atStartOfDay(zone).toInstant()
+        val to = date.plusDays(1).atStartOfDay(zone).toInstant()
+        val metrics = buildSet {
+            if (steps) add(StepsRecord.COUNT_TOTAL)
+            if (heart) { add(HeartRateRecord.BPM_MIN); add(HeartRateRecord.BPM_AVG); add(HeartRateRecord.BPM_MAX) }
+        }
+        val result = if (metrics.isEmpty()) null else runCatching { client.aggregate(AggregateRequest(metrics, TimeRangeFilter.between(from, to))) }.getOrNull()
+        val slept = if (!sleep) emptyList() else runCatching {
+            client.readRecords(ReadRecordsRequest(SleepSessionRecord::class, TimeRangeFilter.between(from.minus(Duration.ofDays(1)), to), pageSize = 50)).records
+        }.getOrDefault(emptyList()).filter { !it.endTime.isBefore(from) && it.endTime.isBefore(to) }
+        val hours = MutableList<Long?>(24) { null }
+        if (steps) runCatching {
+            client.aggregateGroupByDuration(AggregateGroupByDurationRequest(setOf(StepsRecord.COUNT_TOTAL), TimeRangeFilter.between(from, to), Duration.ofHours(1)))
+        }.getOrNull()?.forEach { slice ->
+            val count = slice.result[StepsRecord.COUNT_TOTAL] ?: return@forEach
+            val hour = slice.startTime.atZone(zone).hour
+            hours[hour] = (hours[hour] ?: 0L) + count
+        }
+        val samples = mutableListOf<Pair<Instant, Long>>()
+        if (heart) runCatching {
+            var token: String? = null
+            do {
+                val page = client.readRecords(ReadRecordsRequest(HeartRateRecord::class, TimeRangeFilter.between(from, to), pageSize = 1000, pageToken = token))
+                page.records.forEach { record -> record.samples.forEach { samples += it.time to it.beatsPerMinute } }
+                token = page.pageToken
+            } while (token != null && samples.size < 200_000)
+        }
+        val view = HealthDayView(
+            day = HealthDay(
+                date = date.toString(),
                 steps = result?.get(StepsRecord.COUNT_TOTAL),
                 heartMin = result?.get(HeartRateRecord.BPM_MIN),
                 heartAvg = result?.get(HeartRateRecord.BPM_AVG),
                 heartMax = result?.get(HeartRateRecord.BPM_MAX),
-                sleepMinutes = if (!sleep || slept.isEmpty()) null else slept.sumOf { java.time.Duration.between(it.startTime, it.endTime).toMinutes() },
-            )
-        }
-        val week = HealthWeek(days, missing)
-        AnswerStore.of(context).put(KEY, toJson(week))
-        return week
+                sleepMinutes = if (!sleep || slept.isEmpty()) null else slept.sumOf { Duration.between(it.startTime, it.endTime).toMinutes() },
+            ),
+            stepsByHour = hours,
+            heart = heartLine(samples, from, to),
+            missing = missing,
+        )
+        AnswerStore.of(context).put(key(date.toString()), toJson(view))
+        return view
     }
 
-    fun toJson(week: HealthWeek): String = JSONObject()
-        .put("missing", JSONArray(week.missing))
-        .put("days", JSONArray(week.days.map { day ->
-            JSONObject().put("date", day.date).put("steps", day.steps ?: JSONObject.NULL)
-                .put("heart_min", day.heartMin ?: JSONObject.NULL).put("heart_avg", day.heartAvg ?: JSONObject.NULL).put("heart_max", day.heartMax ?: JSONObject.NULL)
-                .put("sleep_minutes", day.sleepMinutes ?: JSONObject.NULL)
-        })).toString()
+    /** The day's heart rate as the average of each ten-minute stretch that has any, in time order. */
+    fun heartLine(samples: List<Pair<Instant, Long>>, from: Instant, to: Instant): List<HeartPoint> =
+        samples.filter { !it.first.isBefore(from) && it.first.isBefore(to) }
+            .groupBy { (Duration.between(from, it.first).toMinutes() / HEART_STEP_MINUTES).toInt() }
+            .toSortedMap()
+            .map { (step, group) -> HeartPoint(step * HEART_STEP_MINUTES, Math.round(group.map { it.second }.average())) }
 
-    fun parse(json: String): HealthWeek? = runCatching {
+    fun toJson(view: HealthDayView): String {
+        val day = view.day
+        return JSONObject().put("date", day.date).put("steps", day.steps ?: JSONObject.NULL)
+            .put("heart_min", day.heartMin ?: JSONObject.NULL).put("heart_avg", day.heartAvg ?: JSONObject.NULL).put("heart_max", day.heartMax ?: JSONObject.NULL)
+            .put("sleep_minutes", day.sleepMinutes ?: JSONObject.NULL)
+            .put("missing", JSONArray(view.missing))
+            .put("steps_by_hour", JSONArray(view.stepsByHour.map { it ?: JSONObject.NULL }))
+            .put("heart", JSONArray(view.heart.map { JSONArray().put(it.minute).put(it.bpm) }))
+            .toString()
+    }
+
+    fun parse(json: String): HealthDayView? = runCatching {
         val root = JSONObject(json)
         fun JSONObject.long(name: String): Long? = if (isNull(name) || !has(name)) null else optLong(name)
-        val days = root.getJSONArray("days")
         val missing = root.optJSONArray("missing")
-        HealthWeek(
-            (0 until days.length()).map { days.getJSONObject(it) }.map {
-                HealthDay(it.getString("date"), it.long("steps"), it.long("heart_min"), it.long("heart_avg"), it.long("heart_max"), it.long("sleep_minutes"))
-            },
-            if (missing == null) emptyList() else (0 until missing.length()).map { missing.getString(it) },
+        val hours = root.optJSONArray("steps_by_hour")
+        val heart = root.optJSONArray("heart")
+        HealthDayView(
+            day = HealthDay(root.getString("date"), root.long("steps"), root.long("heart_min"), root.long("heart_avg"), root.long("heart_max"), root.long("sleep_minutes")),
+            stepsByHour = (0 until 24).map { hour -> if (hours == null || hour >= hours.length() || hours.isNull(hour)) null else hours.optLong(hour) },
+            heart = if (heart == null) emptyList() else (0 until heart.length()).mapNotNull { heart.optJSONArray(it) }.map { HeartPoint(it.optInt(0), it.optLong(1)) },
+            missing = if (missing == null) emptyList() else (0 until missing.length()).map { missing.getString(it) },
         )
     }.getOrNull()
 

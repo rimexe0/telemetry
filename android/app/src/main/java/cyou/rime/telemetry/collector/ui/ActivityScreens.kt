@@ -18,7 +18,21 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.horizontalDrag
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -42,7 +56,9 @@ import cyou.rime.telemetry.collector.BudgetText
 import cyou.rime.telemetry.collector.DayModel
 import cyou.rime.telemetry.collector.DayView
 import cyou.rime.telemetry.collector.HealthDays
-import cyou.rime.telemetry.collector.HealthWeek
+import cyou.rime.telemetry.collector.HealthDayView
+import cyou.rime.telemetry.collector.LoadState
+import cyou.rime.telemetry.collector.Showing
 import cyou.rime.telemetry.collector.PlaceItem
 import cyou.rime.telemetry.collector.Places
 import cyou.rime.telemetry.collector.PlacesDay
@@ -59,9 +75,9 @@ import java.util.Locale
 
 /** A page of the app: scrolls, with the panel's side gutter. */
 @Composable
-internal fun AppPage(content: @Composable () -> Unit) {
+internal fun AppPage(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     val colors = panelColors()
-    Column(Modifier.fillMaxSize().background(colors.bg).verticalScroll(rememberScrollState()).padding(start = 12.dp, end = 12.dp, top = 16.dp, bottom = 24.dp)) {
+    Column(modifier.fillMaxSize().background(colors.bg).verticalScroll(rememberScrollState()).padding(start = 12.dp, end = 12.dp, top = 16.dp, bottom = 24.dp)) {
         content()
     }
 }
@@ -79,9 +95,9 @@ internal fun ActWord(text: String, enabled: Boolean = true, bold: Boolean = fals
 }
 
 /**
- * The muted line over a saved answer: nothing while it is fresh; "saved
- * 14:20" while a fresh one is being asked for; the server's own words when
- * it refused; Today's words when it can't be reached.
+ * The muted line over a saved answer: nothing while it is fresh or still
+ * on its way; "saved 14:20" once the saved copy is old; the server's own
+ * words when it refused; Today's words when it can't be reached.
  */
 fun <T> staleLine(shown: Shown<T>, now: Instant, zone: ZoneId): String? {
     val at = shown.at
@@ -89,11 +105,7 @@ fun <T> staleLine(shown: Shown<T>, now: Instant, zone: ZoneId): String? {
         Refresh.Unreachable -> TodayText.saved(at, now, zone)
         is Refresh.Refused -> refresh.message + (at?.let { " · saved ${BudgetText.clock(it, zone)}" } ?: "")
         Refresh.Fresh -> null
-        Refresh.Never -> when {
-            at != null && Duration.between(at, now) >= Duration.ofMinutes(2) -> "saved ${savedClock(at, now, zone)}"
-            at == null && shown.value == null && shown.loading -> "Loading…"
-            else -> null
-        }
+        Refresh.Never -> if (at != null && Duration.between(at, now) >= Duration.ofMinutes(2)) "saved ${savedClock(at, now, zone)}" else null
     }
 }
 
@@ -146,32 +158,51 @@ private fun DaySwitcher(day: String, today: String, onMove: (Long) -> Unit, onTo
     }
 }
 
+/**
+ * A sideways swipe of at least 64dp, reported once the finger lifts; a
+ * vertical drag stays the page's scroll. Gestures that start where
+ * [inside] says (the map, which pans itself) are left alone.
+ */
+internal fun Modifier.swipeDays(inside: (Offset) -> Boolean = { false }, onSwipe: (dx: Float, threshold: Float) -> Unit): Modifier = pointerInput(Unit) {
+    val threshold = 64.dp.toPx()
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        if (inside(down.position)) return@awaitEachGesture
+        val start = down.position.x
+        var end = start
+        val drag = awaitHorizontalTouchSlopOrCancellation(down.id) { change, _ ->
+            change.consume()
+            end = change.position.x
+        } ?: return@awaitEachGesture
+        end = drag.position.x
+        val lifted = horizontalDrag(drag.id) { change ->
+            change.consume()
+            end = change.position.x
+        }
+        if (lifted) onSwipe(end - start, threshold)
+    }
+}
+
 @Composable
 fun ActivityScreen(data: ActivityData, now: Instant, zone: ZoneId) {
     val section = data.section
     val today = data.today
-    if (section == ActivitySection.PLACES) {
-        // The map takes the page's height; the list scrolls under it.
-        AppPage {
-            PageHead("Activity")
-            Segments(ActivitySection.entries, section, { it.label }, data::select)
-            DaySwitcher(data.day, today, data::move, data::goToday)
-            Gap(10.dp)
-            PlacesView(data.places(), now, zone)
-        }
-        return
-    }
-    AppPage {
+    // Where the map is, so a swipe that starts on it pans the map, not the day.
+    val map = remember { arrayOfNulls<Rect>(1) }
+    val page = remember { arrayOf(Offset.Zero) }
+    AppPage(
+        Modifier.onGloballyPositioned { page[0] = it.positionInWindow() }
+            .swipeDays(inside = { at -> map[0]?.contains(page[0] + at) == true }, onSwipe = data::swipe),
+    ) {
         PageHead("Activity")
         Segments(ActivitySection.entries, section, { it.label }, data::select)
-        if (section != ActivitySection.HEALTH) DaySwitcher(data.day, today, data::move, data::goToday)
-        else Small("The last two weeks", Modifier.padding(top = 10.dp))
+        DaySwitcher(data.day, today, data::move, data::goToday)
         Gap(10.dp)
         when (section) {
             ActivitySection.TIMELINE -> TimelineView(data.timeline(), now, zone)
             ActivitySection.APPS -> AppsView(data.summary(), now, zone)
-            ActivitySection.HEALTH -> HealthView(data.health, now, zone)
-            ActivitySection.PLACES -> Unit
+            ActivitySection.HEALTH -> HealthView(data.health(), now, zone, data.day, today)
+            ActivitySection.PLACES -> PlacesView(data.places(), now, zone) { map[0] = it }
         }
     }
 }
@@ -184,14 +215,49 @@ private fun <T> StaleNote(shown: Shown<T>, now: Instant, zone: ZoneId) {
     }
 }
 
+/**
+ * An answer as [LoadState] says to draw it: the answer with its muted line;
+ * the day shown before, dimmed, while this one comes; grey shapes when
+ * there is nothing yet; [unknown] once the try failed with nothing saved.
+ */
+@Composable
+private fun <T : Any> Loaded(shown: Shown<T>, now: Instant, zone: ZoneId, unknown: String, placeholder: @Composable () -> Unit, content: @Composable (T) -> Unit) {
+    val last = remember { arrayOfNulls<Any>(1) }
+    shown.value?.let { last[0] = it }
+    @Suppress("UNCHECKED_CAST")
+    when (val showing = LoadState.of(shown, last[0] as T?)) {
+        Showing.Placeholder -> placeholder()
+        // One place for both, so the map and the rows stay as they are when the day comes.
+        is Showing.Dimmed, is Showing.Ready -> {
+            val ready = showing is Showing.Ready
+            Column(Modifier.alpha(if (ready) 1f else DIMMED)) {
+                if (ready) StaleNote(shown, now, zone)
+                content(if (showing is Showing.Ready) showing.value else (showing as Showing.Dimmed).value)
+            }
+        }
+        Showing.Failed -> {
+            StaleNote(shown, now, zone)
+            Small(unknown)
+        }
+    }
+}
+
+/** How much another day's content shows while the day asked for comes. */
+private const val DIMMED = 0.45f
+
+private const val NEVER_SAVED = "Unknown: this day was never saved on this phone."
+
 @Composable
 private fun TimelineView(shown: Shown<DayView>, now: Instant, zone: ZoneId) {
+    Loaded(shown, now, zone, NEVER_SAVED, placeholder = {
+        PanelCard("Distractions") { PlaceholderLines(1) }
+        PanelCard("") { PlaceholderLines(6) }
+    }) { view -> Timeline(view, zone) }
+}
+
+@Composable
+private fun Timeline(view: DayView, zone: ZoneId) {
     val colors = panelColors()
-    StaleNote(shown, now, zone)
-    val view = shown.value ?: run {
-        if (shown.refresh != Refresh.Never || !shown.loading) Small("Unknown: this day was never saved on this phone.")
-        return
-    }
     val devices = DayModel.timeline(view)
     PanelCard("Distractions", ActivityText.minutes(view.distractionMinutes)) {
         val parts = devices.filter { it.distractionMinutes >= 1 }.map { "${ActivityText.deviceName(it.device)} ${ActivityText.minutes(it.distractionMinutes)}" }
@@ -242,12 +308,15 @@ private fun Tag(text: String) {
 
 @Composable
 private fun AppsView(shown: Shown<ActivitySummary>, now: Instant, zone: ZoneId) {
+    Loaded(shown, now, zone, NEVER_SAVED, placeholder = {
+        PanelCard("") { PlaceholderLines(4) }
+        PanelCard("") { PlaceholderLines(6) }
+    }) { summary -> Apps(summary) }
+}
+
+@Composable
+private fun Apps(summary: ActivitySummary) {
     val colors = panelColors()
-    StaleNote(shown, now, zone)
-    val summary = shown.value ?: run {
-        if (shown.refresh != Refresh.Never || !shown.loading) Small("Unknown: this day was never saved on this phone.")
-        return
-    }
     if (summary.insights.isNotEmpty()) {
         PanelCard("Where the time went") {
             summary.insights.forEach { insight ->
@@ -298,60 +367,86 @@ private fun UsageList(title: String, items: List<cyou.rime.telemetry.collector.U
 }
 
 @Composable
-private fun HealthView(shown: Shown<HealthWeek>, now: Instant, zone: ZoneId) {
-    val colors = panelColors()
-    if (shown.refresh is Refresh.Refused) Small((shown.refresh as Refresh.Refused).message, Modifier.padding(bottom = 8.dp))
-    val week = shown.value ?: run {
-        if (!shown.loading) Small("Unknown: nothing was read from Health Connect yet.")
-        else Small("Loading…")
-        return
-    }
-    if (week.missing.isNotEmpty()) Small("Health Connect doesn't let the app read ${week.missing.joinToString(", ")}. Allow it in Settings › Permissions.", Modifier.padding(bottom = 8.dp))
-    val today = week.days.firstOrNull()
-    if (today != null) {
-        PanelCard("Today", dayLabel(today.date, LocalDate.now(zone).toString()).takeIf { it != "Today" }.orEmpty()) {
+private fun HealthView(shown: Shown<HealthDayView>, now: Instant, zone: ZoneId, day: String, today: String) {
+    Loaded(shown, now, zone, "Unknown: nothing was read from Health Connect yet.", placeholder = {
+        PanelCard(dayLabel(day, today)) {
             Gap(4.dp)
-            HealthLine("Sleep", HealthDays.sleepText(today.sleepMinutes))
-            HealthLine("Heart rate", HealthDays.heartText(today))
-            HealthLine("Steps", HealthDays.stepsText(today.steps))
+            for (label in listOf("Sleep", "Heart rate", "Steps")) {
+                Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Small(label, Modifier.width(96.dp))
+                    PlaceholderBar(0.5f)
+                }
+            }
         }
+    }) { view -> Health(view, today) }
+}
+
+@Composable
+private fun Health(view: HealthDayView, today: String) {
+    val colors = panelColors()
+    if (view.missing.isNotEmpty()) Small("Health Connect doesn't let the app read ${view.missing.joinToString(", ")}. Allow it in Settings › Permissions.", Modifier.padding(bottom = 8.dp))
+    val day = view.day
+    PanelCard(dayLabel(day.date, today)) {
+        Gap(4.dp)
+        HealthLine("Sleep", HealthDays.sleepText(day.sleepMinutes))
+        HealthLine("Heart rate", HealthDays.heartText(day))
+        HealthLine("Steps", HealthDays.stepsText(day.steps))
     }
-    // Steps per day as bars, newest on the right, and sleep under them.
-    val days = week.days.reversed()
-    PanelCard("Steps") {
-        val most = days.maxOfOrNull { it.steps ?: 0L }?.coerceAtLeast(1L) ?: 1L
-        Canvas(Modifier.fillMaxWidth().height(80.dp).padding(top = 8.dp).semantics { contentDescription = "Steps per day" }) {
-            val gap = 3.dp.toPx()
-            val width = (size.width - gap * (days.size - 1)) / days.size
-            days.forEachIndexed { index, day ->
+    // The day's steps hour by hour.
+    val hours = view.stepsByHour
+    if (hours.any { (it ?: 0L) > 0L }) PanelCard("Steps") {
+        val most = hours.maxOf { it ?: 0L }.coerceAtLeast(1L)
+        Canvas(Modifier.fillMaxWidth().height(80.dp).padding(top = 8.dp).semantics { contentDescription = "Steps per hour" }) {
+            val gap = 2.dp.toPx()
+            val width = (size.width - gap * (hours.size - 1)) / hours.size
+            hours.forEachIndexed { index, steps ->
                 val x = index * (width + gap)
-                val steps = day.steps
-                if (steps == null) {
-                    drawRect(colors.line, Offset(x, size.height - 1.dp.toPx()), Size(width, 1.dp.toPx()))
-                } else {
+                if (steps == null || steps == 0L) drawRect(colors.line, Offset(x, size.height - 1.dp.toPx()), Size(width, 1.dp.toPx()))
+                else {
                     val height = (steps.toFloat() / most) * size.height
                     drawRect(colors.fg, Offset(x, size.height - height), Size(width, height.coerceAtLeast(1f)))
                 }
             }
         }
-        Row(Modifier.fillMaxWidth()) {
-            Small(days.firstOrNull()?.date?.let { dayLabel(it, "") }.orEmpty(), Modifier.weight(1f))
-            Small("today")
-        }
+        ClockAxis()
     }
-    PanelCard("Each day") {
-        week.days.forEachIndexed { index, day ->
-            val last = index == week.days.lastIndex
-            Column(Modifier.fillMaxWidth().drawBehind {
-                if (!last) drawRect(colors.line, Offset(0f, size.height - 1.dp.toPx()), Size(size.width, 1.dp.toPx()))
-            }.padding(vertical = 6.dp)) {
-                PText(dayLabel(day.date, LocalDate.now(zone).toString()), size = 13.5.sp, weight = FontWeight.Bold)
-                Small("${HealthDays.sleepText(day.sleepMinutes)} sleep · ${HealthDays.stepsText(day.steps)}")
-                Small(HealthDays.heartText(day))
+    // Heart rate through the day, broken where nothing was recorded for half an hour.
+    val heart = view.heart
+    if (heart.size >= 2) PanelCard("Heart rate") {
+        val low = heart.minOf { it.bpm }
+        val high = heart.maxOf { it.bpm }.coerceAtLeast(low + 10)
+        Canvas(Modifier.fillMaxWidth().height(80.dp).padding(top = 8.dp).semantics { contentDescription = "Heart rate through the day" }) {
+            fun x(minute: Int) = minute / 1440f * size.width
+            fun y(bpm: Long) = size.height - (bpm - low).toFloat() / (high - low) * size.height
+            drawRect(colors.line, Offset(0f, size.height - 1.dp.toPx()), Size(size.width, 1.dp.toPx()))
+            val runs = mutableListOf<MutableList<cyou.rime.telemetry.collector.HeartPoint>>()
+            for (point in heart) {
+                val run = runs.lastOrNull()
+                if (run != null && point.minute - run.last().minute <= 30) run += point else runs += mutableListOf(point)
+            }
+            for (run in runs) {
+                if (run.size == 1) {
+                    val point = run[0]
+                    drawRect(colors.fg, Offset(x(point.minute) - 1.dp.toPx(), y(point.bpm) - 1.dp.toPx()), Size(2.dp.toPx(), 2.dp.toPx()))
+                    continue
+                }
+                val path = Path()
+                run.forEachIndexed { index, point -> if (index == 0) path.moveTo(x(point.minute), y(point.bpm)) else path.lineTo(x(point.minute), y(point.bpm)) }
+                drawPath(path, colors.fg, style = Stroke(1.5.dp.toPx()))
             }
         }
+        ClockAxis()
     }
-    shown.at?.let { Small("Read from Health Connect on this phone at ${BudgetText.clock(it, zone)}.") }
+}
+
+/** 00:00, 12:00 and 24:00 under a chart of the day. */
+@Composable
+private fun ClockAxis() {
+    Box(Modifier.fillMaxWidth()) {
+        Small("00:00", Modifier.align(Alignment.CenterStart))
+        Small("12:00", Modifier.align(Alignment.Center))
+        Small("24:00", Modifier.align(Alignment.CenterEnd))
+    }
 }
 
 @Composable
@@ -363,26 +458,30 @@ private fun HealthLine(label: String, value: String) {
 }
 
 @Composable
-private fun PlacesView(shown: Shown<PlacesDay>, now: Instant, zone: ZoneId) {
+private fun PlacesView(shown: Shown<PlacesDay>, now: Instant, zone: ZoneId, onMap: (Rect?) -> Unit) {
     val colors = panelColors()
-    StaleNote(shown, now, zone)
-    val day = shown.value ?: run {
-        if (!shown.loading) Small("Unknown: this day was never saved on this phone.")
-        return
+    DisposableEffect(Unit) { onDispose { onMap(null) } }
+    Loaded(shown, now, zone, NEVER_SAVED, placeholder = {
+        onMap(null)
+        // The map's frame, empty, and grey lines where the day's places go.
+        Box(Modifier.fillMaxWidth().height(360.dp).border(1.dp, colors.fg).padding(1.dp).background(colors.soft))
+        Gap(10.dp)
+        PlaceholderLines(3)
+    }) { day ->
+        if (day.positions.isEmpty() && day.stays.isEmpty()) {
+            onMap(null)
+            Small("No positions this day.")
+        } else {
+            PlacesMap(day, Modifier.fillMaxWidth().height(360.dp).border(1.dp, colors.fg).padding(1.dp).clipToBounds()
+                .onGloballyPositioned { onMap(it.boundsInWindow()) })
+            Gap(10.dp)
+            Places.list(day).forEach { item ->
+                PText(item.text, Modifier.fillMaxWidth().drawBehind {
+                    drawRect(colors.line, Offset(0f, size.height - 1.dp.toPx()), Size(size.width, 1.dp.toPx()))
+                }.padding(vertical = 5.dp), size = 13.5.sp, color = if (item.kind == PlaceItem.Kind.GAP) colors.muted else colors.fg)
+            }
+            Gap(6.dp)
+            Small("From the phone's GPS. Positions worse than 100 m are left out. Inside a building GPS is weak, so short steps may not show.")
+        }
     }
-    val empty = day.positions.isEmpty() && day.stays.isEmpty()
-    if (empty) {
-        Small("No positions this day.")
-        return
-    }
-    PlacesMap(day, Modifier.fillMaxWidth().height(360.dp).border(1.dp, colors.fg).padding(1.dp).clipToBounds())
-    Gap(10.dp)
-    val items = Places.list(day)
-    items.forEach { item ->
-        PText(item.text, Modifier.fillMaxWidth().drawBehind {
-            drawRect(colors.line, Offset(0f, size.height - 1.dp.toPx()), Size(size.width, 1.dp.toPx()))
-        }.padding(vertical = 5.dp), size = 13.5.sp, color = if (item.kind == PlaceItem.Kind.GAP) colors.muted else colors.fg)
-    }
-    Gap(6.dp)
-    Small("From the phone's GPS. Positions worse than 100 m are left out. Inside a building GPS is weak, so short steps may not show.")
 }

@@ -110,10 +110,17 @@ class WidgetModelTest {
 
     @Test
     fun nothingSavedAndNoHabitsAndBedtimeSayWhy() {
-        val unknown = WidgetModel.state(Saved(null, null, null, null, emptyList()), null, wednesdayNoon, istanbul)
-        assertEquals("Habits", unknown.header)
+        // Nothing saved yet: grey rows, no words.
+        val first = WidgetModel.state(Saved(null, null, null, null, emptyList()), null, wednesdayNoon, istanbul)
+        assertEquals("Habits", first.header)
+        assertNull(first.rows)
+        assertNull(first.empty)
+        assertTrue(first.placeholder)
+
+        val unknown = WidgetModel.state(Saved(null, null, null, null, emptyList()), wednesdayNoon, wednesdayNoon, istanbul)
         assertNull(unknown.rows)
         assertEquals("Unknown: today's habits were never saved on this phone.", unknown.empty)
+        assertFalse(unknown.placeholder)
 
         val none = WidgetModel.state(Saved(now("2026-11-25", "[]"), list, null, null, emptyList()), wednesdayNoon, wednesdayNoon, istanbul)
         assertEquals("Habits · 1 h 33 min left", none.header)
