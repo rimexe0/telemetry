@@ -110,6 +110,9 @@ data class SourceView(val kind: String, val device: String, val lastCollected: I
 data class CollectionView(val checkedAt: Instant?, val devices: List<Pair<String, Instant?>>, val sources: List<SourceView>)
 
 object SettingsRules {
+    /** The earliest end, in minutes after midnight, an earlier bedtime may have and still apply at once. */
+    private const val EARLIEST_WAKE = 5 * 60
+
     private fun objects(array: JSONArray?): List<JSONObject> =
         if (array == null) emptyList() else (0 until array.length()).mapNotNull { array.optJSONObject(it) }
 
@@ -291,11 +294,16 @@ object SettingsRules {
         val ce = minutesOf(current.end) ?: return true
         val ns = minutesOf(next.start) ?: return true
         val ne = minutesOf(next.end) ?: return true
-        // Each minute of the current bedtime must still be inside the new one.
+        if (next.windDownMinutes < current.windDownMinutes) return true
         val currentLength = (ce - cs + 1440) % 1440
-        val startsInside = (cs - ns + 1440) % 1440
         val nextLength = (ne - ns + 1440) % 1440
-        return startsInside + currentLength > nextLength || next.windDownMinutes < current.windDownMinutes
+        // Moving bedtime earlier, no shorter and ending no earlier than
+        // 05:00, asks no less (owner request 2026-11-27; the server's
+        // Bedtime.movedEarlier).
+        if (ne >= EARLIEST_WAKE && ne <= ce && nextLength >= currentLength) return false
+        // Each minute of the current bedtime must still be inside the new one.
+        val startsInside = (cs - ns + 1440) % 1440
+        return startsInside + currentLength > nextLength
     }
 
     /** "23 Nov, 08:00" for a moment, "1 Nov" for a date. */

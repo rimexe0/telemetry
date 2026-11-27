@@ -83,6 +83,13 @@ class SettingsModelTest {
         assertTrue(SettingsRules.bedtimeAsksLess(now, Bedtime(true, "23:00", "08:00", 10)))
         assertTrue(SettingsRules.bedtimeAsksLess(now, Bedtime(false, "23:00", "08:00", 30)))
         assertFalse(SettingsRules.bedtimeAsksLess(Bedtime(false, "", "", 0), Bedtime(false, "", "", 0)))
+        val midnight = Bedtime(true, "00:00", "08:00", 65)
+        assertFalse(SettingsRules.bedtimeAsksLess(midnight, Bedtime(true, "23:00", "07:00", 65)))
+        assertFalse(SettingsRules.bedtimeAsksLess(midnight, Bedtime(true, "21:00", "05:00", 65)))
+        assertTrue(SettingsRules.bedtimeAsksLess(midnight, Bedtime(true, "20:30", "04:30", 65)))
+        assertTrue(SettingsRules.bedtimeAsksLess(midnight, Bedtime(true, "10:00", "18:00", 65)))
+        assertTrue(SettingsRules.bedtimeAsksLess(midnight, Bedtime(true, "23:30", "07:00", 65)))
+        assertTrue(SettingsRules.bedtimeAsksLess(midnight, Bedtime(true, "23:00", "07:00", 30)))
         assertEquals(9.0, SettingsRules.bedtimeHours("23:00", "08:00"), 0.001)
     }
 

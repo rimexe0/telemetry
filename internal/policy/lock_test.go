@@ -91,6 +91,36 @@ func TestLooserBedtime(t *testing.T) {
 	}
 }
 
+func TestEarlierBedtimeIsNotLooser(t *testing.T) {
+	current := Bedtime{Enabled: true, Start: "00:00", End: "08:00", WindDownMinutes: 65}
+	for _, earlier := range []Bedtime{
+		{Enabled: true, Start: "23:00", End: "07:00", WindDownMinutes: 65},
+		{Enabled: true, Start: "21:00", End: "05:00", WindDownMinutes: 65},
+		{Enabled: true, Start: "22:00", End: "07:30", WindDownMinutes: 90},
+	} {
+		if current.Looser(earlier) {
+			t.Fatalf("earlier counted as looser: %+v", earlier)
+		}
+	}
+	for _, looser := range []Bedtime{
+		// Ends before 05:00: frees the night.
+		{Enabled: true, Start: "17:00", End: "01:00", WindDownMinutes: 65},
+		{Enabled: true, Start: "20:30", End: "04:30", WindDownMinutes: 65},
+		// Earlier but shorter.
+		{Enabled: true, Start: "23:30", End: "07:00", WindDownMinutes: 65},
+		// Later.
+		{Enabled: true, Start: "01:00", End: "09:00", WindDownMinutes: 65},
+		// Daytime hours of the same length.
+		{Enabled: true, Start: "10:00", End: "18:00", WindDownMinutes: 65},
+		// Earlier with a shorter wind-down.
+		{Enabled: true, Start: "23:00", End: "07:00", WindDownMinutes: 30},
+	} {
+		if !current.Looser(looser) {
+			t.Fatalf("not looser: %+v", looser)
+		}
+	}
+}
+
 func TestExtensionRuleOnlyWhileSitesAreBlocked(t *testing.T) {
 	location, _ := time.LoadLocation("Europe/Istanbul")
 	config := outsideConfig(OutsideRule{})

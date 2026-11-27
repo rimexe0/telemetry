@@ -153,14 +153,18 @@ func (b Bedtime) Normalize() error {
 	return nil
 }
 
-// Looser reports whether next asks less: off, or hours that leave out any
-// minute of the current ones.
+// Looser reports whether next asks less: off, a shorter wind-down, or hours
+// that leave out any minute of the current ones, unless it moves bedtime
+// earlier.
 func (b Bedtime) Looser(next Bedtime) bool {
 	if !b.Enabled {
 		return false
 	}
 	if !next.Enabled || next.WindDownMinutes < b.WindDownMinutes {
 		return true
+	}
+	if b.movedEarlier(next) {
+		return false
 	}
 	covered := minutesOf(next)
 	for minute, in := range minutesOf(b) {
@@ -169,6 +173,33 @@ func (b Bedtime) Looser(next Bedtime) bool {
 		}
 	}
 	return false
+}
+
+// EarliestWake is the earliest end, in minutes after midnight, that an
+// earlier bedtime may have and still apply at once.
+const EarliestWake = 5 * 60
+
+// movedEarlier reports whether next moves bedtime earlier without making it
+// shorter: it ends no later than now but not before EarliestWake, and lasts
+// at least as long. Starting earlier to wake earlier asks no less, so it
+// applies at once (owner request 2026-11-27); the floor keeps it from
+// freeing the night.
+func (b Bedtime) movedEarlier(next Bedtime) bool {
+	cs, ce := clockMinutes(b.Start), clockMinutes(b.End)
+	ns, ne := clockMinutes(next.Start), clockMinutes(next.End)
+	if cs < 0 || ce < 0 || ns < 0 || ne < 0 {
+		return false
+	}
+	return ne >= EarliestWake && ne <= ce && (ne-ns+1440)%1440 >= (ce-cs+1440)%1440
+}
+
+// clockMinutes is HH:MM as minutes after midnight, or -1.
+func clockMinutes(clock string) int {
+	at, err := time.Parse("15:04", clock)
+	if err != nil {
+		return -1
+	}
+	return at.Hour()*60 + at.Minute()
 }
 
 // minutesOf marks each minute of the day bedtime covers.
