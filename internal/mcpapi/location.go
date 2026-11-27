@@ -59,7 +59,7 @@ type PlacesNearOutput struct {
 }
 
 // homeLookback is how many nights are read to find home.
-const homeLookback = 14 * 24 * time.Hour
+const homeLookback = store.HomeLookback
 
 func addLocationTools(server *mcp.Server, repository store.Repository, now func() time.Time) {
 	mcp.AddTool(server, &mcp.Tool{
@@ -70,64 +70,27 @@ func addLocationTools(server *mcp.Server, repository store.Repository, now func(
 		if err != nil {
 			return nil, PlacesVisitedOutput{}, err
 		}
-		history, err := repository.LocationFixes(ctx, from.Add(-homeLookback), to)
+		visited, err := store.LoadVisited(ctx, repository, from, to, location)
 		if err != nil {
 			return nil, PlacesVisitedOutput{}, err
 		}
-		home := places.Home(history, location)
-		// A stay already going at the start of the range is read from earlier.
-		recent := []places.Fix{}
-		inRange := []places.Fix{}
-		for _, fix := range history {
-			if !fix.At.Before(from.Add(-12 * time.Hour)) {
-				recent = append(recent, fix)
-			}
-			if !fix.At.Before(from) {
-				inRange = append(inRange, fix)
-			}
-		}
-		output := PlacesVisitedOutput{Stays: []VisitedStay{}, HomeKnown: home != nil, Positions: len(inRange), Timezone: location.String(), Notes: locationNotes,
-			MovedKm: math.Round(places.Distance(inRange)/100) / 10}
-		if imported, err := repository.LatestMapImport(ctx); err != nil {
-			return nil, PlacesVisitedOutput{}, err
-		} else if imported != nil {
+		output := PlacesVisitedOutput{Stays: []VisitedStay{}, HomeKnown: visited.Home != nil, Positions: len(visited.Positions), Timezone: location.String(), Notes: locationNotes,
+			MovedKm: math.Round(places.Distance(visited.Positions)/100) / 10}
+		if imported := visited.Map; imported != nil {
 			output.Map = &MapStatus{Places: imported.Places, ImportedAt: imported.ImportedAt.In(location).Format("2006-01-02")}
 		} else {
 			output.MissingMap = "The map has not been imported yet, so stays have no place names."
 		}
 		local := func(at time.Time) string { return at.In(location).Format("2006-01-02 15:04") }
-		var wasHome *bool
-		var homeEnd time.Time
-		for _, stay := range places.Stays(recent, home) {
-			if stay.Home {
-				homeEnd = stay.End
-			}
-			if !stay.End.After(from) {
-				wasHome = &stay.Home
-				continue
-			}
-			if stay.Start.Before(from) {
-				stay.Start = from
-			}
-			if wasHome != nil && *wasHome && !stay.Home && output.LeftHome == "" {
-				// Left when the stay at home ended, not when the next one began.
-				output.LeftHome = local(homeEnd)
-			}
-			if wasHome != nil && !*wasHome && stay.Home {
-				output.BackHome = local(stay.Start)
-			}
-			home := stay.Home
-			wasHome = &home
-			item := VisitedStay{From: local(stay.Start), To: local(stay.End), Minutes: math.Round(stay.Minutes()), Home: stay.Home,
-				Lat: math.Round(stay.Lat*1e5) / 1e5, Lon: math.Round(stay.Lon*1e5) / 1e5, Nearby: []store.MapPlace{}}
-			if !stay.Home && output.Map != nil {
-				nearby, err := repository.NearbyPlaces(ctx, stay.Lat, stay.Lon, 100, 5)
-				if err != nil {
-					return nil, PlacesVisitedOutput{}, err
-				}
-				item.Nearby = nearby
-			}
-			output.Stays = append(output.Stays, item)
+		if visited.LeftHome != nil {
+			output.LeftHome = local(*visited.LeftHome)
+		}
+		if visited.BackHome != nil {
+			output.BackHome = local(*visited.BackHome)
+		}
+		for _, stay := range visited.Stays {
+			output.Stays = append(output.Stays, VisitedStay{From: local(stay.Start), To: local(stay.End), Minutes: math.Round(stay.Minutes()), Home: stay.Home,
+				Lat: math.Round(stay.Lat*1e5) / 1e5, Lon: math.Round(stay.Lon*1e5) / 1e5, Nearby: stay.Nearby})
 		}
 		return nil, output, nil
 	})

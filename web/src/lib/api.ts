@@ -1,3 +1,5 @@
+import type { PlacesDay } from './places';
+
 export type SourceSummary = {
   source_instance_key: string;
   source_kind: string;
@@ -876,6 +878,11 @@ export async function getAppNames(): Promise<Record<string, string>> {
 
 export async function getActivitySummary(date?: string): Promise<ActivitySummary> {
   return request<ActivitySummary>(`/v1/activity/summary${date ? `?date=${encodeURIComponent(date)}` : ''}`);
+}
+
+/** Where the phone was on a day: its positions, stays and the habits' places. */
+export async function getPlacesDay(date?: string): Promise<PlacesDay> {
+  return request<PlacesDay>(`/v1/places/day${date ? `?date=${encodeURIComponent(date)}` : ''}`);
 }
 
 export type LabelChange = { action: 'set' | 'remove'; kind: 'app' | 'site'; match: string; label?: string };

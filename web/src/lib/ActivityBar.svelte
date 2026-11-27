@@ -26,7 +26,7 @@
 
 <style>
   .activity-bar { align-items: center; display: flex; flex-wrap: wrap; gap: 10px 16px; justify-content: space-between; margin-bottom: 14px; }
-  .segments { border: 1px solid var(--fg); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); min-width: min(100%, 400px); }
+  .segments { border: 1px solid var(--fg); display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); min-width: min(100%, 500px); }
   .segments a { align-items: center; color: var(--fg); display: flex; font-size: .82rem; justify-content: center; min-height: 36px; padding: 0 8px; text-decoration: none; }
   .segments a + a { border-left: 1px solid var(--fg); }
   .segments a.active { background: var(--fg); color: var(--bg); font-weight: 700; }
@@ -35,6 +35,6 @@
   @media (max-width: 699px) {
     .activity-bar { align-items: stretch; flex-direction: column; }
     .segments { min-width: 0; width: 100%; }
-    .segments a { min-height: 44px; padding: 0 2px; }
+    .segments a { font-size: .78rem; min-height: 44px; padding: 0 2px; }
   }
 </style>

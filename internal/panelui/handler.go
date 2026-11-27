@@ -11,10 +11,15 @@ import (
 	"sync"
 )
 
-const baseCSP = "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self' 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"
+// mapTiles is where Activity's Places map loads its OpenStreetMap tiles
+// from, as images. Nothing else of the panel leaves its own origin.
+const mapTiles = "https://tile.openstreetmap.org"
+
+const baseCSP = "default-src 'self'; connect-src 'self'; img-src 'self' data: " + mapTiles + "; style-src 'self'; script-src 'self' 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"
 
 // New returns a handler for a SvelteKit static build directory. The panel has
-// no external runtime dependencies, so a headless deployment keeps one service.
+// no external runtime dependencies apart from the map's tiles, so a headless
+// deployment keeps one service.
 func New(directory string) (http.Handler, error) { return NewWithClerk(directory, "") }
 
 // NewWithClerk allows only the configured Clerk frontend and its documented dependencies.
@@ -64,7 +69,7 @@ func clerkCSP(issuer string) (string, error) {
 		return "", errors.New("Clerk issuer must be an HTTPS origin")
 	}
 	origin := "https://" + parsed.Host
-	return "default-src 'self'; connect-src 'self' " + origin + " https://*.protect.clerk.com:*; img-src 'self' data: https://img.clerk.com; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' " + origin + " https://challenges.cloudflare.com https://*.protect.clerk.com; worker-src 'self' blob:; frame-src 'self' https://challenges.cloudflare.com https://*.protect.clerk.com; base-uri 'none'; frame-ancestors 'none'; form-action 'self'", nil
+	return "default-src 'self'; connect-src 'self' " + origin + " https://*.protect.clerk.com:*; img-src 'self' data: https://img.clerk.com " + mapTiles + "; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' " + origin + " https://challenges.cloudflare.com https://*.protect.clerk.com; worker-src 'self' blob:; frame-src 'self' https://challenges.cloudflare.com https://*.protect.clerk.com; base-uri 'none'; frame-ancestors 'none'; form-action 'self'", nil
 }
 
 func serve(directory string, csp func() string) (http.Handler, error) {

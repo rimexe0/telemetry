@@ -10,6 +10,7 @@
   import Openings from '$lib/Openings.svelte';
   import RulesView from '$lib/RulesView.svelte';
   import ActivityView from '$lib/ActivityView.svelte';
+  import PlacesView from '$lib/PlacesView.svelte';
   import HabitsView from '$lib/HabitsView.svelte';
   import SignInSettings from '$lib/SignInSettings.svelte';
   import TodayView from '$lib/TodayView.svelte';
@@ -984,6 +985,8 @@
           <DayTimeline picker={false} observations={dayObservations} {sources} start={dayWindowStart} bind:date={selectedDay} loading={dayLoading} error={dayError || error} status={dayStatus} ondatechange={refresh} onrefresh={() => refresh(true)} oninspect={(o) => selectedObservation = o} />
         {:else if activitySection === 'apps'}
           <ActivityView picker={false} date={selectedDay} />
+        {:else if activitySection === 'places'}
+          <PlacesView date={selectedDay} />
         {:else if activitySection === 'health'}
           <div class="health-toolbar">
             {#if healthSources.length > 1}

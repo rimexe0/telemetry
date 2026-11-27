@@ -23,7 +23,7 @@ func TestNewServesBuiltAssetsWithPanelHeaders(t *testing.T) {
 	if response.Code != http.StatusOK || response.Body.String() != "<main>Telemetry</main>" {
 		t.Fatalf("response = %d %q", response.Code, response.Body.String())
 	}
-	if response.Header().Get("Content-Security-Policy") != "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self' 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'" || response.Header().Get("X-Content-Type-Options") != "nosniff" {
+	if response.Header().Get("Content-Security-Policy") != "default-src 'self'; connect-src 'self'; img-src 'self' data: https://tile.openstreetmap.org; style-src 'self'; script-src 'self' 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'" || response.Header().Get("X-Content-Type-Options") != "nosniff" {
 		t.Fatalf("missing panel security headers: %#v", response.Header())
 	}
 }
@@ -51,7 +51,8 @@ func TestClerkCSPRejectsInjectedOrigins(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
 	csp := w.Header().Get("Content-Security-Policy")
-	if !strings.Contains(csp, "https://clerk.example") || strings.Contains(csp, "unsafe-eval") || !strings.Contains(csp, "frame-ancestors 'none'") {
+	if !strings.Contains(csp, "https://clerk.example") || strings.Contains(csp, "unsafe-eval") || !strings.Contains(csp, "frame-ancestors 'none'") ||
+		!strings.Contains(csp, "img-src 'self' data: https://img.clerk.com https://tile.openstreetmap.org;") {
 		t.Fatalf("CSP %s", csp)
 	}
 }

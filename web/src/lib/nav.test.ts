@@ -9,6 +9,8 @@ describe('parseHash', () => {
     expect(parseHash('#habits', today)).toEqual({ place: 'habits' });
     expect(parseHash('#activity/timeline', today)).toEqual({ place: 'activity', section: 'timeline' });
     expect(parseHash('#activity/apps/2026-11-20', today)).toEqual({ place: 'activity', section: 'apps', day: '2026-11-20' });
+    expect(parseHash('#activity/places/2026-11-20', today)).toEqual({ place: 'activity', section: 'places', day: '2026-11-20' });
+    expect(parseHash('#activity/places/2026-11-27', today)).toEqual({ place: 'activity', section: 'places' });
     expect(parseHash('#settings', today)).toEqual({ place: 'settings' });
     expect(parseHash('#settings/lock', today)).toEqual({ place: 'settings', page: 'lock' });
   });
@@ -64,7 +66,8 @@ describe('routeHash', () => {
   it('round-trips through parseHash', () => {
     const routes: Route[] = [
       { place: 'today' }, { place: 'habits' }, { place: 'settings' }, { place: 'settings', page: 'times' },
-      { place: 'activity', section: 'apps', day: '2026-11-01' }, { place: 'activity', section: 'health' }
+      { place: 'activity', section: 'apps', day: '2026-11-01' }, { place: 'activity', section: 'health' },
+      { place: 'activity', section: 'places', day: '2026-11-01' }
     ];
     for (const route of routes) expect(parseHash(routeHash(route, today), today)).toEqual(route);
   });
@@ -78,6 +81,7 @@ describe('loadKey', () => {
     expect(loadKey({ place: 'activity', section: 'apps' })).toBe('self');
     expect(loadKey({ place: 'activity', section: 'health' })).toBe('health');
     expect(loadKey({ place: 'activity', section: 'plan' })).toBe('plan');
+    expect(loadKey({ place: 'activity', section: 'places' })).toBe('self');
     expect(loadKey({ place: 'settings' })).toBe('self');
     expect(loadKey({ place: 'settings', page: 'budget' })).toBe('rules');
     expect(loadKey({ place: 'settings', page: 'distractions' })).toBe('rules');

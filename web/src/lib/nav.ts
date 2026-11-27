@@ -9,7 +9,7 @@
 // opens the place its contents moved to.
 
 export type Place = 'today' | 'habits' | 'activity' | 'settings';
-export type ActivitySection = 'timeline' | 'apps' | 'health' | 'plan';
+export type ActivitySection = 'timeline' | 'apps' | 'health' | 'plan' | 'places';
 export type SettingsPage = 'budget' | 'times' | 'distractions' | 'lock' | 'devices' | 'sources' | 'sign-in';
 
 export type Route =
@@ -29,7 +29,8 @@ export const activitySections: { section: ActivitySection; label: string }[] = [
   { section: 'timeline', label: 'Timeline' },
   { section: 'apps', label: 'Apps' },
   { section: 'health', label: 'Health' },
-  { section: 'plan', label: 'Plan' }
+  { section: 'plan', label: 'Plan' },
+  { section: 'places', label: 'Places' }
 ];
 
 export const settingsPages: Record<SettingsPage, string> = {
