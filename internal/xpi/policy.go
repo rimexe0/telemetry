@@ -25,15 +25,13 @@ const UpdateIntervalSeconds = 3600
 //   - Nothing else is installed: the Telemetry extension itself records the
 //     tab in front for the collector (owner 2026-11-26: no ActivityWatch
 //     add-on in LibreWolf).
-//   - An unsigned package installs only where signatures are not required,
-//     which LibreWolf allows policy to say. That lets any unsigned add-on
-//     install, so it is set only while the kept package is unsigned.
-func Policies(signed bool) map[string]any {
+//   - Policy cannot allow an unsigned package: Firefox lets policy set only
+//     some preferences, and xpinstall.signatures.required is not one of
+//     them (owner, 2026-11-27). The installers write it into LibreWolf's
+//     overrides file instead, while the kept package is unsigned.
+func Policies() map[string]any {
 	preferences := map[string]any{
 		"extensions.update.interval": map[string]any{"Value": UpdateIntervalSeconds, "Status": "default"},
-	}
-	if !signed {
-		preferences["xpinstall.signatures.required"] = map[string]any{"Value": false, "Status": "locked"}
 	}
 	return map[string]any{
 		"ExtensionSettings": map[string]any{

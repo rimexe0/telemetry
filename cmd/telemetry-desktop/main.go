@@ -78,15 +78,14 @@ func usage() {
 func browserPolicy(arguments []string, out io.Writer) error {
 	flags := flag.NewFlagSet("browser-policy", flag.ExitOnError)
 	base := flags.String("base", "", "the browser's own distribution/policies.json, if it has one")
-	packed := flags.String("xpi", "", "the kept Firefox package; an unsigned one is allowed to install (required)")
+	packed := flags.String("xpi", "", "the kept Firefox package, checked to be one (required)")
 	mac := flags.Bool("mac", false, "write macOS managed preferences (as JSON, for plutil) instead of a Linux policies.json")
 	flags.Parse(arguments)
 	data, err := os.ReadFile(*packed)
 	if err != nil {
 		return fmt.Errorf("-xpi: %w", err)
 	}
-	info, err := xpi.Read(data)
-	if err != nil {
+	if _, err := xpi.Read(data); err != nil {
 		return err
 	}
 	var shipped []byte
@@ -97,7 +96,7 @@ func browserPolicy(arguments []string, out io.Writer) error {
 	}
 	// A Linux system policies.json replaces the browser's own; macOS managed
 	// preferences only replace the policies they name.
-	policies, err := xpi.Merge(shipped, xpi.Policies(info.Signed), !*mac)
+	policies, err := xpi.Merge(shipped, xpi.Policies(), !*mac)
 	if err != nil {
 		return err
 	}

@@ -125,7 +125,7 @@ func TestPolicyKeepsTheBrowsersOwnSettings(t *testing.T) {
 		"*": {"installation_mode": "allowed", "allowed_types": ["extension", "theme"]},
 		"uBlock0@raymondhill.net": {"installation_mode": "normal_installed"}},
 		"Preferences": {"browser.x": {"Value": 1}}}}`)
-	merged, err := Merge(base, Policies(true), true)
+	merged, err := Merge(base, Policies(), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,15 +150,17 @@ func TestPolicyKeepsTheBrowsersOwnSettings(t *testing.T) {
 	}
 	// On macOS the browser still reads its own file for policies ours does
 	// not name.
-	mac, _ := Merge(base, Policies(false), false)
+	mac, _ := Merge(base, Policies(), false)
 	if _, has := mac["DisableTelemetry"]; has || mac["ExtensionSettings"].(map[string]any)["*"] == nil {
 		t.Fatalf("mac = %v", mac)
 	}
-	if mac["Preferences"].(map[string]any)["xpinstall.signatures.required"] == nil {
-		t.Fatal("an unsigned package is not allowed")
+	// Firefox does not take xpinstall.signatures.required from policy; the
+	// installers write it into LibreWolf's overrides file instead.
+	if mac["Preferences"].(map[string]any)["xpinstall.signatures.required"] != nil {
+		t.Fatal("policy sets a preference Firefox ignores there")
 	}
 	// Without a file of the browser's own, ours alone.
-	if alone, err := Merge(nil, Policies(true), true); err != nil || len(alone) != 2 {
+	if alone, err := Merge(nil, Policies(), true); err != nil || len(alone) != 2 {
 		t.Fatalf("alone = %v, %v", alone, err)
 	}
 }
@@ -170,10 +172,14 @@ func TestEnrollmentProfileUsesTheSamePolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{ID, InstallURL, UpdateURL, "net.librewolf.librewolf", "org.mozilla.firefox",
-		"EnterprisePoliciesEnabled", "extensions.update.interval", "xpinstall.signatures.required"} {
+		"EnterprisePoliciesEnabled", "extensions.update.interval"} {
 		if !strings.Contains(string(script), want) {
 			t.Errorf("enrollment.py does not mention %q", want)
 		}
+	}
+	// Policy cannot allow an unsigned package; the installers do.
+	if strings.Contains(string(script), `"xpinstall.signatures.required"`) {
+		t.Error("enrollment.py sets xpinstall.signatures.required, which Firefox ignores in policy")
 	}
 }
 

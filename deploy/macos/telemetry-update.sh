@@ -45,7 +45,31 @@ external_extension() {
       print -- "Could not write the extension file for ${browsers[$dir]}; it is skipped." >&2
   done
 }
+# Firefox lets enterprise policy set only some preferences, and
+# xpinstall.signatures.required is not one of them, so LibreWolf kept an
+# unsigned package switched off and the blocker hid LibreWolf for having no
+# running extension (owner, 2026-11-27). LibreWolf reads this file of the
+# user's at every start: while the kept package is unsigned the line is
+# there, once, and when it is signed that line goes again.
+librewolf_overrides() {
+  local xpi="$root/extension.xpi" file="$HOME/.librewolf/librewolf.overrides.cfg"
+  local line='defaultPref("xpinstall.signatures.required", false);'
+  [[ -f "$xpi" ]] || return 0
+  if grep -qa -e META-INF/mozilla.rsa -e META-INF/cose.sig "$xpi"; then
+    [[ -f "$file" ]] && grep -qxF -- "$line" "$file" || return 0
+    { grep -vxF -- "$line" "$file" || true; } > "$file.new"
+    mv -f "$file.new" "$file"
+    return 0
+  fi
+  [[ -d /Applications/LibreWolf.app || -d "$HOME/Applications/LibreWolf.app" || -d "$HOME/.librewolf" ]] || return 0
+  grep -qxF -- "$line" "$file" 2>/dev/null && return 0
+  mkdir -p "$HOME/.librewolf"
+  # A file whose last line has no newline gets one first.
+  [[ ! -s "$file" || -z "$(tail -c 1 "$file")" ]] || printf '\n' >> "$file"
+  printf '%s\n' "$line" >> "$file"
+}
 external_extension
+librewolf_overrides || log "could not write LibreWolf's overrides file"
 
 # The latest release's release.txt names it. Download links are not counted
 # against GitHub's API limit of 60 requests an hour per address, which other
@@ -150,6 +174,7 @@ mv -f "$root/extension.crx.new" "$root/extension.crx"
 install -m 644 telemetry-extension.xpi "$root/extension.xpi.new"
 mv -f "$root/extension.xpi.new" "$root/extension.xpi"
 external_extension
+librewolf_overrides || log "could not write LibreWolf's overrides file"
 
 echo "$tag" > "$installed"
 log "$tag installed"

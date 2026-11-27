@@ -10,7 +10,7 @@ import (
 	"github.com/rimexe0/telemetry/internal/xpi"
 )
 
-func TestBrowserPolicyKeepsTheBrowsersOwnAndAllowsAnUnsignedPackage(t *testing.T) {
+func TestBrowserPolicyKeepsTheBrowsersOwn(t *testing.T) {
 	dir := t.TempDir()
 	packed := filepath.Join(dir, "extension.xpi")
 	data, err := xpi.Build("../../extensions/telemetry-blocker")
@@ -33,7 +33,10 @@ func TestBrowserPolicyKeepsTheBrowsersOwnAndAllowsAnUnsignedPackage(t *testing.T
 	}
 	settings := linux.Policies["ExtensionSettings"].(map[string]any)
 	preferences := linux.Policies["Preferences"].(map[string]any)
-	if linux.Policies["DisableTelemetry"] != true || settings[xpi.ID] == nil || settings["uBlock0@raymondhill.net"] == nil || preferences["xpinstall.signatures.required"] == nil {
+	// The unsigned package is allowed by LibreWolf's overrides file, which
+	// the installers write; policy cannot say it.
+	if linux.Policies["DisableTelemetry"] != true || settings[xpi.ID] == nil || settings["uBlock0@raymondhill.net"] == nil ||
+		preferences["extensions.update.interval"] == nil || preferences["xpinstall.signatures.required"] != nil {
 		t.Fatalf("linux = %v", linux.Policies)
 	}
 

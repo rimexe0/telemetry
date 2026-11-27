@@ -11,6 +11,31 @@ dir="$HOME/telemetry-collector"
 config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/telemetry-update"
 units="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 modules="${TELEMETRY_MODULES:-window,activitywatch-api,t3,blocker}"
+
+# Firefox lets enterprise policy set only some preferences, and
+# xpinstall.signatures.required is not one of them, so LibreWolf kept an
+# unsigned package switched off and the blocker hid LibreWolf for having no
+# running extension (owner, 2026-11-27). LibreWolf reads this file of the
+# user's at every start: while the kept package is unsigned the line is
+# there, once, and when it is signed that line goes again.
+librewolf_overrides() {
+  local xpi="$dir/extension.xpi" file="$HOME/.librewolf/librewolf.overrides.cfg"
+  local line='defaultPref("xpinstall.signatures.required", false);'
+  [[ -f "$xpi" ]] || return 0
+  if grep -qa -e META-INF/mozilla.rsa -e META-INF/cose.sig "$xpi"; then
+    [[ -f "$file" ]] && grep -qxF -- "$line" "$file" || return 0
+    { grep -vxF -- "$line" "$file" || true; } > "$file.new"
+    mv -f "$file.new" "$file"
+    return 0
+  fi
+  [[ -n "$(command -v librewolf)" || -d "$HOME/.librewolf" ]] || return 0
+  grep -qxF -- "$line" "$file" 2>/dev/null && return 0
+  mkdir -p "$HOME/.librewolf"
+  # A file whose last line has no newline gets one first.
+  [[ ! -s "$file" || -z "$(tail -c 1 "$file")" ]] || printf '\n' >> "$file"
+  printf '%s\n' "$line" >> "$file"
+}
+
 signer='telemetry-release namespaces="telemetry-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMZJo9FHdls/jIDhJyAMAOaDfY8jpT7Im9P7QFam4LSO'
 
 tag=$(curl -fsSL "https://github.com/$repo/releases/latest/download/release.txt" | awk '{print $1}')
@@ -35,6 +60,7 @@ mkdir -p "$dir/extension"
 tar -xzf telemetry-extension.tar.gz -C "$dir/extension"
 install -m 644 telemetry-extension.crx "$dir/extension.crx"
 install -m 644 telemetry-extension.xpi "$dir/extension.xpi"
+librewolf_overrides || echo "Could not write LibreWolf's overrides file; LibreWolf may keep the extension off." >&2
 mkdir -p jobs
 tar -xzf telemetry-linux-jobs.tar.gz -C jobs
 

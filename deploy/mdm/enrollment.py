@@ -4,9 +4,10 @@
 Usage: enrollment.py SERVER_URL TOPIC IDENTITY_P12 P12_PASSWORD POLICY_PLIST OUT SERVER_CA_PEM
 
 POLICY_PLIST is the Chromium browsers' policy; Firefox and LibreWolf get
-theirs from this script. With TELEMETRY_UNSIGNED_XPI=1 LibreWolf may also
-install add-ons Mozilla did not sign, for a release published without
-Mozilla's signature.
+theirs from this script. Policy cannot let LibreWolf install a package
+Mozilla did not sign (Firefox takes xpinstall.signatures.required only from
+a preferences file); the Mac installer and updater write it into
+LibreWolf's overrides file while the release is unsigned.
 
 The profile enrolls the Mac in the owner's own NanoMDM and, in the same
 profile, sets the browser policy that installs the Telemetry extension. A
@@ -21,7 +22,6 @@ Settings → Device Management un-enrolls the Mac.
 """
 import base64
 import copy
-import os
 import plistlib
 import sys
 import uuid
@@ -117,11 +117,6 @@ librewolf_policy["ExtensionSettings"].update({
         "private_browsing": True,
     },
 })
-# A release without Mozilla's signature (no AMO credentials) installs only
-# where signatures are not required, which LibreWolf lets policy say. That
-# lets any unsigned add-on install, so it is set only on request.
-if os.environ.get("TELEMETRY_UNSIGNED_XPI") == "1":
-    librewolf_policy["Preferences"]["xpinstall.signatures.required"] = {"Value": False, "Status": "locked"}
 for browser, content in [("net.librewolf.librewolf", librewolf_policy), ("org.mozilla.firefox", firefox_policy)]:
     payloads.append({
         "PayloadType": "com.apple.ManagedClient.preferences",
