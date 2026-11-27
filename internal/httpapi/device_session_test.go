@@ -90,3 +90,38 @@ func TestSessionsFromAnotherKeyAreRejected(t *testing.T) {
 		t.Fatal("session from another key accepted")
 	}
 }
+
+// The phone app's Data sources page reads collection health with the
+// device's panel session, also when sign-in is set in the panel: a session
+// that may change owner settings may read what the read token reads.
+func TestDeviceSessionReadsCollectionHealthWithStoredSignIn(t *testing.T) {
+	sessions := NewDeviceSessions([]byte("0123456789abcdef0123456789abcdef"), time.Hour)
+	server, err := New(&fakeRepository{}, Config{
+		IngestToken: "ingest", ReadToken: "read", PanelToken: "panel", PanelSessionSecret: "secret",
+		PanelTokenEnabled: func() bool { return true },
+		OwnerAuthorized:   func(*http.Request) bool { return false },
+		DeviceSessions:    sessions,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, _ := sessions.issue("android-1")
+	get := func(cookie *http.Cookie) int {
+		request := httptest.NewRequest(http.MethodGet, "/v1/collection/health?limit=100&samples=1", nil)
+		if cookie != nil {
+			request.AddCookie(cookie)
+		}
+		response := httptest.NewRecorder()
+		server.ServeHTTP(response, request)
+		return response.Code
+	}
+	if code := get(nil); code != http.StatusUnauthorized {
+		t.Fatalf("no session = %d", code)
+	}
+	if code := get(&http.Cookie{Name: deviceSessionCookieName, Value: value}); code != http.StatusOK {
+		t.Fatalf("device session = %d", code)
+	}
+	if code := get(&http.Cookie{Name: deviceSessionCookieName, Value: value + "x"}); code != http.StatusUnauthorized {
+		t.Fatalf("forged session = %d", code)
+	}
+}

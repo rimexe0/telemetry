@@ -328,7 +328,10 @@ func (s *Server) externalOwner(request *http.Request) bool {
 
 func (s *Server) readAuthorized(request *http.Request) bool {
 	if s.settingsSignIn() {
-		return s.authorized(request, s.config.ReadToken) || s.panelSessionAuthorized(request) || s.externalOwner(request)
+		// A paired device's panel session may change owner settings
+		// (ownerAuthorized), so it may read what the read token reads.
+		return s.authorized(request, s.config.ReadToken) || s.panelSessionAuthorized(request) || s.externalOwner(request) ||
+			s.config.DeviceSessions.Authorized(request)
 	}
 	if s.config.OwnerAuthorized != nil {
 		return s.authorized(request, s.config.ReadToken) || s.ownerAuthorized(request)

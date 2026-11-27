@@ -82,7 +82,7 @@ class SettingsData(private val context: Context, private val scope: CoroutineSco
         loader.load("labels", force, SettingsRules::labels, { labels = it }, { labels.takeIf { it.value != null || it.at != null } }) { OwnerApi.get(context, "/v1/activity-labels") }
         loader.load("devices", force, SettingsRules::devices, { devices = it }, { devices.takeIf { it.value != null || it.at != null } }) { OwnerApi.get(context, "/v1/devices") }
         loader.load("collection", force, SettingsRules::collection, { collection = it }, { collection.takeIf { it.value != null || it.at != null } }) {
-            OwnerApi.get(context, "/v1/collection/health?limit=100&samples=0")
+            OwnerApi.get(context, "/v1/collection/health?limit=100&samples=1")
         }
         if (waiting.isNotEmpty()) flush()
     }
