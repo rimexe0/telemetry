@@ -59,7 +59,9 @@ class PeriodData(private val context: Context, private val scope: CoroutineScope
         val days = Periods.days(period, today)
         val at = keys.mapNotNull { months[it] }.maxOrNull()
         val complete = days.all(has)
-        if (!complete && state.loading) return Shown(null, at, Refresh.Never, loading = true)
+        // Kept days show at once while the rest are asked for (owner 2026-11-27): the
+        // grey shapes only while nothing of the period is kept yet.
+        if (!complete && state.loading && days.none(has)) return Shown(null, at, Refresh.Never, loading = true)
         if (!complete && days.none(has) && state.refresh != Refresh.Fresh) return Shown(null, at, state.refresh)
         return Shown(make(days), state.at ?: at, state.refresh, state.loading)
     }
@@ -141,7 +143,8 @@ class PeriodData(private val context: Context, private val scope: CoroutineScope
                 val stale = PeriodModel.stale(days, rows, version).ifEmpty { if (asked) emptyList() else listOf(days.last()) }
                 for ((from, to) in PeriodModel.ranges(stale)) {
                     asked = true
-                    val answer = withContext(Dispatchers.IO) { runCatching { OwnerApi.get(context, "/v1/activity/days?from=$from&to=$to") }.getOrNull() }
+                    // Up to 62 days the server may still be working out the first time.
+                    val answer = withContext(Dispatchers.IO) { runCatching { OwnerApi.send(context, "GET", "/v1/activity/days?from=$from&to=$to", readTimeoutMillis = 90_000) }.getOrNull() }
                     refresh = when {
                         answer == null -> Refresh.Unreachable
                         !answer.ok -> Refresh.Refused(answer.message())
