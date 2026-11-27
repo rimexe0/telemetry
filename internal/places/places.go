@@ -138,3 +138,26 @@ func Distance(fixes []Fix) float64 {
 	}
 	return total
 }
+
+// Moved is the distance travelled in [from, to), in meters, through the
+// positions within 100 m: a position inside a stay's time and StayRadius of
+// its place stands at the stay's place, so GPS jitter while standing still
+// adds nothing. Between two positions far apart in time it is the straight
+// line, so it is never more than was travelled.
+func Moved(fixes []Fix, stays []Stay, from, to time.Time) float64 {
+	usable := []Fix{}
+	for _, fix := range fixes {
+		if fix.Accuracy > 100 || fix.At.Before(from) || !fix.At.Before(to) {
+			continue
+		}
+		for _, stay := range stays {
+			if !fix.At.Before(stay.Start) && !fix.At.After(stay.End) && Meters(fix.Lat, fix.Lon, stay.Lat, stay.Lon) <= StayRadius {
+				fix.Lat, fix.Lon = stay.Lat, stay.Lon
+				break
+			}
+		}
+		usable = append(usable, fix)
+	}
+	sort.SliceStable(usable, func(i, j int) bool { return usable[i].At.Before(usable[j].At) })
+	return Distance(usable)
+}

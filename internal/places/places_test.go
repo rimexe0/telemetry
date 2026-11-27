@@ -44,3 +44,31 @@ func TestStaysAndHomeFromYesterdaysShape(t *testing.T) {
 		t.Fatal("no nights, no home")
 	}
 }
+
+func TestMovedLeavesOutJitterInsideAStay(t *testing.T) {
+	start := time.Date(2026, 11, 20, 8, 0, 0, 0, time.UTC)
+	at := func(minute int) time.Time { return start.Add(time.Duration(minute) * time.Minute) }
+	fixes := []Fix{
+		// Standing at one spot, wobbling 60 m either way.
+		{At: at(0), Lat: 41.0, Lon: 29.0, Accuracy: 10},
+		{At: at(5), Lat: 41.0005, Lon: 29.0, Accuracy: 10},
+		{At: at(10), Lat: 40.9995, Lon: 29.0, Accuracy: 10},
+		{At: at(15), Lat: 41.0, Lon: 29.0, Accuracy: 10},
+		// A poor position far away is left out.
+		{At: at(16), Lat: 41.05, Lon: 29.0, Accuracy: 400},
+		// Then 1.1 km north.
+		{At: at(25), Lat: 41.01, Lon: 29.0, Accuracy: 10},
+	}
+	stays := Stays(fixes, nil)
+	if len(stays) != 1 {
+		t.Fatalf("stays = %+v", stays)
+	}
+	moved := Moved(fixes, stays, start, at(60))
+	straight := Meters(stays[0].Lat, stays[0].Lon, 41.01, 29.0)
+	if moved < straight-1 || moved > straight+1 {
+		t.Fatalf("moved %.0f m, want the walk from the stay only (%.0f m)", moved, straight)
+	}
+	if got := Moved(fixes, stays, at(20), at(60)); got != 0 {
+		t.Fatalf("one position in the range moved %.0f m", got)
+	}
+}

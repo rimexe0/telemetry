@@ -65,6 +65,7 @@ type Server struct {
 	config     Config
 	mux        *http.ServeMux
 	budget     budgetCache
+	dayRows    activityDaysCache
 }
 
 func New(repository store.Repository, config Config) (*Server, error) {
@@ -159,6 +160,7 @@ func New(repository store.Repository, config Config) (*Server, error) {
 	server.mux.HandleFunc("POST /v1/plans/{date}/replan-proposals/{id}/accept", server.acceptReplanProposal)
 	server.mux.HandleFunc("POST /v1/plans/{date}/replan-proposals/{id}/reject", server.rejectReplanProposal)
 	server.mux.HandleFunc("GET /v1/activity/summary", server.activitySummary)
+	server.mux.HandleFunc("GET /v1/activity/days", server.activityDays)
 	server.mux.HandleFunc("GET /v1/places/day", server.placesDay)
 	server.mux.HandleFunc("GET /v1/places/tiles/{z}/{x}/{y}", server.placesTile)
 	server.mux.HandleFunc("GET /v1/app-names", server.appNames)
