@@ -149,7 +149,9 @@ func NewDoor(config policy.Config, state State, now time.Time) (Door, error) {
 	door := Door{RequestedAt: now.UTC(), OpensAt: now.UTC().Add(time.Duration(settings.WaitMinutes) * time.Minute),
 		Borrowing: state.Left <= 0, UseMinutes: settings.WindowUseMinutes, GraceMinutes: settings.GraceMinutes}
 	clock := func(t time.Time) string { return t.In(location(config)).Format("15:04") }
-	if end, in := policy.DistractionTimeEnds(config, now); in {
+	// In bedtime a distraction time opens nothing, so a door there is an
+	// ordinary window at the bedtime rate.
+	if end, in := policy.DistractionTimeEnds(config, now); in && !policy.InBedtime(config, now) {
 		door.InDistractionTime, door.UseMinutes, door.WindowEnd = true, 0, end.UTC()
 		if !end.After(door.OpensAt) {
 			return Door{}, Unavailable("Today's distraction time ends at " + clock(end) + ", before a door would open.")

@@ -174,7 +174,9 @@ func (c *calc) state(result *Result) {
 		state.DoorUnavailableReason = "A door is open until " + clock(view.EndsAt) + "."
 	case state.NextDoorAt != nil:
 		state.DoorUnavailableReason = "The next door opens at " + clock(*state.NextDoorAt) + "."
-	case state.InDistractionTime && today.Left > 0:
+	case state.InDistractionTime && !policy.InBedtime(config, now) && today.Left > 0:
+		// Bedtime closes everything but the essentials, also inside a
+		// distraction time, so there the door stays the way out.
 		state.DoorUnavailableReason = "Distraction time is open now; no door is needed."
 	case today.Left <= 0 && today.Borrowable <= 0:
 		state.DoorUnavailableReason = "Nothing is left to spend or borrow today."

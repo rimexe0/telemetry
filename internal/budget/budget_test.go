@@ -340,6 +340,35 @@ func TestDoorEndsWhenTheBudgetAndBorrowingRunOut(t *testing.T) {
 	}
 }
 
+// Loophole case 5 (2026-11-27): bedtime 23:00-07:00 ran into the 19:00-00:00
+// distraction time. From 23:00 bedtime closed everything but the essentials,
+// yet the door was refused as "Distraction time is open now", so the block
+// screen had no way out and blocking was switched off on the phone.
+func TestDoorInBedtimeInsideDistractionTime(t *testing.T) {
+	config := testConfig()
+	config.Bedtime = policy.Bedtime{Enabled: true, Start: "23:00", End: "07:00", WindDownMinutes: 65}
+	if err := config.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	now := at(26, 23, 10)
+	state := Compute(Inputs{Config: config}, "2026-11-26", now).State
+	if !state.DoorAvailable || state.DoorUnavailableReason != "" {
+		t.Fatalf("door in bedtime = %v %q", state.DoorAvailable, state.DoorUnavailableReason)
+	}
+	if state.Rate.Kind != RateKindBedtime {
+		t.Fatalf("rate = %+v, want bedtime", state.Rate)
+	}
+	// An ordinary window, not a borrowing door that lasts until midnight.
+	door, err := NewDoor(config, state, now)
+	if err != nil || door.InDistractionTime || door.UseMinutes != 10 || !door.OpensAt.Equal(at(26, 23, 20).UTC()) || !door.WindowEnd.Equal(at(27, 0, 20).UTC()) {
+		t.Fatalf("door = %+v, %v", door, err)
+	}
+	// Before bedtime the distraction time is open and needs no door.
+	if state := Compute(Inputs{Config: config}, "2026-11-26", at(26, 22, 0)).State; state.DoorAvailable || state.DoorUnavailableReason != "Distraction time is open now; no door is needed." {
+		t.Fatalf("before bedtime = %v %q", state.DoorAvailable, state.DoorUnavailableReason)
+	}
+}
+
 func TestNewDoorWindowsAndWhenThereIsNoDoor(t *testing.T) {
 	config := testConfig()
 	state := func(now time.Time, segments ...activity.Segment) State {
