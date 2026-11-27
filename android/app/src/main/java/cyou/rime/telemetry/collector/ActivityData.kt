@@ -35,11 +35,6 @@ data class Shown<T>(val value: T?, val at: Instant?, val refresh: Refresh, val l
  * as the app's screen, so switching places never loads anything again.
  */
 class ActivityData(private val context: Context, private val scope: CoroutineScope, private val zone: ZoneId = ZoneId.systemDefault()) {
-    private companion object {
-        /** An answer is asked for again at most this often while it is on the screen. */
-        val EVERY: Duration = Duration.ofMinutes(1)
-    }
-
     var section by mutableStateOf(ActivitySection.TIMELINE)
     var day by mutableStateOf(LocalDate.now(zone).toString())
 
@@ -48,6 +43,7 @@ class ActivityData(private val context: Context, private val scope: CoroutineSco
     private val places = mutableStateMapOf<String, Shown<PlacesDay>>()
     var health by mutableStateOf(Shown<HealthWeek>(null, null, Refresh.Never))
         private set
+    private val loader = AnswerLoader(context, scope)
     private val askedAt = mutableMapOf<String, Instant>()
     private val running = mutableSetOf<String>()
 
@@ -78,13 +74,13 @@ class ActivityData(private val context: Context, private val scope: CoroutineSco
     fun show(force: Boolean = false) {
         val day = day
         when (section) {
-            ActivitySection.TIMELINE -> load("day-$day", force, { DayModel.parse(it) }, { days[day] = it }, { days[day] }) {
+            ActivitySection.TIMELINE -> loader.load("day-$day", force, { DayModel.parse(it) }, { days[day] = it }, { days[day] }) {
                 DeviceApi.send(context, "GET", "/v1/device/day?date=$day")?.let { RawAnswer(it.status, "application/json", it.body.toByteArray()) }
             }
-            ActivitySection.APPS -> load("summary-$day", force, { SummaryModel.parse(it) }, { summaries[day] = it }, { summaries[day] }) {
+            ActivitySection.APPS -> loader.load("summary-$day", force, { SummaryModel.parse(it) }, { summaries[day] = it }, { summaries[day] }) {
                 OwnerApi.get(context, "/v1/activity/summary?date=$day")
             }
-            ActivitySection.PLACES -> load("places-$day", force, { placesFor(day, it) }, { places[day] = it }, { places[day] }, empty = { placesFor(day, null) }) {
+            ActivitySection.PLACES -> loader.load("places-$day", force, { placesFor(day, it) }, { places[day] = it }, { places[day] }, empty = { placesFor(day, null) }) {
                 OwnerApi.get(context, "/v1/places/day?date=$day")
             }
             ActivitySection.HEALTH -> showHealth(force)
@@ -103,7 +99,45 @@ class ActivityData(private val context: Context, private val scope: CoroutineSco
         return Places.merge(server, day, zone, from, to, local, Places.rulesFrom(HabitCache.list(context)))
     }
 
-    private fun <T> load(
+    private fun showHealth(force: Boolean) {
+        val key = "health"
+        if (key in running) return
+        val asked = askedAt[key]
+        if (!force && asked != null && Duration.between(asked, Instant.now()) < AnswerLoader.EVERY) return
+        running += key
+        askedAt[key] = Instant.now()
+        scope.launch {
+            if (health.value == null) {
+                val saved = withContext(Dispatchers.IO) { HealthDays.saved(context) }
+                health = Shown(saved?.first, saved?.second, Refresh.Never, loading = true)
+            }
+            val fresh = runCatching { HealthDays.refresh(context, LocalDate.now(zone), zone) }.getOrNull()
+            health = if (fresh != null) Shown(fresh, Instant.now(), Refresh.Fresh)
+            else health.copy(loading = false, refresh = Refresh.Refused("Health Connect can't be read on this phone."))
+            running -= key
+        }
+    }
+
+    /** Drops per-day answers older than three weeks. */
+    fun prune() {
+        scope.launch(Dispatchers.IO) { runCatching { AnswerStore.of(context).prune(LocalDate.now(zone)) } }
+    }
+}
+
+/**
+ * Shows a saved answer at once and asks the server for a fresh one behind
+ * it, at most once a minute per answer while it is on the screen. Only an
+ * answer that reads replaces the saved copy.
+ */
+class AnswerLoader(private val context: Context, private val scope: CoroutineScope) {
+    companion object {
+        val EVERY: Duration = Duration.ofMinutes(1)
+    }
+
+    private val askedAt = mutableMapOf<String, Instant>()
+    private val running = mutableSetOf<String>()
+
+    fun <T> load(
         key: String,
         force: Boolean,
         parse: (String) -> T?,
@@ -151,27 +185,4 @@ class ActivityData(private val context: Context, private val scope: CoroutineSco
         }
     }
 
-    private fun showHealth(force: Boolean) {
-        val key = "health"
-        if (key in running) return
-        val asked = askedAt[key]
-        if (!force && asked != null && Duration.between(asked, Instant.now()) < EVERY) return
-        running += key
-        askedAt[key] = Instant.now()
-        scope.launch {
-            if (health.value == null) {
-                val saved = withContext(Dispatchers.IO) { HealthDays.saved(context) }
-                health = Shown(saved?.first, saved?.second, Refresh.Never, loading = true)
-            }
-            val fresh = runCatching { HealthDays.refresh(context, LocalDate.now(zone), zone) }.getOrNull()
-            health = if (fresh != null) Shown(fresh, Instant.now(), Refresh.Fresh)
-            else health.copy(loading = false, refresh = Refresh.Refused("Health Connect can't be read on this phone."))
-            running -= key
-        }
-    }
-
-    /** Drops per-day answers older than three weeks. */
-    fun prune() {
-        scope.launch(Dispatchers.IO) { runCatching { AnswerStore.of(context).prune(LocalDate.now(zone)) } }
-    }
 }

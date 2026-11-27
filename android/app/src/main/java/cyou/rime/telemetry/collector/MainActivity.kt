@@ -46,6 +46,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import cyou.rime.telemetry.collector.ui.ActivityScreen
 import cyou.rime.telemetry.collector.ui.HabitEditing
+import cyou.rime.telemetry.collector.ui.SettingsScreen
 import cyou.rime.telemetry.collector.ui.HabitsScreen
 import cyou.rime.telemetry.collector.ui.RulePicker
 import cyou.rime.telemetry.collector.ui.PText
@@ -100,6 +101,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var web: WebView
     /** Activity's answers, kept for the life of the screen so a tab switch never reloads them. */
     private lateinit var activity: ActivityData
+    /** Settings' values and the changes waiting to be sent, kept for the life of the screen. */
+    private lateinit var settings: SettingsData
 
     private var place by mutableStateOf(Place.TODAY)
     // Kept in memory for the life of the app, so each place shows at once on every visit.
@@ -140,6 +143,7 @@ class MainActivity : ComponentActivity() {
         web = buildWebView()
         activity = ActivityData(applicationContext, lifecycleScope)
         activity.prune()
+        settings = SettingsData(applicationContext, lifecycleScope)
         DeliveryConfig(this).let { config ->
             paired = config.token() != null
             removed = config.removed
@@ -150,7 +154,6 @@ class MainActivity : ComponentActivity() {
         CollectionStarter.ensureRunning(this)
         if (savedInstanceState == null && SetupActivity.needsSetup(this)) openSetup(null)
         // The panel loads behind Today, so the first tap on Activity or Settings shows it at once.
-        if (paired && !removed) openPanel(settingsHash)
 
         // A tick from the home-screen widget shows here at once.
         lifecycleScope.launch {
@@ -190,7 +193,7 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    private val Place.web: Boolean get() = this == Place.SETTINGS
+    private val Place.web: Boolean get() = false
 
     private fun hashFor(place: Place): String = settingsHash
 
@@ -230,6 +233,8 @@ class MainActivity : ComponentActivity() {
         } }
         reload()
         if (place == Place.ACTIVITY) activity.show()
+        // Settings' values stay fresh, and a change made offline goes once the server can be reached.
+        if (place == Place.SETTINGS || settings.waiting.isNotEmpty()) settings.show()
     }
 
     /**
@@ -299,8 +304,13 @@ class MainActivity : ComponentActivity() {
         if (next == place && hash == null) {
             if (next == Place.SETTINGS) settingsHash = SETTINGS_HASH else if (next == Place.ACTIVITY) activityHash = ACTIVITY_HASH
         }
+        val again = next == place
         place = next
         if (next == Place.ACTIVITY) activity.show()
+        if (next == Place.SETTINGS) {
+            // Tapping Settings again goes back to its list.
+            if (again && settings.page != null) settings.open(null) else settings.show()
+        }
         if (!next.web) return
         hash?.let { if (next == Place.SETTINGS) settingsHash = it else activityHash = it }
         when (webState) {
@@ -445,12 +455,7 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                     Place.ACTIVITY -> ActivityScreen(activity, now, zone)
-                    Place.SETTINGS -> when (val state = webState) {
-                        Web.Open -> Unit
-                        is Web.Unavailable -> PanelUnavailable(false, state.refusedWith, onRetry = { openPanel(hashFor(place)) },
-                            onPhoneSettings = { startActivity(SettingsActivity.intent(this@MainActivity, null)) })
-                        Web.Opening, Web.Closed -> PanelUnavailable(true, null, onRetry = {}, onPhoneSettings = {})
-                    }
+                    Place.SETTINGS -> SettingsScreen(settings, now, zone) { section -> startActivity(SettingsActivity.intent(this@MainActivity, section)) }
                 }
             }
             PlaceBar(place) { select(it) }
