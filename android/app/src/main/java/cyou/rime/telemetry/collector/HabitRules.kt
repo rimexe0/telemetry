@@ -261,3 +261,13 @@ fun ruleLines(habits: List<TodayHabit>?, latest: RuleFix?, now: Instant, zone: Z
         val rule = habit.rule ?: return@mapNotNull null
         RuleText.line(rule, habit.done, habit.doneBy, habit.doneAt, latest, now, zone)?.let { habit.id to it }
     }.toMap()
+
+/** The Habits page's rule lines: as Today says them for today's habits, and the distance for the others. */
+fun habitRuleLines(habits: List<HabitDef>?, today: List<TodayHabit>?, latest: RuleFix?, now: Instant, zone: ZoneId): Map<Long, String> {
+    val todays = today.orEmpty().associateBy { it.id }
+    return habits.orEmpty().mapNotNull { habit ->
+        val rule = habit.rule ?: return@mapNotNull null
+        val ticked = todays[habit.id]
+        RuleText.line(rule, ticked?.done ?: false, ticked?.doneBy, ticked?.doneAt, latest, now, zone)?.let { habit.id to it }
+    }.toMap()
+}

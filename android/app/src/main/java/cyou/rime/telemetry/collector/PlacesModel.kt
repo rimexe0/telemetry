@@ -114,6 +114,31 @@ object Places {
         return lines
     }
 
+    /** How near a stay's place a position must be to belong to it (the server's StayRadius). */
+    const val STAY_RADIUS_M = 150.0
+
+    /**
+     * The path as lines, with no line inside a stay: the positions within a
+     * stay's time and 150 m of its place stand at the stay's place, so GPS
+     * jitter indoors draws no star around home, and the path runs only
+     * between stays. Still broken wherever positions are more than 15
+     * minutes apart.
+     */
+    fun pathLines(points: List<RuleFix>, stays: List<PlaceStay>): List<List<RuleFix>> {
+        if (stays.isEmpty()) return pathLines(points)
+        // The breaks come from the positions as they were, so a stay never makes a gap or hides one.
+        return pathLines(points).map { line ->
+            val placed = line.map { point ->
+                val stay = stays.firstOrNull {
+                    !point.at.isBefore(it.from) && !point.at.isAfter(it.to) && PlaceRule.meters(point.lat, point.lon, it.lat, it.lon) <= STAY_RADIUS_M
+                }
+                if (stay == null) point else RuleFix(point.at, stay.lat, stay.lon, point.accuracy)
+            }
+            // A run standing at one place is one point, so it draws no line.
+            placed.filterIndexed { i, fix -> i == 0 || fix.lat != placed[i - 1].lat || fix.lon != placed[i - 1].lon }
+        }
+    }
+
     private fun without(span: Span, taken: List<Span>): List<Span> {
         var left = listOf(span)
         for (cut in taken) {

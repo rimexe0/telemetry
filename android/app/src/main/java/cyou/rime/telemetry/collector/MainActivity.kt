@@ -96,6 +96,8 @@ class MainActivity : ComponentActivity() {
     private var doorBusy by mutableStateOf(false)
     /** The habit whose rule is being picked on the Habits place, or null. */
     private var pickingRule by mutableStateOf<Long?>(null)
+    /** Edit mode on the Habits place, kept while a rule's place is picked. */
+    private var habitsEditMode by mutableStateOf(false)
 
     private var yearFetchedAt: Instant = Instant.EPOCH
     /** One talk with the server at a time, so a fetch never lands over an edit just sent. */
@@ -304,6 +306,8 @@ class MainActivity : ComponentActivity() {
                 }
             }
             val stale = if (reachable == false) TodayText.saved(savedAt, now, zone) else null
+            // Until the first try is over, what is not saved yet is waited for, not unknown.
+            val waiting = reachable == null
             // Each place keeps its scroll and its open parts while another is shown.
             val kept = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
             Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -319,6 +323,7 @@ class MainActivity : ComponentActivity() {
                         onTick = { id, done -> if (today.ticksOpen) tick(id, today.day, done) },
                         onCancelDoor = ::cancelDoor,
                         ruleLines = remember(today, now) { ruleLines(today.habits, HabitRuleWatch.latest(this@MainActivity), now, zone) },
+                        waiting = waiting,
                     )
                     Place.HABITS -> {
                         val habitsState = remember(saved, now) { HomeState.habits(saved, now, zone) }
@@ -335,6 +340,10 @@ class MainActivity : ComponentActivity() {
                             stale = stale,
                             notice = editNotice,
                             editing = habitEditing,
+                            editMode = habitsEditMode,
+                            onEditMode = { habitsEditMode = it },
+                            waiting = waiting,
+                            ruleLines = remember(habitsState, today, now) { habitRuleLines(habitsState.habits, today.habits, HabitRuleWatch.latest(this@MainActivity), now, zone) },
                         )
                     }
                     Place.ACTIVITY -> ActivityScreen(activity, now, zone)

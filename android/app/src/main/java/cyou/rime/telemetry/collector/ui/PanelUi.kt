@@ -73,18 +73,44 @@ fun PageHead(title: String, note: String = "") {
     Spacer(Modifier.height(14.dp))
 }
 
-/** A square box with a 1px rule; [label] in small capitals and [note] on the right. */
+/** A square box with a 1px rule; [label] in small capitals and [note], or a small [action], on the right. */
 @Composable
-fun PanelCard(label: String, note: String = "", content: @Composable ColumnScope.() -> Unit) {
+fun PanelCard(label: String, note: String = "", action: (@Composable () -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
     val colors = panelColors()
     Column(
         Modifier.fillMaxWidth().padding(bottom = 12.dp).background(colors.panel).border(1.dp, colors.fg).padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = if (action != null) Alignment.CenterVertically else Alignment.Bottom) {
             Text(label.uppercase(), style = TextStyle(fontFamily = Mono, fontSize = 12.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.06.em, color = colors.fg))
-            if (note.isNotEmpty()) Small(note)
+            if (action != null) action() else if (note.isNotEmpty()) Small(note)
         }
         content()
+    }
+}
+
+/** A small underlined word on a card's head that acts: Edit, Done. */
+@Composable
+fun TinyAction(text: String, onClick: () -> Unit) {
+    val colors = panelColors()
+    Text(
+        text,
+        Modifier.heightIn(min = 32.dp).clickable(role = Role.Button, onClick = onClick).padding(start = 12.dp, top = 8.dp, bottom = 8.dp),
+        style = TextStyle(fontFamily = Mono, fontSize = 12.5.sp, color = colors.muted, textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline),
+    )
+}
+
+/** A grey bar where a line of text will go, while nothing is saved yet. */
+@Composable
+fun PlaceholderBar(share: Float, modifier: Modifier = Modifier) {
+    Box(modifier.fillMaxWidth(share).height(10.dp).background(panelColors().soft))
+}
+
+/** Grey bars where [count] lines will go: the layout of the answer, with no words. */
+@Composable
+fun PlaceholderLines(count: Int, modifier: Modifier = Modifier) {
+    val widths = floatArrayOf(0.82f, 0.56f, 0.7f, 0.44f, 0.64f, 0.5f)
+    Column(modifier.fillMaxWidth().padding(top = 10.dp, bottom = 2.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        repeat(count) { PlaceholderBar(widths[it % widths.size]) }
     }
 }
 

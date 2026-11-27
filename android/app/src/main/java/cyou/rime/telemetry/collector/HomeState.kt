@@ -186,3 +186,31 @@ object HomeState {
         )
     }
 }
+
+/** One habit on the Habits page: its row of the year, with its definition while it is active. */
+data class HabitYearRow(
+    val id: Long,
+    val name: String,
+    /** The habit as it can be edited; null for an archived one, or while the list was never saved. */
+    val def: HabitDef?,
+    val year: HeatmapRow?,
+    val archived: Boolean,
+)
+
+object HabitRows {
+    /**
+     * Each habit once: the active ones in their order, each with its year,
+     * then the archived ones that have something recorded. Without a saved
+     * list, the year's own rows stand in for it.
+     */
+    fun merge(habits: List<HabitDef>?, heatmap: HeatmapView?): List<HabitYearRow> {
+        val years = heatmap?.habits.orEmpty().distinctBy { it.id }
+        val byId = years.associateBy { it.id }
+        val active = habits?.filter { !it.archived }?.distinctBy { it.id }?.map { HabitYearRow(it.id, it.name, it, byId[it.id], false) }
+            ?: years.filter { it.archivedDay == null }.map { HabitYearRow(it.id, it.name, null, it, false) }
+        val shown = active.map { it.id }.toSet()
+        val archived = years.filter { it.id !in shown && it.days.values.any { status -> status == "done" || status == "missed" } }
+            .map { HabitYearRow(it.id, it.name, null, it, true) }
+        return active + archived
+    }
+}

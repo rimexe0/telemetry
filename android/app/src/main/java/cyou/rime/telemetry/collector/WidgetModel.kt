@@ -31,6 +31,8 @@ data class WidgetState(
     val ticksOpen: Boolean,
     /** "saved 14:20" once the saved copy is old, else null. */
     val saved: String?,
+    /** Nothing was saved on the phone yet: grey rows where the habits go, with no words. */
+    val placeholder: Boolean = false,
 )
 
 /**
@@ -56,6 +58,7 @@ object WidgetModel {
                 WidgetRow(it.id, it.name, it.done, if (worthShown) HabitCells.worth(it.value) else "", today.strips[it.id].orEmpty().map { cell -> cell.state }, lines[it.id])
             },
             empty = when {
+                habits == null && savedAt == null -> null
                 habits == null -> "Unknown: today's habits were never saved on this phone."
                 habits.isEmpty() -> "No habits scheduled today."
                 !today.ticksOpen -> "Bedtime has started, so today's habits are closed."
@@ -64,6 +67,7 @@ object WidgetModel {
             },
             ticksOpen = today.ticksOpen,
             saved = savedLine(savedAt, now, zone),
+            placeholder = habits == null && savedAt == null,
         )
     }
 

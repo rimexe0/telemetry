@@ -94,6 +94,11 @@ class HabitWidget : GlanceAppWidget() {
                     state.saved?.let { Text(it, style = text(Colors.muted, 11), maxLines = 1) }
                 }
                 state.empty?.let { Text(it, GlanceModifier.fillMaxWidth().clickable(openToday).padding(vertical = 4.dp), style = text(Colors.muted, 12)) }
+                // Nothing saved yet: grey rows where the habits go.
+                if (state.placeholder) repeat(3) {
+                    Spacer(GlanceModifier.fillMaxWidth().height(4.dp))
+                    Box(GlanceModifier.fillMaxWidth().height(48.dp).background(Colors.soft).clickable(openToday)) {}
+                }
                 val rows = state.rows.orEmpty()
                 if (rows.isNotEmpty()) {
                     // Takes the height left, so many habits scroll.

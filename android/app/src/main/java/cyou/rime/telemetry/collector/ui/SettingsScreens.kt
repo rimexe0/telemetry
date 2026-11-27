@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -51,7 +52,10 @@ import cyou.rime.telemetry.collector.Bedtime
 import cyou.rime.telemetry.collector.BudgetFields
 import cyou.rime.telemetry.collector.BudgetNumbers
 import cyou.rime.telemetry.collector.BudgetText
+import cyou.rime.telemetry.collector.LoadState
 import cyou.rime.telemetry.collector.LockView
+import cyou.rime.telemetry.collector.Showing
+import cyou.rime.telemetry.collector.Shown
 import cyou.rime.telemetry.collector.SettingsChange
 import cyou.rime.telemetry.collector.SettingsData
 import cyou.rime.telemetry.collector.SettingsPage
@@ -83,7 +87,7 @@ fun SettingsScreen(data: SettingsData, now: Instant, zone: ZoneId, onPhone: (Set
     AppPage {
         PageHead("Settings")
         // Unreachable or refused: said once, over the list.
-        listOf(data.policy, data.lock).firstNotNullOfOrNull { staleLine(it, now, zone)?.takeIf { line -> line != "Loading…" } }?.let {
+        listOf(data.policy, data.lock).firstNotNullOfOrNull { staleLine(it, now, zone) }?.let {
             Small(it)
             Gap(8.dp)
         }
@@ -97,6 +101,7 @@ fun SettingsScreen(data: SettingsData, now: Instant, zone: ZoneId, onPhone: (Set
                 Triple(SettingsPage.DISTRACTIONS.title, SettingsRules.distractionsValue(policy, data.labels.value)) { data.open(SettingsPage.DISTRACTIONS) },
                 Triple(SettingsPage.LOCK.title, SettingsRules.lockValue(lock, zone)) { data.open(SettingsPage.LOCK) },
             ),
+            waiting = listOf(waiting(data.policy), waiting(data.policy) || waiting(data.lock), waiting(data.policy) || waiting(data.labels), waiting(data.lock)),
         )
         if (data.waiting.isNotEmpty()) Small("${data.waiting.joinToString(", ") { it.label }}: waiting to be sent.", Modifier.padding(top = 6.dp))
         Group("This phone")
@@ -112,6 +117,7 @@ fun SettingsScreen(data: SettingsData, now: Instant, zone: ZoneId, onPhone: (Set
                 Triple(SettingsPage.DEVICES.title, SettingsRules.devicesValue(data.devices.value)) { data.open(SettingsPage.DEVICES) },
                 Triple(SettingsPage.SOURCES.title, SettingsRules.sourcesValue(data.collection.value)) { data.open(SettingsPage.SOURCES) },
             ),
+            waiting = listOf(waiting(data.devices), waiting(data.collection)),
         )
     }
 }
@@ -123,8 +129,15 @@ private fun Group(title: String) {
         style = TextStyle(fontFamily = Mono, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.08.em, color = colors.muted))
 }
 
+/** Nothing saved for it yet and the answer still on its way. */
+private fun <T> waiting(shown: Shown<T>): Boolean = LoadState.of(shown, null) is Showing.Placeholder
+
+/** A grey bar where a card's lines go, while nothing is saved yet. */
 @Composable
-private fun Rows(rows: List<Triple<String, String, () -> Unit>>) {
+private fun PlaceholderCard(label: String, lines: Int = 3) = PanelCard(label) { PlaceholderLines(lines) }
+
+@Composable
+private fun Rows(rows: List<Triple<String, String, () -> Unit>>, waiting: List<Boolean> = emptyList()) {
     val colors = panelColors()
     Column(Modifier.fillMaxWidth().background(colors.panel).border(1.dp, colors.fg)) {
         rows.forEachIndexed { index, (label, value, open) ->
@@ -138,6 +151,8 @@ private fun Rows(rows: List<Triple<String, String, () -> Unit>>) {
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 PText(label, Modifier.weight(1f), size = 14.5.sp)
+                // A grey bar where the value goes, while it is on its way.
+                if (value.isEmpty() && waiting.getOrElse(index) { false }) Box(Modifier.width(56.dp).height(10.dp).background(colors.soft))
                 if (value.isNotEmpty()) Text(value, Modifier.weight(0.8f, fill = false), maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.End,
                     style = TextStyle(fontFamily = Mono, fontSize = 12.5.sp, color = colors.muted))
                 PText("›", color = colors.muted, size = 17.sp)
@@ -241,7 +256,10 @@ private fun BudgetPage(data: SettingsData, now: Instant, zone: ZoneId) {
         PinGate(data, lock, zone)
         return
     }
-    val policy = data.policy.value ?: return
+    val policy = data.policy.value ?: run {
+        if (waiting(data.policy)) PlaceholderCard("Distraction budget", 6)
+        return
+    }
     val current = policy.budgetInForce(now)
     lock?.unlockedUntil?.let { Small("Unlocked with the PIN until ${BudgetText.clock(it, zone)}. Changes made now apply at once.", Modifier.padding(bottom = 8.dp)) }
     var enabled by remember { mutableStateOf(current?.enabled ?: false) }
@@ -303,9 +321,11 @@ private fun TimesPage(data: SettingsData, now: Instant, zone: ZoneId) {
     val lock = data.lock.value
     if (lock != null && lock.holds()) PinGate(data, lock, zone)
     else if (lock != null) BedtimeCard(data, lock, zone)
+    else if (waiting(data.lock)) PlaceholderCard("Bedtime", 4)
     PanelCard("Distraction times") {
         val times = policy?.distractionTimes.orEmpty()
-        Small(if (policy == null) "Unknown: never saved on this phone." else if (times.isEmpty()) "None set." else SettingsRules.formatWindows(times), Modifier.padding(top = 6.dp), color = panelColors().fg)
+        if (policy == null && waiting(data.policy)) PlaceholderLines(1)
+        else Small(if (policy == null) "Unknown: never saved on this phone." else if (times.isEmpty()) "None set." else SettingsRules.formatWindows(times), Modifier.padding(top = 6.dp), color = panelColors().fg)
         Small("Distraction times themselves are set through the assistant.", Modifier.padding(top = 4.dp))
     }
 }
@@ -357,6 +377,7 @@ private fun DistractionsPage(data: SettingsData, now: Instant, zone: ZoneId) {
     val policy = data.policy.value
     PanelCard("Blocked apps and sites") {
         when {
+            policy == null && waiting(data.policy) -> PlaceholderLines(3)
             policy == null -> Small("Unknown: never saved on this phone.", Modifier.padding(top = 6.dp))
             policy.groups.isEmpty() -> Small("No blocked groups.", Modifier.padding(top = 6.dp))
             else -> policy.groups.forEach { group ->
@@ -372,6 +393,7 @@ private fun DistractionsPage(data: SettingsData, now: Instant, zone: ZoneId) {
         val labels = data.labels.value
         staleLine(data.labels, now, zone)?.takeIf { labels == null }?.let { Small(it, Modifier.padding(top = 6.dp)) }
         when {
+            labels == null && waiting(data.labels) -> PlaceholderLines(4)
             labels == null -> Unit
             labels.isEmpty() -> Small("No labels yet.", Modifier.padding(top = 6.dp))
             else -> labels.sortedWith(compareBy({ it.label }, { it.match })).forEach { label ->
@@ -395,7 +417,10 @@ private fun DistractionsPage(data: SettingsData, now: Instant, zone: ZoneId) {
 @Composable
 private fun LockPage(data: SettingsData, now: Instant, zone: ZoneId) {
     staleLine(data.lock, now, zone)?.let { Small(it); Gap(8.dp) }
-    val lock = data.lock.value ?: return
+    val lock = data.lock.value ?: run {
+        if (waiting(data.lock)) PlaceholderCard("Settings lock")
+        return
+    }
     PanelCard("Settings lock", SettingsRules.lockValue(lock, zone)) {
         Small(
             if (!lock.enabled) "Off. Blocking settings can be changed at any time; loosening still waits for the next day."
@@ -435,6 +460,7 @@ private fun DevicesPage(data: SettingsData, now: Instant, zone: ZoneId) {
         staleLine(data.devices, now, zone)?.let { Small(it, Modifier.padding(top = 6.dp)) }
         val devices = data.devices.value
         when {
+            devices == null && waiting(data.devices) -> PlaceholderLines(4)
             devices == null -> Unit
             devices.isEmpty() -> Small("No devices", Modifier.padding(top = 6.dp))
             else -> devices.forEach { device ->
@@ -455,7 +481,13 @@ private fun DevicesPage(data: SettingsData, now: Instant, zone: ZoneId) {
 private fun SourcesPage(data: SettingsData, now: Instant, zone: ZoneId) {
     val colors = panelColors()
     staleLine(data.collection, now, zone)?.let { Small(it); Gap(8.dp) }
-    val collection = data.collection.value ?: return
+    val collection = data.collection.value ?: run {
+        if (waiting(data.collection)) {
+            PlaceholderCard("Devices", 3)
+            PlaceholderCard("Sources", 6)
+        }
+        return
+    }
     fun ago(at: Instant?): String = at?.let {
         val minutes = java.time.Duration.between(it, now).toMinutes().coerceAtLeast(0)
         "${BudgetText.clock(it, zone)}" + if (minutes < 24 * 60) " · ${ActivityText.minutes(minutes.toDouble())} ago" else " · ${SettingsRules.waitStart(it.atZone(zone).toLocalDate().toString(), zone)}"

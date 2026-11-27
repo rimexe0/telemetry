@@ -41,8 +41,7 @@ class ActivityData(private val context: Context, private val scope: CoroutineSco
     private val days = mutableStateMapOf<String, Shown<DayView>>()
     private val summaries = mutableStateMapOf<String, Shown<ActivitySummary>>()
     private val places = mutableStateMapOf<String, Shown<PlacesDay>>()
-    var health by mutableStateOf(Shown<HealthWeek>(null, null, Refresh.Never))
-        private set
+    private val healthDays = mutableStateMapOf<String, Shown<HealthDayView>>()
     private val loader = AnswerLoader(context, scope)
     private val askedAt = mutableMapOf<String, Instant>()
     private val running = mutableSetOf<String>()
@@ -50,6 +49,7 @@ class ActivityData(private val context: Context, private val scope: CoroutineSco
     fun timeline(day: String = this.day): Shown<DayView> = days[day] ?: Shown(null, null, Refresh.Never, loading = true)
     fun summary(day: String = this.day): Shown<ActivitySummary> = summaries[day] ?: Shown(null, null, Refresh.Never, loading = true)
     fun places(day: String = this.day): Shown<PlacesDay> = places[day] ?: Shown(null, null, Refresh.Never, loading = true)
+    fun health(day: String = this.day): Shown<HealthDayView> = healthDays[day] ?: Shown(null, null, Refresh.Never, loading = true)
 
     val today: String get() = LocalDate.now(zone).toString()
 
@@ -57,6 +57,13 @@ class ActivityData(private val context: Context, private val scope: CoroutineSco
         val next = LocalDate.parse(day).plusDays(days)
         if (next.isAfter(LocalDate.now(zone))) return
         day = next.toString()
+        show()
+    }
+
+    /** A sideways swipe of [dx] pixels: left to the next day, right to the day before, never past today. */
+    fun swipe(dx: Float, threshold: Float) {
+        val next = DaySwipe.target(day, today, dx, threshold) ?: return
+        day = next
         show()
     }
 
@@ -70,9 +77,18 @@ class ActivityData(private val context: Context, private val scope: CoroutineSco
         show()
     }
 
-    /** Shows what is saved for the place in view, then asks the server when it was not asked lately. */
+    /**
+     * Shows what is saved for the place in view, then asks for it when it
+     * was not asked lately; the days either side are made ready the same
+     * way, so a swipe shows its day at once.
+     */
     fun show(force: Boolean = false) {
         val day = day
+        load(section, day, force)
+        for (near in DaySwipe.neighbours(day, today)) load(section, near, false)
+    }
+
+    private fun load(section: ActivitySection, day: String, force: Boolean) {
         when (section) {
             ActivitySection.TIMELINE -> loader.load("day-$day", force, { DayModel.parse(it) }, { days[day] = it }, { days[day] }) {
                 DeviceApi.send(context, "GET", "/v1/device/day?date=$day")?.let { RawAnswer(it.status, "application/json", it.body.toByteArray()) }
@@ -80,10 +96,12 @@ class ActivityData(private val context: Context, private val scope: CoroutineSco
             ActivitySection.APPS -> loader.load("summary-$day", force, { SummaryModel.parse(it) }, { summaries[day] = it }, { summaries[day] }) {
                 OwnerApi.get(context, "/v1/activity/summary?date=$day")
             }
-            ActivitySection.PLACES -> loader.load("places-$day", force, { placesFor(day, it) }, { places[day] = it }, { places[day] }, empty = { placesFor(day, null) }) {
+            // Without the server, the phone's own positions, once the server could not answer.
+            ActivitySection.PLACES -> loader.load("places-$day", force, { placesFor(day, it) }, { places[day] = it }, { places[day] },
+                fallback = { placesFor(day, null)?.takeIf { it.positions.isNotEmpty() } }) {
                 OwnerApi.get(context, "/v1/places/day?date=$day")
             }
-            ActivitySection.HEALTH -> showHealth(force)
+            ActivitySection.HEALTH -> showHealth(day, force)
         }
     }
 
@@ -99,21 +117,24 @@ class ActivityData(private val context: Context, private val scope: CoroutineSco
         return Places.merge(server, day, zone, from, to, local, Places.rulesFrom(HabitCache.list(context)))
     }
 
-    private fun showHealth(force: Boolean) {
-        val key = "health"
+    /** One day of health from Health Connect on the phone: the saved read at once, a fresh one behind it. */
+    private fun showHealth(day: String, force: Boolean) {
+        val key = HealthDays.key(day)
         if (key in running) return
         val asked = askedAt[key]
         if (!force && asked != null && Duration.between(asked, Instant.now()) < AnswerLoader.EVERY) return
         running += key
         askedAt[key] = Instant.now()
         scope.launch {
-            if (health.value == null) {
-                val saved = withContext(Dispatchers.IO) { HealthDays.saved(context) }
-                health = Shown(saved?.first, saved?.second, Refresh.Never, loading = true)
-            }
-            val fresh = runCatching { HealthDays.refresh(context, LocalDate.now(zone), zone) }.getOrNull()
-            health = if (fresh != null) Shown(fresh, Instant.now(), Refresh.Fresh)
-            else health.copy(loading = false, refresh = Refresh.Refused("Health Connect can't be read on this phone."))
+            val known = healthDays[day]
+            if (known?.value == null) {
+                val saved = withContext(Dispatchers.IO) { HealthDays.saved(context, day) }
+                healthDays[day] = Shown(saved?.first, saved?.second, known?.refresh ?: Refresh.Never, loading = true)
+            } else healthDays[day] = known.copy(loading = true)
+            val fresh = withContext(Dispatchers.IO) { runCatching { HealthDays.read(context, LocalDate.parse(day), zone) }.getOrNull() }
+            val before = healthDays[day]
+            healthDays[day] = if (fresh != null) Shown(fresh, Instant.now(), Refresh.Fresh)
+            else Shown(before?.value, before?.at, Refresh.Refused("Health Connect can't be read on this phone."))
             running -= key
         }
     }
@@ -143,7 +164,8 @@ class AnswerLoader(private val context: Context, private val scope: CoroutineSco
         parse: (String) -> T?,
         set: (Shown<T>) -> Unit,
         get: () -> Shown<T>?,
-        empty: (() -> T?)? = null,
+        /** What to show when the try failed and nothing is saved, such as what the phone has itself. */
+        fallback: (() -> T?)? = null,
         fetch: () -> RawAnswer?,
     ) {
         if (key in running) return
@@ -154,13 +176,12 @@ class AnswerLoader(private val context: Context, private val scope: CoroutineSco
         running += key
         askedAt[key] = now
         scope.launch {
-            // The saved copy first, so the place shows at once.
+            // The saved copy first, so the place shows at once; nothing is shown as the answer before it comes.
             if (known?.value == null) {
                 val saved = withContext(Dispatchers.IO) {
                     AnswerStore.of(context).read(key)?.let { entry -> parse(entry.json)?.let { it to entry.at } }
                 }
-                val emptyValue = if (saved == null && empty != null) withContext(Dispatchers.IO) { empty() } else null
-                set(Shown(saved?.first ?: emptyValue, saved?.second, known?.refresh ?: Refresh.Never, loading = true))
+                set(Shown(saved?.first, saved?.second, known?.refresh ?: Refresh.Never, loading = true))
             } else set(known.copy(loading = true))
             val (value, refresh) = withContext(Dispatchers.IO) {
                 val answer = runCatching(fetch).getOrNull()
@@ -178,8 +199,11 @@ class AnswerLoader(private val context: Context, private val scope: CoroutineSco
             }
             val before = get()
             set(
-                if (value != null) Shown(value, Instant.now(), refresh)
-                else Shown(before?.value, before?.at, refresh),
+                when {
+                    value != null -> Shown(value, Instant.now(), refresh)
+                    before?.value != null || fallback == null -> Shown(before?.value, before?.at, refresh)
+                    else -> Shown(withContext(Dispatchers.IO) { runCatching(fallback).getOrNull() }, null, refresh)
+                },
             )
             running -= key
         }
