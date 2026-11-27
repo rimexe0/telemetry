@@ -160,6 +160,7 @@ func New(repository store.Repository, config Config) (*Server, error) {
 	server.mux.HandleFunc("POST /v1/plans/{date}/replan-proposals/{id}/reject", server.rejectReplanProposal)
 	server.mux.HandleFunc("GET /v1/activity/summary", server.activitySummary)
 	server.mux.HandleFunc("GET /v1/places/day", server.placesDay)
+	server.mux.HandleFunc("GET /v1/places/tiles/{z}/{x}/{y}", server.placesTile)
 	server.mux.HandleFunc("GET /v1/app-names", server.appNames)
 	server.mux.HandleFunc("GET /v1/policy/proposals", server.policyProposals)
 	server.mux.HandleFunc("POST /v1/policy/proposals/{id}/accept", server.acceptPolicyProposal)

@@ -11,7 +11,8 @@
   // OpenStreetMap's own tiles, with no key. The page's address is the only
   // thing they are told (the origin, never the path), as their usage policy
   // asks; nothing about the owner goes with them.
-  const tiles = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+  // Through the owner's server, so OpenStreetMap never sees the panel's address.
+  const tiles = '/v1/places/tiles/{z}/{x}/{y}.png';
   const attribution = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
 
   let day: PlacesDay | undefined;
@@ -76,7 +77,7 @@
     if (!map) {
       map = L.map(element, { zoomSnap: 0.5 });
       map.attributionControl.setPrefix(false);
-      L.tileLayer(tiles, { maxZoom: 19, attribution, referrerPolicy: 'strict-origin' }).addTo(map);
+      L.tileLayer(tiles, { maxZoom: 19, attribution }).addTo(map);
       drawn = L.layerGroup().addTo(map);
     }
     drawn!.clearLayers();

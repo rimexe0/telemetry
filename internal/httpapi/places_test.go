@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -136,5 +137,22 @@ func TestPlacesDayNeedsTheOwnerAndARealPastDay(t *testing.T) {
 	future := time.Now().AddDate(0, 0, 3).Format("2006-01-02")
 	if later := ownerCall(server, http.MethodGet, "/v1/places/day?date="+future, ""); later.Code != http.StatusBadRequest {
 		t.Fatalf("future date = %d", later.Code)
+	}
+}
+
+func TestMapTilesComeThroughTheServerOnlyForTheOwner(t *testing.T) {
+	server, _ := placesServer(t)
+	unauthorized := httptest.NewRecorder()
+	server.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/v1/places/tiles/1/0/0.png", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("without the owner: %d", unauthorized.Code)
+	}
+	// A tile outside the zoom level's grid is refused before anything is fetched.
+	outside := httptest.NewRequest(http.MethodGet, "/v1/places/tiles/1/2/0.png", nil)
+	outside.Header.Set("X-Test-Owner", "yes")
+	refused := httptest.NewRecorder()
+	server.ServeHTTP(refused, outside)
+	if refused.Code != http.StatusBadRequest {
+		t.Fatalf("outside the grid: %d", refused.Code)
 	}
 }
