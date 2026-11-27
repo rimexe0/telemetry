@@ -8,7 +8,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -40,15 +39,13 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.zIndex
 import cyou.rime.telemetry.collector.BudgetText
 import cyou.rime.telemetry.collector.CellState
 import cyou.rime.telemetry.collector.HabitCells
 import cyou.rime.telemetry.collector.HabitsState
-import cyou.rime.telemetry.collector.HeatmapRow
+import cyou.rime.telemetry.collector.HabitRows
 import cyou.rime.telemetry.collector.TickQueue
 import cyou.rime.telemetry.collector.TodayState
 import cyou.rime.telemetry.collector.TodayText
@@ -79,7 +76,6 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.TextFieldValue
 import cyou.rime.telemetry.collector.EditQueue
-import cyou.rime.telemetry.collector.HabitDef
 import kotlinx.coroutines.delay
 
 /** The app's four places, as the panel's bottom bar names them. */
@@ -143,6 +139,8 @@ fun TodayScreen(
     onCancelDoor: (Long) -> Unit,
     /** Under a habit with a rule: "Karantina İskelesi · 420 m away", or "reached 08:12". */
     ruleLines: Map<Long, String> = emptyMap(),
+    /** True until the first try to reach the server is over: what is not saved yet shows as grey shapes. */
+    waiting: Boolean = false,
 ) = Page {
     val colors = panelColors()
     PageHead("Today", dateLabel)
@@ -155,6 +153,12 @@ fun TodayScreen(
     val habits = state.habits
     PanelCard("Habits", if (!habits.isNullOrEmpty()) "${habits.count { it.done }} of ${habits.size}" else "") {
         when {
+            habits == null && waiting -> repeat(3) {
+                Row(Modifier.fillMaxWidth().heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(Modifier.size(20.dp).border(1.dp, colors.line))
+                    PlaceholderBar(listOf(0.6f, 0.45f, 0.7f)[it])
+                }
+            }
             habits == null -> Small("Unknown: today's habits were never saved on this phone.", Modifier.padding(top = 6.dp))
             habits.isEmpty() -> Small("No habits scheduled today.", Modifier.padding(top = 6.dp))
             else -> habits.forEachIndexed { index, habit ->
@@ -188,6 +192,11 @@ fun TodayScreen(
     val budget = state.budget
     PanelCard("Distraction time", state.bedtimeLabel) {
         when {
+            budget == null && !state.budgetUnknown && waiting -> {
+                PlaceholderLines(2)
+                Gap(8.dp)
+                ThinBar(0f, "")
+            }
             budget == null && state.budgetUnknown -> Small("Unknown while the server can't be reached.", Modifier.padding(top = 6.dp))
             budget == null -> Small("Unknown: the budget was never saved on this phone.", Modifier.padding(top = 6.dp))
             !budget.enabled -> Small("The budget is off. Distractions follow the other rules.", Modifier.padding(top = 6.dp))
@@ -216,6 +225,7 @@ fun TodayScreen(
         val now = state.rightNow
         when {
             state.budgetUnknown -> Small("Unknown while the server can't be reached.", Modifier.padding(top = 6.dp))
+            now == null && waiting -> PlaceholderLines(1)
             now == null -> Small("Unknown: nothing was read from the Mac.", Modifier.padding(top = 6.dp))
             else -> {
                 PText(now.line, Modifier.padding(vertical = 6.dp), size = 16.5.sp)
@@ -275,24 +285,28 @@ class HabitEditing(
 )
 
 @Composable
-fun HabitsScreen(state: HabitsState, stale: String?, notice: String?, editing: HabitEditing) = Page {
+fun HabitsScreen(
+    state: HabitsState,
+    stale: String?,
+    notice: String?,
+    editing: HabitEditing,
+    /** Edit mode on the habits' rows, kept while a rule's place is picked. */
+    editMode: Boolean = false,
+    onEditMode: (Boolean) -> Unit = {},
+    /** True until the first try to reach the server is over. */
+    waiting: Boolean = false,
+    /** Under a habit with a rule: "Karantina İskelesi · 420 m away". */
+    ruleLines: Map<Long, String> = emptyMap(),
+) = Page {
     PageHead("Habits")
     if (stale != null) {
         Small(stale)
         Gap(10.dp)
     }
-    // The list to tick and edit first, the reasons next, and the year last
-    // (owner 2026-11-26: five empty years above the list hid it).
-    HabitEditor(state.habits, notice, editing)
-    ReasonsEditor(state.reasons, editing.reasons)
-    PanelCard("The last year") {
-        val heatmap = state.heatmap
-        when {
-            heatmap == null -> Small("Unknown: the year was never saved on this phone.", Modifier.padding(top = 6.dp))
-            heatmap.habits.isEmpty() -> Small("No habits yet. Once you add one, its days show here.", Modifier.padding(top = 6.dp))
-            else -> YearGrid(state)
-        }
-    }
+    // The year first, each habit once on its own row; Edit makes those rows
+    // the editor (owner 2026-11-27). The reasons come after.
+    HabitsCard(state, notice, editing, editMode, onEditMode, waiting, ruleLines)
+    ReasonsCard(state.reasons, editing.reasons, waiting && state.habits == null)
 }
 
 /** Monday first, as the panel lists them; 0 is Sunday. */
@@ -302,9 +316,21 @@ private val weekdayNames = listOf(1 to "Mon", 2 to "Tue", 3 to "Wed", 4 to "Thu"
 fun weekdaysLabel(days: Set<Int>): String =
     if (days.isEmpty() || days.containsAll(listOf(0, 1, 2, 3, 4, 5, 6))) "every day" else weekdayNames.filter { it.first in days }.joinToString(" ") { it.second }
 
-/** The habits in their order: a name edits in place, its days open under it, and a last row adds one. */
+/**
+ * All habits' year, then each habit once: its name, runs and rule line over
+ * its year. In edit mode the same rows rename in place, open their days and
+ * rule, and can be removed; a last row adds one.
+ */
 @Composable
-private fun HabitEditor(habits: List<HabitDef>?, notice: String?, editing: HabitEditing) {
+private fun HabitsCard(
+    state: HabitsState,
+    notice: String?,
+    editing: HabitEditing,
+    editMode: Boolean,
+    onEditMode: (Boolean) -> Unit,
+    waiting: Boolean,
+    ruleLines: Map<Long, String>,
+) {
     val colors = panelColors()
     var naming by remember { mutableStateOf<Long?>(null) }
     var days by remember { mutableStateOf<Long?>(null) }
@@ -317,45 +343,92 @@ private fun HabitEditor(habits: List<HabitDef>?, notice: String?, editing: Habit
             removed = null
         }
     }
-    PanelCard("Habits") {
-        when {
-            habits == null -> Small("Unknown: the habits were never saved on this phone.", Modifier.padding(top = 6.dp))
-            habits.isEmpty() && !adding && removed == null -> Small("No habits yet.", Modifier.padding(top = 6.dp))
+    val heatmap = state.heatmap
+    val known = state.habits != null || heatmap != null
+    val rows = remember(state.habits, heatmap) { HabitRows.merge(state.habits, heatmap) }
+    PanelCard("Habits", action = if (!known) null else ({
+        TinyAction(if (editMode) "Done" else "Edit") {
+            naming = null
+            days = null
+            rules = null
+            adding = false
+            onEditMode(!editMode)
         }
-        for (habit in habits.orEmpty()) {
-            key(habit.id) {
-                Column(Modifier.fillMaxWidth().drawBehind {
-                    drawRect(colors.line, Offset(0f, size.height - 1.dp.toPx()), Size(size.width, 1.dp.toPx()))
-                }.padding(top = 2.dp, bottom = 6.dp)) {
-                    if (naming == habit.id) {
+    })) {
+        if (!known) {
+            if (waiting) YearPlaceholder() else Small("Unknown: the habits were never saved on this phone.", Modifier.padding(top = 6.dp))
+            return@PanelCard
+        }
+        val layout = HabitCells.layout(state.openDay, 371)
+        // One scroll for every row, so the weeks line up; it opens on the newest days.
+        val scroll = rememberScrollState()
+        LaunchedEffect(layout.weeks.size) {
+            val end = snapshotFlow { scroll.maxValue }.first { it in 1 until Int.MAX_VALUE }
+            scroll.scrollTo(end)
+        }
+        Gap(8.dp)
+        when {
+            heatmap != null -> {
+                RowHead("All habits", "Share of the day's habits done", archived = false)
+                MonthRow(layout, scroll)
+                Grid(layout.weeks, scroll) { day ->
+                    when (val level = HabitCells.level(heatmap.combined[day])) {
+                        -1 -> CellState.UNKNOWN to null
+                        0 -> CellState.MISSED to null
+                        4 -> CellState.DONE to null
+                        else -> CellState.DONE to lerp(colors.panel, colors.done, listOf(0f, .35f, .6f, .8f)[level])
+                    }
+                }
+            }
+            waiting -> YearPlaceholder()
+            else -> Small("Unknown: the year was never saved on this phone.", Modifier.padding(top = 6.dp))
+        }
+        if (rows.isEmpty() && !adding && removed == null) Small("No habits yet. Once you add one, its days show here.", Modifier.padding(top = 10.dp))
+        for (row in rows) {
+            key(row.id) {
+                val habit = row.def
+                Column(Modifier.fillMaxWidth().padding(top = 14.dp)) {
+                    if (editMode && habit != null) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            EditField(habit.name, "Name of ${habit.name}", 100, Modifier.weight(1f), onCancel = { naming = null }) { text ->
-                                naming = null
-                                val name = text.trim()
-                                if (removed != habit.id && name.isNotEmpty() && name != habit.name) editing.rename(habit.id, name)
+                            if (naming == habit.id) {
+                                EditField(habit.name, "Name of ${habit.name}", 100, Modifier.weight(1f), onCancel = { naming = null }) { text ->
+                                    naming = null
+                                    val name = text.trim()
+                                    if (removed != habit.id && name.isNotEmpty() && name != habit.name) editing.rename(habit.id, name)
+                                }
+                            } else {
+                                Text(habit.name, Modifier.weight(1f).heightIn(min = 40.dp).clickable(role = Role.Button) { naming = habit.id; adding = false }
+                                    .padding(top = 10.dp, bottom = 4.dp),
+                                    style = TextStyle(fontFamily = Mono, fontSize = 15.sp, color = colors.fg, textDecoration = TextDecoration.Underline))
                             }
                             LinkWord("Remove") {
                                 removed = habit.id
                                 naming = null
                                 days = null
+                                rules = null
                                 editing.archive(habit.id, true)
                             }
                         }
-                    } else {
-                        PText(habit.name, Modifier.fillMaxWidth().heightIn(min = 40.dp).clickable(role = Role.Button) { naming = habit.id; adding = false }
-                            .padding(top = 10.dp, bottom = 2.dp), size = 15.sp)
-                    }
-                    Small(weekdaysLabel(habit.weekdays), Modifier.heightIn(min = 28.dp).clickable(role = Role.Button) { days = if (days == habit.id) null else habit.id }
-                        .padding(vertical = 4.dp))
-                    if (days == habit.id) DayToggles(habit.weekdays) { editing.weekdays(habit.id, it) }
-                    // The rule: a place to go to, which ticks the habit by itself.
-                    Small("Rule: ${cyou.rime.telemetry.collector.RuleText.summary(habit.rule)}", Modifier.fillMaxWidth().heightIn(min = 28.dp)
-                        .clickable(role = Role.Button) { rules = if (rules == habit.id) null else habit.id }.padding(vertical = 4.dp))
-                    if (rules == habit.id) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            LinkWord("Go to a place") { rules = null; editing.pickRule(habit.id) }
-                            if (habit.rule != null) LinkWord("No rule") { rules = null; editing.clearRule(habit.id) }
+                        Small(weekdaysLabel(habit.weekdays), Modifier.fillMaxWidth().heightIn(min = 28.dp).clickable(role = Role.Button) { days = if (days == habit.id) null else habit.id }
+                            .padding(vertical = 4.dp))
+                        if (days == habit.id) DayToggles(habit.weekdays) { editing.weekdays(habit.id, it) }
+                        // The rule: a place to go to, which ticks the habit by itself.
+                        Small("Rule: ${cyou.rime.telemetry.collector.RuleText.summary(habit.rule)}", Modifier.fillMaxWidth().heightIn(min = 28.dp)
+                            .clickable(role = Role.Button) { rules = if (rules == habit.id) null else habit.id }.padding(vertical = 4.dp))
+                        if (rules == habit.id) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                LinkWord("Go to a place") { rules = null; editing.pickRule(habit.id) }
+                                if (habit.rule != null) LinkWord("No rule") { rules = null; editing.clearRule(habit.id) }
+                            }
                         }
+                        Gap(4.dp)
+                    } else {
+                        RowHead(row.name, HabitCells.runs(row.year?.currentRun ?: 0, row.year?.longestRun ?: 0), row.archived)
+                        ruleLines[row.id]?.let { Small(it, Modifier.padding(bottom = 3.dp)) }
+                    }
+                    val queued = TickQueue.doneByDay(state.queued, row.id)
+                    Grid(layout.weeks, scroll) { day ->
+                        (if (queued[day] == true) CellState.DONE else HabitCells.year(row.year?.days?.get(day), day, state.openDay)) to null
                     }
                 }
             }
@@ -370,15 +443,41 @@ private fun HabitEditor(habits: List<HabitDef>?, notice: String?, editing: Habit
                 }.padding(vertical = 10.dp), style = TextStyle(fontFamily = Mono, fontSize = 12.5.sp, color = colors.muted, textDecoration = TextDecoration.Underline))
             }
         }
-        if (adding) {
-            EditField("", "New habit", 100, Modifier.fillMaxWidth().padding(top = 6.dp), onCancel = { adding = false }) { text ->
-                adding = false
-                if (text.isNotBlank()) editing.add(text.trim())
+        if (editMode) {
+            if (adding) {
+                EditField("", "New habit", 100, Modifier.fillMaxWidth().padding(top = 6.dp), onCancel = { adding = false }) { text ->
+                    adding = false
+                    if (text.isNotBlank()) editing.add(text.trim())
+                }
+            } else {
+                PText("+ Add a habit", Modifier.tapRow("Add a habit") { adding = true; naming = null }.padding(top = 12.dp), size = 15.sp)
             }
-        } else {
-            PText("+ Add a habit", Modifier.tapRow("Add a habit") { adding = true; naming = null }.padding(top = 12.dp), size = 15.sp)
         }
         if (notice != null) Small(notice, Modifier.padding(top = 6.dp))
+    }
+}
+
+/** A row's name and note: runs for a habit, what the shades mean for All habits. */
+@Composable
+private fun RowHead(name: String, note: String, archived: Boolean) {
+    val colors = panelColors()
+    Row(Modifier.fillMaxWidth().padding(bottom = 3.dp), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        PText(name, Modifier.weight(1f, fill = false), size = 13.5.sp, weight = FontWeight.Bold, maxLines = 1)
+        if (archived) Text("ARCHIVED", Modifier.border(1.dp, colors.line).padding(horizontal = 4.dp), style = TextStyle(fontFamily = Mono, fontSize = 10.sp, color = colors.fg))
+        Small(note, Modifier.weight(1f, fill = false), color = if (name == "All habits") colors.muted else colors.fg)
+    }
+}
+
+/** Grey shapes where the year's rows go, while nothing is saved yet. */
+@Composable
+private fun YearPlaceholder() {
+    val colors = panelColors()
+    repeat(2) {
+        Column(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+            PlaceholderBar(0.45f)
+            Gap(6.dp)
+            Box(Modifier.fillMaxWidth().height((CELL + CELL_GAP) * 7).background(colors.soft))
+        }
     }
 }
 
@@ -405,31 +504,45 @@ private fun DayToggles(current: Set<Int>, onChange: (List<Int>) -> Unit) {
     }
 }
 
-/** The reasons: each edits in place, emptying one removes it, and a last row adds one. */
+/** The reasons as text; Edit makes each edit in place (emptying one removes it) and a last row adds one. */
 @Composable
-private fun ReasonsEditor(reasons: List<String>, onSave: (List<String>) -> Unit) {
+private fun ReasonsCard(reasons: List<String>, onSave: (List<String>) -> Unit, waiting: Boolean) {
+    var editMode by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Int?>(null) }
     var adding by remember { mutableStateOf(false) }
-    PanelCard("Reasons") {
+    PanelCard("Reasons", action = if (waiting) null else ({
+        TinyAction(if (editMode) "Done" else "Edit") {
+            editing = null
+            adding = false
+            editMode = !editMode
+        }
+    })) {
+        if (waiting) {
+            PlaceholderLines(2)
+            return@PanelCard
+        }
         if (reasons.isEmpty() && !adding) Small("No reasons yet.", Modifier.padding(top = 6.dp))
         reasons.forEachIndexed { index, reason ->
-            if (editing == index) {
-                EditField(reason, "Reason", 500, Modifier.fillMaxWidth().padding(top = 6.dp), onCancel = { editing = null }) { text ->
+            when {
+                editMode && editing == index -> EditField(reason, "Reason", 500, Modifier.fillMaxWidth().padding(top = 6.dp), onCancel = { editing = null }) { text ->
                     editing = null
                     val line = text.trim()
                     if (line != reason) onSave(if (line.isEmpty()) reasons.filterIndexed { i, _ -> i != index } else reasons.mapIndexed { i, old -> if (i == index) line else old })
                 }
-            } else {
-                PText(reason, Modifier.fillMaxWidth().heightIn(min = 40.dp).clickable(role = Role.Button) { editing = index; adding = false }.padding(top = 8.dp, bottom = 4.dp), size = 15.sp)
+                editMode -> Text(reason, Modifier.fillMaxWidth().heightIn(min = 40.dp).clickable(role = Role.Button) { editing = index; adding = false }.padding(top = 8.dp, bottom = 4.dp),
+                    style = TextStyle(fontFamily = Mono, fontSize = 15.sp, color = panelColors().fg, textDecoration = TextDecoration.Underline, lineHeight = 15.sp * 1.35f))
+                else -> PText(reason, Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp), size = 15.sp)
             }
         }
-        if (adding) {
-            EditField("", "New reason", 500, Modifier.fillMaxWidth().padding(top = 6.dp), onCancel = { adding = false }) { text ->
-                adding = false
-                if (text.isNotBlank()) onSave(reasons + text.trim())
+        if (editMode) {
+            if (adding) {
+                EditField("", "New reason", 500, Modifier.fillMaxWidth().padding(top = 6.dp), onCancel = { adding = false }) { text ->
+                    adding = false
+                    if (text.isNotBlank()) onSave(reasons + text.trim())
+                }
+            } else {
+                PText("+ Add a reason", Modifier.tapRow("Add a reason") { adding = true; editing = null }.padding(top = 12.dp), size = 15.sp)
             }
-        } else {
-            PText("+ Add a reason", Modifier.tapRow("Add a reason") { adding = true; editing = null }.padding(top = 12.dp), size = 15.sp)
         }
     }
 }
@@ -485,60 +598,19 @@ private val CELL_GAP = 2.dp
 private val LABELS = 26.dp
 private val weekdayLabels = listOf("Mon", "", "Wed", "", "Fri", "", "")
 
-/** All habits first, then one band per habit, scrolled to the newest days; names and weekdays stay in view. */
+/** The month names over the weeks, scrolled with the rows. */
 @Composable
-private fun YearGrid(state: HabitsState) {
+private fun MonthRow(layout: HabitCells.Layout, scroll: ScrollState) {
     val colors = panelColors()
-    val heatmap = state.heatmap ?: return
-    val layout = HabitCells.layout(state.openDay, 371)
-    val scroll = rememberScrollState()
-    LaunchedEffect(layout.weeks.size) {
-        val end = snapshotFlow { scroll.maxValue }.first { it in 1 until Int.MAX_VALUE }
-        scroll.scrollTo(end)
-    }
-    val rows = heatmap.habits.sortedBy { if (it.archivedDay != null) 1 else 0 }
-    BoxWithConstraints(Modifier.fillMaxWidth().padding(top = 8.dp).border(1.dp, colors.line)) {
-        val viewport = maxWidth - 20.dp
-        Column(Modifier.horizontalScroll(scroll).padding(horizontal = 10.dp, vertical = 8.dp)) {
-            Band("All habits", "Share of the day's habits done", null, scroll, viewport)
-            Box(Modifier.width(LABELS + (CELL + CELL_GAP) * layout.weeks.size).height(14.dp)) {
+    Row(Modifier.fillMaxWidth()) {
+        Box(Modifier.width(LABELS))
+        Box(Modifier.weight(1f).horizontalScroll(scroll)) {
+            Box(Modifier.width((CELL + CELL_GAP) * layout.weeks.size).height(14.dp)) {
                 for ((label, column) in layout.months) {
-                    Small(label, Modifier.offset(x = LABELS + (CELL + CELL_GAP) * column), color = colors.muted)
-                }
-            }
-            Grid(layout.weeks, scroll) { day ->
-                when (val level = HabitCells.level(heatmap.combined[day])) {
-                    -1 -> CellState.UNKNOWN to null
-                    0 -> CellState.MISSED to null
-                    4 -> CellState.DONE to null
-                    else -> CellState.DONE to lerp(colors.panel, colors.done, listOf(0f, .35f, .6f, .8f)[level])
-                }
-            }
-            // A habit gets its own year only once something is recorded for it.
-            for (row in rows.filter { habit -> habit.days.values.any { it == "done" || it == "missed" } }) {
-                Gap(14.dp)
-                Band(row.name, HabitCells.runs(row.currentRun, row.longestRun), row, scroll, viewport)
-                val queued = TickQueue.doneByDay(state.queued, row.id)
-                Grid(layout.weeks, scroll) { day ->
-                    (if (queued[day] == true) CellState.DONE else HabitCells.year(row.days[day], day, state.openDay)) to null
+                    Small(label, Modifier.offset(x = (CELL + CELL_GAP) * column), color = colors.muted)
                 }
             }
         }
-    }
-}
-
-/** A band's name and note, kept in view while the grid scrolls under it. */
-@Composable
-private fun Band(name: String, note: String, row: HeatmapRow?, scroll: ScrollState, viewport: androidx.compose.ui.unit.Dp) {
-    val colors = panelColors()
-    Row(
-        Modifier.offset { IntOffset(scroll.value, 0) }.width(viewport).padding(bottom = 3.dp),
-        verticalAlignment = Alignment.Bottom,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        PText(name, size = 13.5.sp, weight = FontWeight.Bold, maxLines = 1)
-        if (row?.archivedDay != null) Text("ARCHIVED", Modifier.border(1.dp, colors.line).padding(horizontal = 4.dp), style = TextStyle(fontFamily = Mono, fontSize = 10.sp, color = colors.fg))
-        Small(note, Modifier.weight(1f, fill = false), color = if (row == null) colors.muted else colors.fg)
     }
 }
 
@@ -547,24 +619,25 @@ private fun Band(name: String, note: String, row: HeatmapRow?, scroll: ScrollSta
 private fun Grid(weeks: List<List<String?>>, scroll: ScrollState, cell: (String) -> Pair<CellState, androidx.compose.ui.graphics.Color?>) {
     val colors = panelColors()
     val height = (CELL + CELL_GAP) * 7
-    Box {
-        Canvas(Modifier.width(LABELS + (CELL + CELL_GAP) * weeks.size).height(height)) {
-            val step = (CELL + CELL_GAP).toPx()
-            val side = CELL.toPx()
-            val left = LABELS.toPx()
-            weeks.forEachIndexed { column, week ->
-                week.forEachIndexed { row, day ->
-                    if (day != null) {
-                        val (state, fill) = cell(day)
-                        habitCell(state, colors, Offset(left + column * step, row * step), Size(side, side), fill)
-                    }
-                }
-            }
-        }
-        Column(Modifier.offset { IntOffset(scroll.value, 0) }.zIndex(1f).width(LABELS - 2.dp).background(colors.panel)) {
+    Row(Modifier.fillMaxWidth()) {
+        Column(Modifier.width(LABELS)) {
             for (label in weekdayLabels) {
                 Box(Modifier.size(LABELS - 2.dp, CELL + CELL_GAP), contentAlignment = Alignment.CenterStart) {
                     Text(label, style = TextStyle(fontFamily = Mono, fontSize = 9.sp, color = colors.muted, lineHeight = 9.sp))
+                }
+            }
+        }
+        Box(Modifier.weight(1f).horizontalScroll(scroll)) {
+            Canvas(Modifier.width((CELL + CELL_GAP) * weeks.size).height(height)) {
+                val step = (CELL + CELL_GAP).toPx()
+                val side = CELL.toPx()
+                weeks.forEachIndexed { column, week ->
+                    week.forEachIndexed { row, day ->
+                        if (day != null) {
+                            val (state, fill) = cell(day)
+                            habitCell(state, colors, Offset(column * step, row * step), Size(side, side), fill)
+                        }
+                    }
                 }
             }
         }
