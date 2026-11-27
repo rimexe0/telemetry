@@ -461,10 +461,13 @@ private fun HabitsCard(
 @Composable
 private fun RowHead(name: String, note: String, archived: Boolean) {
     val colors = panelColors()
-    Row(Modifier.fillMaxWidth().padding(bottom = 3.dp), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        PText(name, Modifier.weight(1f, fill = false), size = 13.5.sp, weight = FontWeight.Bold, maxLines = 1)
-        if (archived) Text("ARCHIVED", Modifier.border(1.dp, colors.line).padding(horizontal = 4.dp), style = TextStyle(fontFamily = Mono, fontSize = 10.sp, color = colors.fg))
-        Small(note, Modifier.weight(1f, fill = false), color = if (name == "All habits") colors.muted else colors.fg)
+    // The whole name on its line, the runs under it (owner 2026-11-27: names were cut short).
+    Column(Modifier.fillMaxWidth().padding(bottom = 3.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PText(name, Modifier.weight(1f, fill = false), size = 13.5.sp, weight = FontWeight.Bold)
+            if (archived) Text("ARCHIVED", Modifier.border(1.dp, colors.line).padding(horizontal = 4.dp), style = TextStyle(fontFamily = Mono, fontSize = 10.sp, color = colors.fg))
+        }
+        Small(note, color = colors.muted)
     }
 }
 
