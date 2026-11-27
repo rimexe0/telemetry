@@ -1,19 +1,8 @@
 package cyou.rime.telemetry.collector
 
-import android.annotation.SuppressLint
 import android.content.Intent
 import android.graphics.Color
-import android.net.Uri
 import android.os.Bundle
-import android.view.View
-import android.view.ViewGroup
-import android.webkit.CookieManager
-import android.webkit.RenderProcessGoneDetail
-import android.webkit.WebResourceError
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
@@ -40,7 +29,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -50,7 +38,6 @@ import cyou.rime.telemetry.collector.ui.SettingsScreen
 import cyou.rime.telemetry.collector.ui.HabitsScreen
 import cyou.rime.telemetry.collector.ui.RulePicker
 import cyou.rime.telemetry.collector.ui.PText
-import cyou.rime.telemetry.collector.ui.PanelUnavailable
 import cyou.rime.telemetry.collector.ui.Place
 import cyou.rime.telemetry.collector.ui.PlaceBar
 import cyou.rime.telemetry.collector.ui.Small
@@ -72,33 +59,22 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
- * The app: four places along the bottom, as in the panel (owner 2026-11-26).
- * Today and Habits are drawn here from answers saved on the phone, so they
- * keep working while the server is down; a tick is saved on the phone first
- * and sent when the server can be reached ([HabitTicks]). Activity and
- * Settings are the panel itself, signed in with this phone's credential and
- * loaded through [PanelProxy]; without the server they say so in one line.
- * Setup on first run, the setup strip, and Settings and setup opened from
- * the panel's telemetry-app:// links ([PanelLinks]) stay as they were.
+ * The app: four places along the bottom, as in the panel (owner 2026-11-26),
+ * all drawn natively (owner 2026-11-27). Each shows at once from answers
+ * saved on the phone and keeps working while the server is down; changes
+ * are saved on the phone first and sent when the server can be reached
+ * ([HabitTicks], [HabitEdits], [SettingsQueue]). Activity and Settings
+ * reach the owner's routes with this phone's panel session ([OwnerApi]).
+ * Each place keeps its state in memory, so switching never reloads it.
+ * Setup on first run and the setup strip stay as they were.
  */
 class MainActivity : ComponentActivity() {
     private companion object {
         const val REFRESH_MS = 60_000L
         /** The year's heatmap is fetched at most this often. */
         val YEAR_EVERY: Duration = Duration.ofMinutes(10)
-        const val ACTIVITY_HASH = "#activity"
-        const val SETTINGS_HASH = "#settings"
     }
 
-    /** Where the panel stands in its web view. */
-    private sealed interface Web {
-        data object Closed : Web
-        data object Opening : Web
-        data object Open : Web
-        data class Unavailable(val refusedWith: Int?) : Web
-    }
-
-    private lateinit var web: WebView
     /** Activity's answers, kept for the life of the screen so a tab switch never reloads them. */
     private lateinit var activity: ActivityData
     /** Settings' values and the changes waiting to be sent, kept for the life of the screen. */
@@ -110,7 +86,6 @@ class MainActivity : ComponentActivity() {
     /** Null until the first try; false while the server can't be reached. */
     private var reachable by mutableStateOf<Boolean?>(null)
     private var savedAt by mutableStateOf<Instant?>(null)
-    private var webState by mutableStateOf<Web>(Web.Closed)
     private var paired by mutableStateOf(true)
     private var removed by mutableStateOf(false)
     private var attention by mutableStateOf<SetupStep?>(null)
@@ -119,31 +94,28 @@ class MainActivity : ComponentActivity() {
     private var editNotice by mutableStateOf<String?>(null)
     private var doorNotice by mutableStateOf<String?>(null)
     private var doorBusy by mutableStateOf(false)
-    private var canGoBack by mutableStateOf(false)
     /** The habit whose rule is being picked on the Habits place, or null. */
     private var pickingRule by mutableStateOf<Long?>(null)
 
-    private var server = ""
-    private var loadFailed = false
-    private var proxy: PanelProxy? = null
-    private var opening: Job? = null
     private var yearFetchedAt: Instant = Instant.EPOCH
     /** One talk with the server at a time, so a fetch never lands over an edit just sent. */
     private val talking = Mutex()
     private var sending: Job? = null
     private var sendAgain = false
-    /** The last address of each web place, so each comes back where it was left. */
-    private var activityHash = ACTIVITY_HASH
-    private var settingsHash = SETTINGS_HASH
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge(SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT), SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT))
         super.onCreate(savedInstanceState)
         if (savedInstanceState == null) SetupLink.apply(this, intent)
-        web = buildWebView()
         activity = ActivityData(applicationContext, lifecycleScope)
         activity.prune()
         settings = SettingsData(applicationContext, lifecycleScope)
+        // What the panel's web view kept on the phone is no longer used.
+        if (savedInstanceState == null) lifecycleScope.launch(Dispatchers.IO) {
+            runCatching { java.io.File(cacheDir, "panel-files").deleteRecursively() }
+            runCatching { java.io.File(dataDir, "app_webview").deleteRecursively() }
+            runCatching { deleteSharedPreferences("telemetry-panel-files") }
+        }
         DeliveryConfig(this).let { config ->
             paired = config.token() != null
             removed = config.removed
@@ -153,7 +125,6 @@ class MainActivity : ComponentActivity() {
         setContent { TelemetryTheme { App() } }
         CollectionStarter.ensureRunning(this)
         if (savedInstanceState == null && SetupActivity.needsSetup(this)) openSetup(null)
-        // The panel loads behind Today, so the first tap on Activity or Settings shows it at once.
 
         // A tick from the home-screen widget shows here at once.
         lifecycleScope.launch {
@@ -171,12 +142,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onResume() {
-        super.onResume()
-        // Back after switching the network or the VPN on: try again without a tap.
-        if (webState is Web.Unavailable && place.web) openPanel(hashFor(place))
-    }
-
     // A setup link or a notification while the app is open.
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -186,16 +151,6 @@ class MainActivity : ComponentActivity() {
         if (intent.action == HabitWidgets.OPEN_TODAY) place = Place.TODAY
         if (SetupActivity.needsSetup(this)) openSetup(null)
     }
-
-    override fun onDestroy() {
-        if (::web.isInitialized) runCatching { web.destroy() }
-        proxy?.close()
-        super.onDestroy()
-    }
-
-    private val Place.web: Boolean get() = false
-
-    private fun hashFor(place: Place): String = settingsHash
 
     /** Reads the saved answers and the queues again; what has not changed comes from memory. */
     private fun reload() {
@@ -226,7 +181,6 @@ class MainActivity : ComponentActivity() {
                 runCatching { HabitCache.refresh(this@MainActivity, HabitCache.WEEK) }
                 if (wantYear && runCatching { HabitCache.refresh(this@MainActivity, HabitCache.YEAR) }.getOrDefault(false)) yearFetchedAt = Instant.now()
             }
-            if (webState == Web.Open) runCatching { proxy?.renewIfDue() }
             // Read here, off the main thread, so reload() finds it in memory.
             runCatching { HomeMemory.read(this@MainActivity) }
             fresh
@@ -299,11 +253,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun select(next: Place, hash: String? = null) {
-        // Tapping the place in use again goes back to its start.
-        if (next == place && hash == null) {
-            if (next == Place.SETTINGS) settingsHash = SETTINGS_HASH else if (next == Place.ACTIVITY) activityHash = ACTIVITY_HASH
-        }
+    private fun select(next: Place) {
         val again = next == place
         place = next
         if (next == Place.ACTIVITY) activity.show()
@@ -311,74 +261,9 @@ class MainActivity : ComponentActivity() {
             // Tapping Settings again goes back to its list.
             if (again && settings.page != null) settings.open(null) else settings.show()
         }
-        if (!next.web) return
-        hash?.let { if (next == Place.SETTINGS) settingsHash = it else activityHash = it }
-        when (webState) {
-            Web.Open -> go(hashFor(next))
-            Web.Opening -> Unit
-            Web.Closed, is Web.Unavailable -> openPanel(hashFor(next))
-        }
-    }
-
-    /** Moves the open panel to an address without adding to its history. */
-    private fun go(hash: String) {
-        val safe = PanelLinks.safeHash(hash) ?: return
-        web.evaluateJavascript("location.replace('$safe')", null)
     }
 
     private fun openSetup(step: SetupStep?) = startActivity(SetupActivity.intent(this, step))
-
-    /**
-     * Trades the paired credential for a panel session, through the relay
-     * first, then loads the panel from [PanelProxy], so it opens with or
-     * without Tailscale.
-     */
-    private fun openPanel(hash: String) {
-        if (opening?.isActive == true) return
-        if (DeliveryConfig(this).token() == null) return
-        val panel = proxy ?: PanelProxy(applicationContext).also { proxy = it }
-        server = panel.origin
-        webState = Web.Opening
-        opening = lifecycleScope.launch {
-            when (val result = withContext(Dispatchers.IO) { panel.open() }) {
-                PanelProxy.Opened.Yes -> {
-                    CookieManager.getInstance().apply {
-                        setAcceptCookie(true)
-                        setCookie(panel.origin, "${PanelProxy.KEY_COOKIE}=${panel.key}; Path=/; HttpOnly")
-                        flush()
-                    }
-                    loadFailed = false
-                    web.loadUrl("${panel.origin}/panel/${PanelLinks.safeHash(hash) ?: ""}")
-                }
-                is PanelProxy.Opened.Refused -> webState = Web.Unavailable(result.status)
-                PanelProxy.Opened.Unreachable -> webState = Web.Unavailable(null)
-            }
-        }
-    }
-
-    /** Follows a link the panel opens: native screens for telemetry-app://, the browser for other sites. */
-    private fun follow(url: String, mainFrame: Boolean): Boolean {
-        when (val route = PanelLinks.route(url, server, mainFrame)) {
-            PanelRoute.InPanel -> return false
-            is PanelRoute.Browser -> runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(route.url))) }
-            is PanelRoute.Settings -> startActivity(SettingsActivity.intent(this, route.section))
-            is PanelRoute.Setup -> openSetup(route.step)
-            PanelRoute.Refused -> Unit
-        }
-        return true
-    }
-
-    /** The panel moved to another address: the bar follows, and each place remembers its last address. */
-    private fun followAddress(url: String) {
-        if (webState != Web.Open) return
-        val hash = runCatching { Uri.parse(url).fragment }.getOrNull()?.let { "#$it" } ?: return
-        when (PanelLinks.place(hash)) {
-            "activity" -> { activityHash = hash; if (place.web) { place = Place.ACTIVITY; activity.show() } }
-            "settings" -> { settingsHash = hash; if (place.web) place = Place.SETTINGS }
-            // A link in the panel to Today opens the app's own.
-            else -> if (place.web) place = Place.TODAY
-        }
-    }
 
     private val habitEditing = HabitEditing(
         rename = { id, name -> edit { it.change(id, name = name) } },
@@ -403,9 +288,8 @@ class MainActivity : ComponentActivity() {
                 now = Instant.now()
             }
         }
-        BackHandler(enabled = place != Place.TODAY) {
-            if (place.web && canGoBack) web.goBack() else place = Place.TODAY
-        }
+        // Back from a Settings page goes to its list (SettingsScreen); from a place, to Today.
+        BackHandler(enabled = place != Place.TODAY) { place = Place.TODAY }
         Column(Modifier.fillMaxSize().background(colors.bg).windowInsetsPadding(WindowInsets.safeDrawing)) {
             if (!paired) {
                 NotPaired()
@@ -420,11 +304,10 @@ class MainActivity : ComponentActivity() {
                 }
             }
             val stale = if (reachable == false) TodayText.saved(savedAt, now, zone) else null
+            // Each place keeps its scroll and its open parts while another is shown.
+            val kept = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
             Box(Modifier.weight(1f).fillMaxWidth()) {
-                // The panel stays loaded behind the native places, so it comes back where it was.
-                AndroidView(factory = { web }, modifier = Modifier.fillMaxSize(),
-                    update = { it.visibility = if (place.web && webState == Web.Open) View.VISIBLE else View.INVISIBLE })
-                when (place) {
+                kept.SaveableStateProvider(place.name) { when (place) {
                     Place.TODAY -> TodayScreen(
                         state = today,
                         dateLabel = DateTimeFormatter.ofPattern("EEE d MMM", Locale.UK).format(now.atZone(zone)),
@@ -456,7 +339,7 @@ class MainActivity : ComponentActivity() {
                     }
                     Place.ACTIVITY -> ActivityScreen(activity, now, zone)
                     Place.SETTINGS -> SettingsScreen(settings, now, zone) { section -> startActivity(SettingsActivity.intent(this@MainActivity, section)) }
-                }
+                } }
             }
             PlaceBar(place) { select(it) }
         }
@@ -474,53 +357,6 @@ class MainActivity : ComponentActivity() {
             }
             Row(Modifier.tapRow("Set up") { openSetup(SetupStep.PAIR) }) { PText("Set up ›", size = 15.sp) }
             Row(Modifier.tapRow("Phone settings") { startActivity(SettingsActivity.intent(this@MainActivity, null)) }) { PText("Phone settings ›", size = 15.sp) }
-        }
-    }
-
-    @SuppressLint("SetJavaScriptEnabled")
-    private fun buildWebView(): WebView = WebView(this).apply {
-        setBackgroundColor(getColor(R.color.background))
-        settings.javaScriptEnabled = true
-        settings.domStorageEnabled = true
-        settings.allowFileAccess = false
-        settings.allowContentAccess = false
-        settings.userAgentString = PanelLinks.userAgent(settings.userAgentString, BuildConfig.VERSION_NAME)
-        webViewClient = PanelClient()
-        visibility = View.INVISIBLE
-    }
-
-    private inner class PanelClient : WebViewClient() {
-        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
-            follow(request.url.toString(), request.isForMainFrame)
-
-        override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-            if (!request.isForMainFrame) return
-            loadFailed = true
-            webState = Web.Unavailable(null)
-        }
-
-        // A proxy or relay that answers for a server it can't reach.
-        override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
-            if (!request.isForMainFrame || response.statusCode < 500) return
-            loadFailed = true
-            webState = Web.Unavailable(null)
-        }
-
-        override fun onPageFinished(view: WebView, url: String) {
-            if (!loadFailed && webState == Web.Opening) webState = Web.Open
-        }
-
-        override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
-            canGoBack = view.canGoBack()
-            followAddress(url)
-        }
-
-        // The page's renderer died: start over instead of crashing the app.
-        override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
-            (view.parent as? ViewGroup)?.removeView(view)
-            view.destroy()
-            recreate()
-            return true
         }
     }
 }

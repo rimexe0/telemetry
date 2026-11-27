@@ -690,3 +690,13 @@ class SettingsActivity : ComponentActivity() {
     }
 
 }
+
+/** A part of [SettingsActivity] the app's Settings opens directly. */
+enum class SettingsSection(val key: String) {
+    PERMISSIONS("permissions"),
+    NOTIFICATIONS("notifications");
+
+    companion object {
+        fun of(key: String?): SettingsSection? = entries.firstOrNull { it.key == key }
+    }
+}

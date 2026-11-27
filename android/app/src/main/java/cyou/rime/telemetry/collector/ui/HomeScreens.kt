@@ -570,19 +570,3 @@ private fun Grid(weeks: List<List<String?>>, scroll: ScrollState, cell: (String)
         }
     }
 }
-
-/** What the Activity and Settings places show while the panel can't open. */
-@Composable
-fun PanelUnavailable(opening: Boolean, refusedWith: Int?, onRetry: () -> Unit, onPhoneSettings: () -> Unit) = Page {
-    if (opening) {
-        Small("Opening…")
-        return@Page
-    }
-    PText(if (refusedWith != null) "The server didn't open the panel (it answered $refusedWith)." else "The server can't be reached.", size = 15.sp)
-    Gap(6.dp)
-    Small("This place needs it. Today and Habits work without it, and blocking keeps working on this phone.")
-    Row {
-        LinkWord("Retry", onClick = onRetry)
-        LinkWord("Phone settings", onClick = onPhoneSettings)
-    }
-}
