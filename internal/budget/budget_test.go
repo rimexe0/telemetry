@@ -391,7 +391,8 @@ func TestStateShowsTodaysHabitsReasonsAndSettings(t *testing.T) {
 	events := append(ticks("2026-11-25", 1, 2), ticks("2026-11-26", 1)...)
 	result := Compute(Inputs{Config: config, Habits: list, Events: events, Reasons: []string{"to make music"}}, "2026-11-26", at(26, 12, 0))
 	state := result.State
-	want := []HabitValue{{ID: 2, Name: "walk", Done: false, Value: 30}, {ID: 1, Name: "habit", Done: true, Value: 30}}
+	tickedAt := DayStart(config, "2026-11-26").Add(time.Hour)
+	want := []HabitValue{{ID: 2, Name: "walk", Done: false, Value: 30}, {ID: 1, Name: "habit", Done: true, Value: 30, DoneAt: &tickedAt, DoneBy: "hand"}}
 	if !reflect.DeepEqual(state.Habits, want) || state.Reasons[0] != "to make music" || state.Settings.WaitMinutes != 10 || state.Settings.BorrowMultiplier != 2 {
 		t.Fatalf("state = %+v", state)
 	}
@@ -434,7 +435,7 @@ func TestArchivedAndWeekdayHabits(t *testing.T) {
 	if err := json.Unmarshal([]byte(`[9]`), &days); err == nil {
 		t.Fatal("a weekday out of range must be refused")
 	}
-	if encoded, _ := json.Marshal(Habit{}); string(encoded) != `{"id":0,"name":"","position":0,"weekdays":[],"created_at":"0001-01-01T00:00:00Z"}` {
+	if encoded, _ := json.Marshal(Habit{}); string(encoded) != `{"id":0,"name":"","position":0,"weekdays":[],"created_at":"0001-01-01T00:00:00Z","rule":null}` {
 		t.Fatalf("habit = %s", encoded)
 	}
 }

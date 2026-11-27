@@ -2,6 +2,7 @@ package budget
 
 import (
 	"math"
+	"sort"
 	"time"
 
 	"github.com/rimexe0/telemetry/internal/policy"
@@ -13,6 +14,16 @@ type HabitValue struct {
 	Name  string  `json:"name"`
 	Done  bool    `json:"done"`
 	Value float64 `json:"value"`
+	// DoneAt is when the tick in force was made, while done.
+	DoneAt *time.Time `json:"done_at,omitempty"`
+	// DoneBy is "rule" when a habit rule ticked it, "hand" otherwise.
+	DoneBy string `json:"done_by,omitempty"`
+	// Unticked is set when the owner undid today's tick: their word wins,
+	// so a rule does not tick it again today.
+	Unticked bool `json:"unticked,omitempty"`
+	// Rule is the habit's rule, and Window its window today, resolved.
+	Rule   *HabitRule `json:"rule,omitempty"`
+	Window *RuleSpan  `json:"window,omitempty"`
 }
 
 // Settings are the numbers a device needs to say what a door costs.
@@ -54,6 +65,28 @@ type State struct {
 	Settings              Settings     `json:"settings"`
 }
 
+// lastEvents is each habit's last tick or untick on day, in the order
+// doneOn reads them, and which habits have any.
+func lastEvents(events []HabitEvent, day string) (map[int64]HabitEvent, map[int64]bool) {
+	ordered := []HabitEvent{}
+	for _, event := range events {
+		if event.Day == day {
+			ordered = append(ordered, event)
+		}
+	}
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if !ordered[i].At.Equal(ordered[j].At) {
+			return ordered[i].At.Before(ordered[j].At)
+		}
+		return ordered[i].ID < ordered[j].ID
+	})
+	last, touched := map[int64]HabitEvent{}, map[int64]bool{}
+	for _, event := range ordered {
+		last[event.HabitID], touched[event.HabitID] = event, true
+	}
+	return last, touched
+}
+
 // Exhausted reports whether neither budget nor borrowing is left, so nothing
 // opens: not a door, and not an opening (with the budget on).
 func (s State) Exhausted() bool { return s.Enabled && s.Left <= 0 && s.Borrowable <= 0 }
@@ -82,12 +115,30 @@ func (c *calc) state(result *Result) {
 	for _, id := range today.Done {
 		done[id] = true
 	}
-	names := map[int64]string{}
+	byID := map[int64]Habit{}
 	for _, habit := range c.in.Habits {
-		names[habit.ID] = habit.Name
+		byID[habit.ID] = habit
 	}
+	last, touched := lastEvents(c.in.Events, today.Day)
 	for _, id := range today.Scheduled {
-		state.Habits = append(state.Habits, HabitValue{ID: id, Name: names[id], Done: done[id], Value: round(today.PerHabit)})
+		habit := byID[id]
+		value := HabitValue{ID: id, Name: habit.Name, Done: done[id], Value: round(today.PerHabit)}
+		if event, ok := last[id]; ok && value.Done {
+			at := event.At.UTC()
+			value.DoneAt, value.DoneBy = &at, "hand"
+			if ByRule(event.Source) {
+				value.DoneBy = "rule"
+			}
+		}
+		value.Unticked = !value.Done && touched[id]
+		if habit.Rule != nil {
+			rule := *habit.Rule
+			value.Rule = &rule
+			if span, ok := SpanOn(config, rule, today.Day, c.in.WakeAt); ok {
+				value.Window = &span
+			}
+		}
+		state.Habits = append(state.Habits, value)
 	}
 	if !state.Enabled {
 		state.DoorUnavailableReason = "The budget is off."

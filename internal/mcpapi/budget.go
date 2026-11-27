@@ -23,7 +23,10 @@ const budgetNotes = "The distraction budget (owner decision 2026-11-26) makes di
 
 const habitNotes = "Habits are the owner's own, made in the panel or with their yes here; nothing is seeded. Each applies on its weekdays (0 Sunday to 6 Saturday; none means every day). " +
 	"They are ticked by hand for today's budget day until bedtime starts, and a tick can be undone the same day. " +
-	"At bedtime start each habit of the day is done or missed. Days a habit does not apply never break its run, and a run is never called broken."
+	"At bedtime start each habit of the day is done or missed. Days a habit does not apply never break its run, and a run is never called broken. " +
+	"A habit may have a rule that ticks it by itself (source rule:server or rule:device:<id>): a place rule ticks it once the phone's positions, or the watch's walks, " +
+	"show the owner within radius_m of the place for the minutes, inside the window (from waking, or the day's start while the wake is not in the records, until the time). " +
+	"Missing positions tick nothing, and once the owner ticked or unticked the habit on a day the rule leaves that day alone. Rules are the owner's: set one only with their yes."
 
 type BudgetInput struct{}
 
@@ -48,12 +51,14 @@ type HabitsOutput struct {
 }
 
 type HabitChangeIO struct {
-	Action   string  `json:"action" jsonschema:"add or update"`
-	ID       *int64  `json:"id,omitempty" jsonschema:"the habit to update"`
-	Name     *string `json:"name,omitempty"`
-	Position *int    `json:"position,omitempty" jsonschema:"order in the list, lowest first"`
-	Weekdays *[]int  `json:"weekdays,omitempty" jsonschema:"0 Sunday to 6 Saturday; empty for every day"`
-	Archived *bool   `json:"archived,omitempty" jsonschema:"archive it, or bring it back; its history stays"`
+	Action   string            `json:"action" jsonschema:"add or update"`
+	ID       *int64            `json:"id,omitempty" jsonschema:"the habit to update"`
+	Name     *string           `json:"name,omitempty"`
+	Position *int              `json:"position,omitempty" jsonschema:"order in the list, lowest first"`
+	Weekdays *[]int            `json:"weekdays,omitempty" jsonschema:"0 Sunday to 6 Saturday; empty for every day"`
+	Archived *bool             `json:"archived,omitempty" jsonschema:"archive it, or bring it back; its history stays"`
+	Rule     *budget.HabitRule `json:"rule,omitempty" jsonschema:"a rule that ticks the habit by itself; the only kind is place: {kind: place, place: {name, lat, lon}, radius_m (default 100), window: {from: wake or HH:MM, until: HH:MM}, minutes inside the radius (default 1)}"`
+	NoRule   bool              `json:"no_rule,omitempty" jsonschema:"remove the habit's rule"`
 }
 
 type ChangeHabitsInput struct {
@@ -134,11 +139,12 @@ func addBudgetTools(server *mcp.Server, repository store.Repository, budgets sto
 	})
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "change_habits",
-		Description: "Add habits, or rename, reorder, set the weekdays of, archive or bring back one. Habits change only through the owner. " + habitNotes + " " + approvalRule,
+		Description: "Add habits, or rename, reorder, set the weekdays or the rule of, archive or bring back one. Habits change only through the owner. " + habitNotes + " " + approvalRule,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input ChangeHabitsInput) (*mcp.CallToolResult, ChangeHabitsOutput, error) {
 		changes := []store.HabitChange{}
 		for _, item := range input.Changes {
-			change := store.HabitChange{Action: strings.TrimSpace(item.Action), ID: item.ID, Name: item.Name, Position: item.Position, Archived: item.Archived}
+			change := store.HabitChange{Action: strings.TrimSpace(item.Action), ID: item.ID, Name: item.Name, Position: item.Position, Archived: item.Archived,
+				Rule: item.Rule, ClearRule: item.NoRule}
 			if item.Weekdays != nil {
 				days := budget.Weekdays{}
 				for _, day := range *item.Weekdays {

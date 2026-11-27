@@ -105,6 +105,9 @@ type Habit struct {
 	Weekdays   Weekdays   `json:"weekdays"`
 	CreatedAt  time.Time  `json:"created_at"`
 	ArchivedAt *time.Time `json:"archived_at,omitempty"`
+	// Rule ticks the habit by itself once the records prove it; null when
+	// it has none.
+	Rule *HabitRule `json:"rule"`
 }
 
 // ValidateName trims a habit's name and refuses an empty or long one.
@@ -127,7 +130,8 @@ type HabitEvent struct {
 	// later and still counts for its own day.
 	At         time.Time `json:"at"`
 	ReceivedAt time.Time `json:"received_at"`
-	// Source is "owner" (the panel or the assistant) or "device:<id>".
+	// Source is "owner" (the panel), "assistant", "device:<id>", or a
+	// habit rule: "rule:server" or "rule:device:<id>".
 	Source string `json:"source,omitempty"`
 }
 

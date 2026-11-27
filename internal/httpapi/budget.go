@@ -283,6 +283,8 @@ func (s *Server) tickHabit(writer http.ResponseWriter, request *http.Request, ac
 	var input struct {
 		Day string `json:"day"`
 		At  string `json:"at"`
+		// By is "rule" for a tick a habit rule made on the device.
+		By string `json:"by"`
 	}
 	// The body is optional: {} or nothing ticks today.
 	body, err := io.ReadAll(io.LimitReader(request.Body, 4096))
@@ -290,11 +292,29 @@ func (s *Server) tickHabit(writer http.ResponseWriter, request *http.Request, ac
 		err = json.Unmarshal(body, &input)
 	}
 	if err != nil {
-		writeError(writer, http.StatusBadRequest, "invalid_json", `request body is empty or {"day": "YYYY-MM-DD", "at": "<RFC 3339>"}`)
+		writeError(writer, http.StatusBadRequest, "invalid_json", `request body is empty or {"day": "YYYY-MM-DD", "at": "<RFC 3339>", "by": "rule"}`)
 		return
 	}
 	ctx, now := request.Context(), time.Now().UTC()
-	if strings.TrimSpace(input.At) == "" {
+	byRule := strings.TrimSpace(input.By) == "rule"
+	switch {
+	case strings.TrimSpace(input.By) != "" && !byRule:
+		writeError(writer, http.StatusBadRequest, "invalid_by", `by is "rule" or left out`)
+		return
+	case byRule && (action != budget.ActionTick || strings.TrimSpace(input.At) == ""):
+		writeError(writer, http.StatusBadRequest, "invalid_by", "a rule only ticks, and says when it was met in at")
+		return
+	}
+	if byRule {
+		at, parseErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(input.At))
+		if parseErr != nil {
+			writeError(writer, http.StatusBadRequest, "invalid_at", "at must be an RFC 3339 time")
+			return
+		}
+		// Kept only when nobody ticked or unticked the habit that day yet:
+		// the owner's word wins. Either way the answer is the budget.
+		_, err = store.RuleTick(ctx, s.repository, budgets, id, input.Day, at, requestSource(request), now)
+	} else if strings.TrimSpace(input.At) == "" {
 		err = store.TickHabit(ctx, s.repository, budgets, id, action, input.Day, requestSource(request), now)
 	} else {
 		at, parseErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(input.At))
@@ -420,6 +440,17 @@ type habitInput struct {
 	Position *int             `json:"position"`
 	Weekdays *budget.Weekdays `json:"weekdays"`
 	Archived *bool            `json:"archived"`
+	// Rule left out stays; null removes it.
+	Rule budget.RuleField `json:"rule"`
+}
+
+// change is the input as a habit change.
+func (input habitInput) change(action string, id *int64) store.HabitChange {
+	change := store.HabitChange{Action: action, ID: id, Name: input.Name, Position: input.Position, Weekdays: input.Weekdays, Archived: input.Archived}
+	if input.Rule.Set {
+		change.Rule, change.ClearRule = input.Rule.Rule, input.Rule.Rule == nil
+	}
+	return change
 }
 
 // habits lists the owner's habits, archived ones included, or adds one.
@@ -458,7 +489,10 @@ func (s *Server) addHabit(writer http.ResponseWriter, request *http.Request, bud
 	if !withPosition {
 		input.Position = nil
 	}
-	s.applyHabit(writer, request, budgets, store.HabitChange{Action: "add", Name: input.Name, Position: input.Position, Weekdays: input.Weekdays}, reason, http.StatusCreated)
+	input.Archived = nil
+	change := input.change("add", nil)
+	change.ClearRule = false
+	s.applyHabit(writer, request, budgets, change, reason, http.StatusCreated)
 }
 
 // habit changes a habit's name, position, weekdays or archiving.
@@ -487,8 +521,7 @@ func (s *Server) changeHabit(writer http.ResponseWriter, request *http.Request, 
 	if !withPosition {
 		input.Position = nil
 	}
-	s.applyHabit(writer, request, budgets, store.HabitChange{Action: "update", ID: &id, Name: input.Name, Position: input.Position, Weekdays: input.Weekdays, Archived: input.Archived},
-		reason, http.StatusOK)
+	s.applyHabit(writer, request, budgets, input.change("update", &id), reason, http.StatusOK)
 }
 
 // deviceAddHabit adds a habit from the phone's Habits screen. It is logged
@@ -575,6 +608,8 @@ type deviceHabit struct {
 	Weekdays   []int      `json:"weekdays"`
 	CreatedAt  time.Time  `json:"created_at"`
 	ArchivedAt *time.Time `json:"archived_at"`
+	// Rule ticks the habit by itself; null when it has none.
+	Rule *budget.HabitRule `json:"rule"`
 }
 
 // deviceHabits are the owner's active habits, in their order, and their
@@ -606,7 +641,8 @@ func (s *Server) deviceHabits(writer http.ResponseWriter, request *http.Request)
 		if len(weekdays) == 0 {
 			weekdays = []int{0, 1, 2, 3, 4, 5, 6}
 		}
-		active = append(active, deviceHabit{ID: habit.ID, Name: habit.Name, Position: habit.Position, Weekdays: append([]int{}, weekdays...), CreatedAt: habit.CreatedAt.UTC()})
+		active = append(active, deviceHabit{ID: habit.ID, Name: habit.Name, Position: habit.Position, Weekdays: append([]int{}, weekdays...), CreatedAt: habit.CreatedAt.UTC(),
+			Rule: habit.Rule})
 	}
 	sort.SliceStable(active, func(i, j int) bool {
 		if active[i].Position != active[j].Position {

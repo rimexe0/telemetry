@@ -257,3 +257,28 @@ func TestOpenNowIsRefusedWhenNothingIsLeft(t *testing.T) {
 func (r *budgetRepository) OpenSpans(_ context.Context, from, to time.Time) ([]budget.OpenSpan, error) {
 	return []budget.OpenSpan{{From: from, To: to}}, nil
 }
+
+func TestChangeHabitsSetsAndRemovesARule(t *testing.T) {
+	now := time.Date(2026, 11, 26, 9, 0, 0, 0, time.UTC)
+	repository := &budgetRepository{config: mcpBudgetConfig()}
+	session := connectBudget(t, repository, now)
+	// A made-up place, not the owner's.
+	rule := map[string]any{"kind": "place", "place": map[string]any{"name": "Test pier", "lat": 41.0, "lon": 29.0}, "window": map[string]any{"from": "wake", "until": "11:00"}}
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "change_habits", Arguments: map[string]any{
+		"changes": []map[string]any{{"action": "update", "id": 1, "rule": rule}}, "reason": "the owner said yes to the pier"}})
+	if err != nil || result.IsError {
+		t.Fatalf("set = %+v, %v", result, err)
+	}
+	set := repository.changes[len(repository.changes)-1]
+	if set.Rule == nil || set.Rule.Place == nil || set.Rule.Place.Name != "Test pier" || set.Rule.Window.From != "wake" || set.ClearRule {
+		t.Fatalf("set change = %+v", set)
+	}
+	result, err = session.CallTool(context.Background(), &mcp.CallToolParams{Name: "change_habits", Arguments: map[string]any{
+		"changes": []map[string]any{{"action": "update", "id": 1, "no_rule": true}}, "reason": "the owner said to remove it"}})
+	if err != nil || result.IsError {
+		t.Fatalf("remove = %+v, %v", result, err)
+	}
+	if removed := repository.changes[len(repository.changes)-1]; removed.Rule != nil || !removed.ClearRule {
+		t.Fatalf("remove change = %+v", removed)
+	}
+}

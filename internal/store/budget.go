@@ -71,14 +71,18 @@ type HabitChange struct {
 	Position *int             `json:"position,omitempty"`
 	Weekdays *budget.Weekdays `json:"weekdays,omitempty"`
 	Archived *bool            `json:"archived,omitempty"`
+	// Rule sets the habit's rule; ClearRule removes it.
+	Rule      *budget.HabitRule `json:"rule,omitempty"`
+	ClearRule bool              `json:"clear_rule,omitempty"`
 }
 
-const habitColumns = `id, name, position, weekdays, created_at, archived_at`
+const habitColumns = `id, name, position, weekdays, created_at, archived_at, rule`
 
 func scanHabit(row pgx.Row) (budget.Habit, error) {
 	var habit budget.Habit
 	var weekdays []int16
-	err := row.Scan(&habit.ID, &habit.Name, &habit.Position, &weekdays, &habit.CreatedAt, &habit.ArchivedAt)
+	var rule []byte
+	err := row.Scan(&habit.ID, &habit.Name, &habit.Position, &weekdays, &habit.CreatedAt, &habit.ArchivedAt, &rule)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return habit, ErrNotFound
 	}
@@ -86,7 +90,46 @@ func scanHabit(row pgx.Row) (budget.Habit, error) {
 	for _, day := range weekdays {
 		habit.Weekdays = append(habit.Weekdays, int(day))
 	}
+	if err == nil && len(rule) > 0 && string(rule) != "null" {
+		var parsed budget.HabitRule
+		if json.Unmarshal(rule, &parsed) == nil {
+			habit.Rule = &parsed
+		}
+	}
 	return habit, err
+}
+
+// ruleColumn is a rule as the rule column keeps it: JSON, or NULL.
+func ruleColumn(rule *budget.HabitRule) (any, error) {
+	if rule == nil {
+		return nil, nil
+	}
+	encoded, err := json.Marshal(rule)
+	if err != nil {
+		return nil, err
+	}
+	return string(encoded), nil
+}
+
+// changedRule is the rule a change leaves: checked and filled when set.
+func changedRule(change HabitChange, before *budget.HabitRule, i int) (*budget.HabitRule, error) {
+	switch {
+	case change.Rule != nil && change.ClearRule:
+		return nil, fmt.Errorf("%w: change %d: give a rule or clear_rule, not both", ErrInvalidAgentChange, i+1)
+	case change.ClearRule:
+		return nil, nil
+	case change.Rule != nil:
+		rule := *change.Rule
+		if rule.Place != nil {
+			place := *rule.Place
+			rule.Place = &place
+		}
+		if err := rule.Normalize(); err != nil {
+			return nil, fmt.Errorf("%w: change %d: %v", ErrInvalidAgentChange, i+1, err)
+		}
+		return &rule, nil
+	}
+	return before, nil
 }
 
 func weekdaysColumn(days budget.Weekdays) []int16 {
@@ -142,8 +185,16 @@ func applyHabitsTx(ctx context.Context, tx pgx.Tx, changes []HabitChange) ([]bud
 			if change.Weekdays != nil {
 				weekdays = *change.Weekdays
 			}
-			habit, err := scanHabit(tx.QueryRow(ctx, `INSERT INTO habits (name, position, weekdays) VALUES ($1, $2, $3) RETURNING `+habitColumns,
-				name, position, weekdaysColumn(weekdays)))
+			rule, err := changedRule(change, nil, i)
+			if err != nil {
+				return nil, nil, err
+			}
+			ruleValue, err := ruleColumn(rule)
+			if err != nil {
+				return nil, nil, err
+			}
+			habit, err := scanHabit(tx.QueryRow(ctx, `INSERT INTO habits (name, position, weekdays, rule) VALUES ($1, $2, $3, $4::jsonb) RETURNING `+habitColumns,
+				name, position, weekdaysColumn(weekdays), ruleValue))
 			if err != nil {
 				return nil, nil, err
 			}
@@ -182,14 +233,27 @@ func applyHabitsTx(ctx context.Context, tx pgx.Tx, changes []HabitChange) ([]bud
 					after.ArchivedAt = nil
 				}
 			}
-			habit, err := scanHabit(tx.QueryRow(ctx, `UPDATE habits SET name = $2, position = $3, weekdays = $4, archived_at = $5, updated_at = now()
-				WHERE id = $1 RETURNING `+habitColumns, before.ID, after.Name, after.Position, weekdaysColumn(after.Weekdays), after.ArchivedAt))
+			if after.Rule, err = changedRule(change, before.Rule, i); err != nil {
+				return nil, nil, err
+			}
+			ruleValue, err := ruleColumn(after.Rule)
+			if err != nil {
+				return nil, nil, err
+			}
+			habit, err := scanHabit(tx.QueryRow(ctx, `UPDATE habits SET name = $2, position = $3, weekdays = $4, archived_at = $5, rule = $6::jsonb, updated_at = now()
+				WHERE id = $1 RETURNING `+habitColumns, before.ID, after.Name, after.Position, weekdaysColumn(after.Weekdays), after.ArchivedAt, ruleValue))
 			if err != nil {
 				return nil, nil, err
 			}
 			name, position, weekdays, archived := before.Name, before.Position, append(budget.Weekdays{}, before.Weekdays...), before.ArchivedAt != nil
+			undo := HabitChange{Action: "update", ID: &habit.ID, Name: &name, Position: &position, Weekdays: &weekdays, Archived: &archived}
+			if before.Rule != nil {
+				undo.Rule = before.Rule
+			} else {
+				undo.ClearRule = true
+			}
 			written = append(written, habit)
-			inverse = append(inverse, HabitChange{Action: "update", ID: &habit.ID, Name: &name, Position: &position, Weekdays: &weekdays, Archived: &archived})
+			inverse = append(inverse, undo)
 		default:
 			return nil, nil, fmt.Errorf("%w: change %d: action must be add or update", ErrInvalidAgentChange, i+1)
 		}
@@ -798,7 +862,19 @@ func LoadBudgetDays(ctx context.Context, repository Repository, budgets BudgetSt
 // LoadBudgetInputs reads the records the budget days from first through
 // the day of at are worked out from.
 func LoadBudgetInputs(ctx context.Context, repository Repository, budgets BudgetStore, config policy.Config, first string, at time.Time) (budget.Inputs, error) {
-	return loadBudgetInputs(ctx, repository, budgets, config, first, at, unsettledDays)
+	in, err := loadBudgetInputs(ctx, repository, budgets, config, first, at, unsettledDays)
+	if err != nil {
+		return in, err
+	}
+	// A habit rule that opens at waking shows today's window from the wake
+	// the records show.
+	for _, habit := range in.Habits {
+		if habit.ArchivedAt == nil && habit.Rule != nil && habit.Rule.Window.From == budget.RuleFromWake {
+			in.WakeAt, err = LoadWakeTime(ctx, repository, at)
+			break
+		}
+	}
+	return in, err
 }
 
 // unsettledDays is how many days without a snapshot before first are worked

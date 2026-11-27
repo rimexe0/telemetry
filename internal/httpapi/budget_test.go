@@ -15,6 +15,7 @@ import (
 
 	"github.com/rimexe0/telemetry/internal/activity"
 	"github.com/rimexe0/telemetry/internal/budget"
+	"github.com/rimexe0/telemetry/internal/places"
 	"github.com/rimexe0/telemetry/internal/policy"
 	"github.com/rimexe0/telemetry/internal/store"
 )
@@ -65,6 +66,13 @@ func (m *memoryBudget) ApplyHabitChanges(_ context.Context, changes []store.Habi
 			if change.Weekdays != nil {
 				habit.Weekdays = *change.Weekdays
 			}
+			if change.Rule != nil {
+				rule := *change.Rule
+				if err := rule.Normalize(); err != nil {
+					return store.AgentChange{}, nil, fmt.Errorf("%w: %v", store.ErrInvalidAgentChange, err)
+				}
+				habit.Rule = &rule
+			}
 			m.habits = append(m.habits, habit)
 			written = append(written, habit)
 		case "update":
@@ -83,6 +91,15 @@ func (m *memoryBudget) ApplyHabitChanges(_ context.Context, changes []store.Habi
 				}
 				if change.Weekdays != nil {
 					m.habits[i].Weekdays = *change.Weekdays
+				}
+				if change.Rule != nil {
+					rule := *change.Rule
+					if err := rule.Normalize(); err != nil {
+						return store.AgentChange{}, nil, fmt.Errorf("%w: %v", store.ErrInvalidAgentChange, err)
+					}
+					m.habits[i].Rule = &rule
+				} else if change.ClearRule {
+					m.habits[i].Rule = nil
 				}
 				if change.Archived != nil && *change.Archived {
 					now := time.Now().UTC()
@@ -305,6 +322,18 @@ type budgetRepository struct {
 	*fakeRepository
 	*memoryBudget
 	records []activity.Record
+	// fixes are the phone's positions the test sets.
+	fixes []places.Fix
+}
+
+func (r *budgetRepository) LocationFixes(_ context.Context, from, to time.Time) ([]places.Fix, error) {
+	result := []places.Fix{}
+	for _, fix := range r.fixes {
+		if !fix.At.Before(from) && fix.At.Before(to) {
+			result = append(result, fix)
+		}
+	}
+	return result, nil
 }
 
 func (r *budgetRepository) ActivityRecords(context.Context, time.Time, time.Time) ([]activity.Record, map[string]time.Time, error) {

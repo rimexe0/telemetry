@@ -26,6 +26,9 @@ type Inputs struct {
 	// DebtIn is what the first day owes from the day before it: that day's
 	// snapshot's debt passed on, or nothing without one.
 	DebtIn float64
+	// WakeAt is when the owner woke, when the records show it and a habit
+	// rule opens its window then.
+	WakeAt *time.Time
 }
 
 // DayLedger is one budget day's arithmetic.
