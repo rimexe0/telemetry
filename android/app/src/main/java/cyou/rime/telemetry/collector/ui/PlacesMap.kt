@@ -26,8 +26,8 @@ import org.osmdroid.views.overlay.Overlay
 import java.io.File
 
 /**
- * The day's map, as the panel's Places draws it: the path broken where
- * positions are more than 15 minutes apart, each position a dot, the stays
+ * The day's map, as the panel's Places draws it: the path between stays, broken where
+ * positions are more than 15 minutes apart, the stays
  * with their times, home, and each habit's place as a circle, green once
  * reached. Tiles come only through the owner's server ([ServerTiles]).
  */
@@ -93,7 +93,7 @@ private class DayOverlay(private val day: PlacesDay, colors: PanelColors, privat
     private val muted = colors.muted.toArgb()
     private val done = colors.done.toArgb()
     private val points = Places.usable(day.positions)
-    private val lines = Places.pathLines(points)
+    private val lines = Places.pathLines(points, day.stays)
     private val visits = Places.visits(points, day.rules)
 
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 2 * density; color = fg; alpha = 170; strokeJoin = Paint.Join.ROUND; strokeCap = Paint.Cap.ROUND }

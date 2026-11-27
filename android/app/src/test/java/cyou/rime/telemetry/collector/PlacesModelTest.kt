@@ -58,6 +58,39 @@ class PlacesModelTest {
     }
 
     @Test
+    fun insideAStayThePathDrawsNoLinesOnlyBetweenStays() {
+        val walk = 41.009 to 29.0
+        val other = 41.04 to 29.03
+        val positions = mutableListOf<RuleFix>()
+        // GPS jitter indoors, within 40 m of home and of the café.
+        for (minute in 0..56 step 4) positions += fix("08:%02d".format(minute), (home.first + (minute % 3 - 1) * 0.0003) to (home.second + (minute % 2) * 0.0003))
+        positions += fix("09:00", home)
+        positions += fix("09:05", walk)
+        for (minute in listOf(10, 18, 26, 34, 40)) positions += fix("09:$minute", (cafe.first + (minute % 3 - 1) * 0.0002) to cafe.second)
+        positions += fix("09:45", other)
+        val stays = listOf(
+            PlaceStay(at("08:00"), at("09:00"), home.first, home.second, true, emptyList()),
+            PlaceStay(at("09:10"), at("09:40"), cafe.first, cafe.second, false, emptyList()),
+        )
+        val lines = Places.pathLines(Places.usable(positions), stays)
+        assertEquals(1, lines.size)
+        assertEquals(listOf(home, walk, cafe, other), lines[0].map { it.lat to it.lon })
+        // Without stays the jitter is drawn as it came.
+        assertEquals(positions.size, Places.pathLines(Places.usable(positions), emptyList()).sumOf { it.size })
+    }
+
+    @Test
+    fun theGapBreaksStayInsideAndAroundStays() {
+        val walk = 41.009 to 29.0
+        val stays = listOf(PlaceStay(at("08:00"), at("08:40"), home.first, home.second, true, emptyList()))
+        val lines = Places.pathLines(listOf(fix("08:00", home), fix("08:40", 41.0181 to 29.0), fix("08:45", walk), fix("09:30", walk)), stays)
+        assertEquals(listOf(listOf(home), listOf(home, walk), listOf(walk)), lines.map { line -> line.map { it.lat to it.lon } })
+        // A position at home outside the stay's time is the path's own.
+        val after = Places.pathLines(listOf(fix("08:45", walk), fix("08:50", 41.0181 to 29.0)), stays)
+        assertEquals(listOf(listOf(walk, 41.0181 to 29.0)), after.map { line -> line.map { it.lat to it.lon } })
+    }
+
+    @Test
     fun gapsAreStretchesOver15MinutesWithoutPositionsOutsideStays() {
         val day = testDay()
         val gaps = Places.gaps(Places.usable(day.positions), day.stays.map { Span(it.from, it.to) }, day.from, day.to)
