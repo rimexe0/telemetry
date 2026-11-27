@@ -203,3 +203,20 @@ func TestEachComputerIsBuiltOnItsOwn(t *testing.T) {
 		t.Fatalf("mac %v min, desktop %v min; want 60 and 10", mac, desktop)
 	}
 }
+
+func TestTheLockScreenIsNotUse(t *testing.T) {
+	records := []Record{
+		aw("aw-watcher-window_h", 0, 60, `{"app":"loginwindow","title":""}`),
+		aw("aw-watcher-window_h", 60, 30, `{"app":"Helium","title":"X"}`),
+		aw("aw-watcher-afk_h", 0, 90, `{"status":"not-afk"}`),
+	}
+	result := Build(records, at(0), at(90))
+	for _, segment := range result.Segments {
+		if segment.App == "loginwindow" {
+			t.Fatalf("the lock screen counted as use: %+v", segment)
+		}
+	}
+	if got := minutesOf(result.Segments, DeviceMac, "Helium", ""); got != 30 {
+		t.Fatalf("Helium = %v, want 30; segments %+v", got, result.Segments)
+	}
+}

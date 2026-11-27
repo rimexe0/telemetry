@@ -29,6 +29,8 @@ const (
 	// devices that were offline may still deliver its records until then.
 	activityDayFinalAfter = 24 * time.Hour
 	activityDaysCacheSize = 1000
+	// activityDaysCounting changes whenever the way a day is counted does.
+	activityDaysCounting = 2
 )
 
 type activityDayDevice struct {
@@ -126,6 +128,9 @@ func labelsVersion(labels []activity.Label) string {
 		return sorted[i].Match < sorted[j].Match
 	})
 	hash := fnv.New64a()
+	// How days are counted: changed, every kept day is counted again, on the
+	// server and on the phone. 2: the lock screen is time away (2026-11-27).
+	fmt.Fprintf(hash, "rows %d\x01", activityDaysCounting)
 	for _, label := range sorted {
 		fmt.Fprintf(hash, "%s\x00%s\x00%s\x01", label.Kind, label.Match, label.Label)
 	}

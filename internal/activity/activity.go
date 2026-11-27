@@ -214,6 +214,12 @@ func macSegments(windows, afk, web []span) []Segment {
 	segments := []Segment{}
 	for _, window := range sequential(windows) {
 		app, title, bundle := text(window.data, "app"), text(window.data, "title"), text(window.data, "bundle_id")
+		// The lock screen and the screen saver in front mean the owner is
+		// away, not using the Mac (owner 2026-11-27: "loginwindow" topped the
+		// year's apps with 3 h a day).
+		if lockScreen(app, bundle) {
+			continue
+		}
 		for _, part := range subtract(window, away) {
 			known := intersect(part, present)
 			pieces := make([]span, 0, len(known)*2+1)
@@ -437,4 +443,18 @@ func earlier(a, b time.Time) time.Time {
 		return a
 	}
 	return b
+}
+
+// lockScreen reports whether a window is the Mac's lock screen or screen
+// saver, which is time away rather than use.
+func lockScreen(app, bundleID string) bool {
+	switch strings.ToLower(bundleID) {
+	case "com.apple.loginwindow", "com.apple.screensaver.engine":
+		return true
+	}
+	switch strings.ToLower(app) {
+	case "loginwindow", "screensaverengine":
+		return true
+	}
+	return false
 }
