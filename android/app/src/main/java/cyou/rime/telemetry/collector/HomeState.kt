@@ -33,6 +33,8 @@ data class HabitsState(
     val queued: List<HabitTick>,
     /** The active habits in their order, with waiting edits on top; null when never saved. */
     val habits: List<HabitDef>? = null,
+    /** Bedtime has started, so [openDay]'s habits are settled and are set right like a past day's. */
+    val openDayClosed: Boolean = false,
 )
 
 /** The saved inputs both screens are worked out from. */
@@ -177,8 +179,12 @@ object HomeState {
         val heatmap = saved.year?.let { year ->
             if (names.isEmpty()) year else year.copy(habits = year.habits.map { row -> names[row.id]?.let { row.copy(name = it) } ?: row })
         }
+        val bedtimes = HabitDay.bedtimes(saved.nowJson)
+        val clock = HabitDay.dayStartClock(bedtimes, HabitDay.timelineEnd(saved.nowJson), zone)
+        val openDay = HabitDay.today(now, zone, clock, saved.budget?.day)
         return HabitsState(
-            openDay = day(saved, now, zone),
+            openDay = openDay,
+            openDayClosed = HabitDay.ticksCloseAt(openDay, zone, clock, saved.budget, bedtimes)?.let { !it.isAfter(now) } == true,
             heatmap = heatmap,
             reasons = if (editedReasons) list?.reasons.orEmpty() else list?.reasons?.takeIf { it.isNotEmpty() } ?: saved.budget?.reasons.orEmpty(),
             queued = saved.queued,

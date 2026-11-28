@@ -19,6 +19,8 @@ data class HabitTick(
     val action: String,
     /** Made by a habit rule, not by a tap: the server keeps it only while nobody ticked or unticked the habit that day. */
     val byRule: Boolean = false,
+    /** Sets right a day whose habits are settled, from the Habits page (owner 2026-11-28). */
+    val fix: Boolean = false,
 ) {
     val done: Boolean get() = action == TICK
 
@@ -60,8 +62,8 @@ class TickQueue(private val store: TickStore) {
     fun entries(): List<HabitTick> = decode(store.load())
 
     @Synchronized
-    fun add(habitId: Long, day: String, at: Instant, done: Boolean, byRule: Boolean = false): HabitTick {
-        val tick = HabitTick(UUID.randomUUID().toString(), habitId, day, at, if (done) HabitTick.TICK else HabitTick.UNTICK, byRule = byRule && done)
+    fun add(habitId: Long, day: String, at: Instant, done: Boolean, byRule: Boolean = false, fix: Boolean = false): HabitTick {
+        val tick = HabitTick(UUID.randomUUID().toString(), habitId, day, at, if (done) HabitTick.TICK else HabitTick.UNTICK, byRule = byRule && done, fix = fix && !byRule)
         store.save(encode(entries() + tick))
         return tick
     }
@@ -129,7 +131,7 @@ class TickQueue(private val store: TickStore) {
         fun encode(entries: List<HabitTick>): String = JSONArray().apply {
             for (tick in entries) put(JSONObject()
                 .put("key", tick.key).put("habit_id", tick.habitId).put("day", tick.day)
-                .put("at", tick.at.toString()).put("action", tick.action).apply { if (tick.byRule) put("by", "rule") })
+                .put("at", tick.at.toString()).put("action", tick.action).apply { if (tick.byRule) put("by", "rule"); if (tick.fix) put("fix", true) })
         }.toString()
 
         fun decode(json: String?): List<HabitTick> {
@@ -139,7 +141,7 @@ class TickQueue(private val store: TickStore) {
                 runCatching {
                     HabitTick(item.getString("key"), item.getLong("habit_id"), item.getString("day"),
                         Instant.parse(item.getString("at")), item.getString("action").takeIf { it == HabitTick.TICK || it == HabitTick.UNTICK }!!,
-                        byRule = item.optString("by") == "rule")
+                        byRule = item.optString("by") == "rule", fix = item.optBoolean("fix"))
                 }.getOrNull()
             }
         }
@@ -175,6 +177,11 @@ object HabitTicks {
         queue(context).add(habitId, day, at, done)
     }
 
+    /** Keeps the owner setting right a settled day: done after all, or not. */
+    fun fix(context: Context, habitId: Long, day: String, done: Boolean) {
+        queue(context).add(habitId, day, Instant.now(), done, fix = true)
+    }
+
     /** Keeps a tick a habit rule made, at the moment the rule was met. */
     fun recordRule(context: Context, habitId: Long, day: String, at: Instant) {
         queue(context).add(habitId, day, at, done = true, byRule = true)
@@ -187,7 +194,8 @@ object HabitTicks {
      */
     fun flush(context: Context): TickQueue.Flushed {
         val flushed = queue(context).flush { tick ->
-            val body = JSONObject().put("day", tick.day).put("at", tick.at.toString()).apply { if (tick.byRule) put("by", "rule") }.toString()
+            val body = if (tick.fix) JSONObject().put("day", tick.day).put("fix", true).toString()
+                else JSONObject().put("day", tick.day).put("at", tick.at.toString()).apply { if (tick.byRule) put("by", "rule") }.toString()
             TickQueue.outcome(DeviceApi.send(context, "POST", "/v1/device/habits/${tick.habitId}/${tick.action}", body))
         }
         flushed.refusals.lastOrNull()?.let { message ->

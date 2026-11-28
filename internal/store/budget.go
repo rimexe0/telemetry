@@ -668,6 +668,9 @@ var (
 	ErrHabitLateWrongDay = errors.New("day is not the budget day that at falls in")
 	ErrHabitLateFuture   = errors.New("at is in the future")
 	ErrHabitNotThen      = errors.New("This habit was not on that day.")
+
+	// A past day set right by the owner.
+	ErrHabitFixNotPast = errors.New("Only a day whose habits are settled can be set right; today's are ticked as usual.")
 )
 
 const (
@@ -718,6 +721,50 @@ func TickHabit(ctx context.Context, repository Repository, budgets BudgetStore, 
 		return ErrHabitNotToday
 	}
 	_, err = budgets.RecordHabitEvent(ctx, budget.HabitEvent{HabitID: id, Day: today, Action: action, At: now, Source: source})
+	return err
+}
+
+// FixHabitDay keeps the owner's word that a habit was done, or not, on a
+// day whose habits are already settled: any day before today's budget day,
+// or today's once bedtime has started. The owner asked to set right any past
+// day after a night's teeth went unticked because bedtime had settled the
+// day (2026-11-28). The fix is the day's newest event, so it wins over what
+// the day held, and the closed days it reaches get corrected snapshots.
+func FixHabitDay(ctx context.Context, repository Repository, budgets BudgetStore, id int64, action, day, source string, now time.Time) error {
+	config, _, err := PolicyInForce(ctx, repository)
+	if err != nil {
+		return err
+	}
+	if _, err := time.Parse("2006-01-02", day); err != nil {
+		return fmt.Errorf("%w: day must be YYYY-MM-DD", ErrInvalidHabit)
+	}
+	today, open := budget.TickDay(config, now)
+	if day > today || day == today && open {
+		return ErrHabitFixNotPast
+	}
+	habits, err := budgets.ListHabits(ctx)
+	if err != nil {
+		return err
+	}
+	var habit *budget.Habit
+	for i := range habits {
+		if habits[i].ID == id {
+			habit = &habits[i]
+		}
+	}
+	if habit == nil {
+		return ErrNotFound
+	}
+	start, end := budget.DayStart(config, day), budget.DayStart(config, budget.AddDays(day, 1))
+	if !habit.AppliesAt(day, start) && !habit.AppliesAt(day, end.Add(-time.Microsecond)) {
+		return ErrHabitNotThen
+	}
+	event, err := budgets.RecordHabitEvent(ctx, budget.HabitEvent{HabitID: id, Day: day, Action: action, At: now, Source: source})
+	if err != nil {
+		return err
+	}
+	cause := fmt.Sprintf("owner set %s of habit %d right for %s (event %d)", action, id, day, event.ID)
+	_, err = ReviseBudgetDays(ctx, repository, budgets, day, cause, now)
 	return err
 }
 

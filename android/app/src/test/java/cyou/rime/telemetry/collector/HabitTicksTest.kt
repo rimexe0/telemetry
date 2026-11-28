@@ -74,6 +74,18 @@ class HabitTicksTest {
     }
 
     @Test
+    fun aFixForASettledDayIsKeptAsAFix() {
+        val store = Memory()
+        TickQueue(store).add(3, "2026-11-27", at, done = true, fix = true)
+        TickQueue(store).add(3, "2026-11-27", at.plusSeconds(5), done = true, byRule = true, fix = true)
+        val reopened = TickQueue(store).entries()
+        assertTrue(reopened[0].fix)
+        // A rule's tick is never a fix.
+        assertTrue(!reopened[1].fix)
+        assertEquals(mapOf("2026-11-27" to true), TickQueue.doneByDay(reopened, 3))
+    }
+
+    @Test
     fun aDamagedStoreReadsAsEmpty() {
         val store = Memory().apply { json = "not json" }
         assertTrue(TickQueue(store).entries().isEmpty())

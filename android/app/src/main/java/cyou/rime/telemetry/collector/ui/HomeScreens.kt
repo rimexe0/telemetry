@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
@@ -25,6 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
@@ -282,6 +284,8 @@ class HabitEditing(
     val pickRule: (Long) -> Unit = {},
     /** Removes a habit's rule. */
     val clearRule: (Long) -> Unit = {},
+    /** Sets right a settled day: the habit was done that day, or not. */
+    val fixDay: (Long, String, Boolean) -> Unit = { _, _, _ -> },
 )
 
 @Composable
@@ -337,6 +341,8 @@ private fun HabitsCard(
     var rules by remember { mutableStateOf<Long?>(null) }
     var adding by remember { mutableStateOf(false) }
     var removed by remember { mutableStateOf<Long?>(null) }
+    // A settled day picked on a habit's row in edit mode, to be set right.
+    var fixing by remember { mutableStateOf<Pair<Long, String>?>(null) }
     LaunchedEffect(removed) {
         if (removed != null) {
             delay(5_000)
@@ -352,6 +358,7 @@ private fun HabitsCard(
             days = null
             rules = null
             adding = false
+            fixing = null
             onEditMode(!editMode)
         }
     })) {
@@ -427,8 +434,32 @@ private fun HabitsCard(
                         ruleLines[row.id]?.let { Small(it, Modifier.padding(bottom = 3.dp)) }
                     }
                     val queued = TickQueue.doneByDay(state.queued, row.id)
-                    Grid(layout.weeks, scroll) { day ->
-                        (if (queued[day] == true) CellState.DONE else HabitCells.year(row.year?.days?.get(day), day, state.openDay)) to null
+                    val settled = { day: String -> day < state.openDay || day == state.openDay && state.openDayClosed }
+                    val cellOf = { day: String ->
+                        when {
+                            queued[day] == true -> CellState.DONE
+                            queued[day] == false && settled(day) -> CellState.MISSED
+                            // Once bedtime has started, a today not done is missed until set right.
+                            else -> HabitCells.year(row.year?.days?.get(day), day, state.openDay)
+                                .let { if (it == CellState.OPEN && day == state.openDay && state.openDayClosed) CellState.MISSED else it }
+                        }
+                    }
+                    // In edit mode a settled day can be set right: tap it, then say which (owner 2026-11-28).
+                    val onTap: ((String) -> Unit)? = if (!editMode) null else { day ->
+                        val cell = cellOf(day)
+                        fixing = if (settled(day) && (cell == CellState.DONE || cell == CellState.MISSED)) row.id to day else null
+                    }
+                    Grid(layout.weeks, scroll, onTap) { day -> cellOf(day) to null }
+                    val picked = fixing?.takeIf { editMode && it.first == row.id }?.second
+                    if (picked != null) {
+                        val done = cellOf(picked) == CellState.DONE
+                        Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Small("${HabitCells.dayLabel(picked)}: ${if (done) "done" else "missed"} · ")
+                            LinkWord(if (done) "Mark missed" else "Mark done") {
+                                fixing = null
+                                editing.fixDay(row.id, picked, !done)
+                            }
+                        }
                     }
                 }
             }
@@ -619,7 +650,7 @@ private fun MonthRow(layout: HabitCells.Layout, scroll: ScrollState) {
 
 /** Seven rows of days, weeks as columns, with the weekday names kept at the left. */
 @Composable
-private fun Grid(weeks: List<List<String?>>, scroll: ScrollState, cell: (String) -> Pair<CellState, androidx.compose.ui.graphics.Color?>) {
+private fun Grid(weeks: List<List<String?>>, scroll: ScrollState, onTap: ((String) -> Unit)? = null, cell: (String) -> Pair<CellState, androidx.compose.ui.graphics.Color?>) {
     val colors = panelColors()
     val height = (CELL + CELL_GAP) * 7
     Row(Modifier.fillMaxWidth()) {
@@ -631,7 +662,14 @@ private fun Grid(weeks: List<List<String?>>, scroll: ScrollState, cell: (String)
             }
         }
         Box(Modifier.weight(1f).horizontalScroll(scroll)) {
-            Canvas(Modifier.width((CELL + CELL_GAP) * weeks.size).height(height)) {
+            val tap = rememberUpdatedState(onTap)
+            val taps = if (onTap == null) Modifier else Modifier.pointerInput(weeks) {
+                detectTapGestures { offset ->
+                    val step = (CELL + CELL_GAP).toPx()
+                    weeks.getOrNull((offset.x / step).toInt())?.getOrNull((offset.y / step).toInt())?.let { tap.value?.invoke(it) }
+                }
+            }
+            Canvas(Modifier.width((CELL + CELL_GAP) * weeks.size).height(height).then(taps)) {
                 val step = (CELL + CELL_GAP).toPx()
                 val side = CELL.toPx()
                 weeks.forEachIndexed { column, week ->

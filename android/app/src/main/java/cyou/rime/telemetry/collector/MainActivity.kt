@@ -275,7 +275,22 @@ class MainActivity : ComponentActivity() {
         reasons = { reasons -> edit { it.reasons(reasons) } },
         pickRule = { id -> pickingRule = id },
         clearRule = { id -> edit { it.change(id, clearRule = true) } },
+        fixDay = { id, day, done -> fixDay(id, day, done) },
     )
+
+    /** Sets right a settled day's habit: on the screen and saved at once, sent when the server can be reached. */
+    private fun fixDay(habitId: Long, day: String, done: Boolean) {
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) { HabitTicks.fix(this@MainActivity, habitId, day, done) }
+            reload()
+            withContext(Dispatchers.IO) {
+                runCatching { HabitTicks.flush(this@MainActivity) }
+                runCatching { HabitCache.refresh(this@MainActivity, HabitCache.YEAR) }
+                runCatching { HabitCache.refresh(this@MainActivity, HabitCache.WEEK) }
+            }
+            reload()
+        }
+    }
 
     @Composable
     private fun App() {

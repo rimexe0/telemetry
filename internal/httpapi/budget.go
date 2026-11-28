@@ -285,6 +285,8 @@ func (s *Server) tickHabit(writer http.ResponseWriter, request *http.Request, ac
 		At  string `json:"at"`
 		// By is "rule" for a tick a habit rule made on the device.
 		By string `json:"by"`
+		// Fix sets right a settled day's habit, given in day.
+		Fix bool `json:"fix"`
 	}
 	// The body is optional: {} or nothing ticks today.
 	body, err := io.ReadAll(io.LimitReader(request.Body, 4096))
@@ -292,7 +294,7 @@ func (s *Server) tickHabit(writer http.ResponseWriter, request *http.Request, ac
 		err = json.Unmarshal(body, &input)
 	}
 	if err != nil {
-		writeError(writer, http.StatusBadRequest, "invalid_json", `request body is empty or {"day": "YYYY-MM-DD", "at": "<RFC 3339>", "by": "rule"}`)
+		writeError(writer, http.StatusBadRequest, "invalid_json", `request body is empty or {"day": "YYYY-MM-DD", "at": "<RFC 3339>", "by": "rule"} or {"day": "YYYY-MM-DD", "fix": true}`)
 		return
 	}
 	ctx, now := request.Context(), time.Now().UTC()
@@ -304,8 +306,13 @@ func (s *Server) tickHabit(writer http.ResponseWriter, request *http.Request, ac
 	case byRule && (action != budget.ActionTick || strings.TrimSpace(input.At) == ""):
 		writeError(writer, http.StatusBadRequest, "invalid_by", "a rule only ticks, and says when it was met in at")
 		return
+	case input.Fix && (byRule || strings.TrimSpace(input.At) != "" || strings.TrimSpace(input.Day) == ""):
+		writeError(writer, http.StatusBadRequest, "invalid_fix", "a fix gives only the day it sets right")
+		return
 	}
-	if byRule {
+	if input.Fix {
+		err = store.FixHabitDay(ctx, s.repository, budgets, id, action, strings.TrimSpace(input.Day), requestSource(request), now)
+	} else if byRule {
 		at, parseErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(input.At))
 		if parseErr != nil {
 			writeError(writer, http.StatusBadRequest, "invalid_at", "at must be an RFC 3339 time")
@@ -336,6 +343,9 @@ func (s *Server) tickHabit(writer http.ResponseWriter, request *http.Request, ac
 		return
 	case errors.Is(err, store.ErrHabitDayClosed), errors.Is(err, store.ErrHabitLateClosed), errors.Is(err, store.ErrHabitTooOld):
 		writeRefusal(writer, "day_closed", err.Error())
+		return
+	case errors.Is(err, store.ErrHabitFixNotPast):
+		writeRefusal(writer, "not_settled", err.Error())
 		return
 	case errors.Is(err, store.ErrHabitNotToday), errors.Is(err, store.ErrHabitNotThen):
 		writeRefusal(writer, "not_scheduled", err.Error())

@@ -330,6 +330,11 @@ object HabitCells {
         return recorded ?: CellState.UNKNOWN
     }
 
+    /** "Thu 27 Nov" for a day key. */
+    fun dayLabel(day: String): String = runCatching {
+        java.time.format.DateTimeFormatter.ofPattern("EEE d MMM", java.util.Locale.UK).format(LocalDate.parse(day))
+    }.getOrDefault(day)
+
     /** The shade of a combined cell, 0 to 4, or -1 without a record. */
     fun level(share: Double?): Int = when {
         share == null || !share.isFinite() -> -1
